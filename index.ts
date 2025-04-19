@@ -6,11 +6,13 @@ import compression from "compression";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { prisma } from "./src/config/db";
+import { telemetryMiddleware } from "./src/middleware/telemetry.middleware";
 
 const app = express();
 const server = http.createServer(app);
 app.use(helmet());
 app.use(compression());
+app.use(telemetryMiddleware)
 app.use(
   rateLimit({
     windowMs: 1 * 60 * 1000, // 1 minute
