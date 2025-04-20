@@ -33,3 +33,5 @@ router.patch(
 )
 router.patch('/activate/:id', authenticateToken, isAdmin, activateUser)
 router.patch('/deactivate/:id', authenticateToken, isAdmin, deactivateUser)
+
+export default router

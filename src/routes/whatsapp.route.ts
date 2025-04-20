@@ -11,3 +11,5 @@ const router = express.Router()
 router.post('/start-whatsapp', authenticateToken, startWhatsApp)
 router.post('/send-message', authenticateToken, sendMessage)
 router.post('/stop-whatsapp', authenticateToken, stopWhatsApp)
+
+export default router

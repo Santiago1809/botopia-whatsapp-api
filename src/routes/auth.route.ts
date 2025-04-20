@@ -19,3 +19,5 @@ router.get('/user-info', authenticateToken, getUserInfo)
 router.post('/request-reset', requestResetPassword)
 router.post('/verify-code', verifyOtp)
 router.post('/change-password', changePassword)
+
+export default router

@@ -10,6 +10,11 @@ import { telemetryMiddleware } from './src/middleware/telemetry.middleware'
 import { HttpStatusCode } from 'axios'
 import { setupSocketEvents } from './src/controllers/whatsapp.controller'
 import { config } from 'dotenv'
+import adminRoutes from './src/routes/admin.route'
+import statsRoutes from './src/routes/stats.route'
+import authRoutes from './src/routes/auth.route'
+import userRoutes from './src/routes/user.route'
+import whatsAppRoutes from './src/routes/whatsapp.route'
 
 config()
 
@@ -33,6 +38,8 @@ app.use(
     }
   })
 )
+app.use(express.json())
+
 const allowedOrigins = [
   'http://localhost:3000',
   'https://frontend-clicsociable.vercel.app',
@@ -63,6 +70,11 @@ app.use((req, res) => {
     .status(HttpStatusCode.InternalServerError)
     .json({ message: 'Internal Server Error' })
 })
+app.use('/api/admin', adminRoutes)
+app.use('/api/stats', statsRoutes)
+app.use('/api/auth', authRoutes)
+app.use('/api/user', userRoutes)
+app.use('/api/whatsapp', whatsAppRoutes)
 const port = process.env.PORT || 3001
 server.keepAliveTimeout = 65000
 server.headersTimeout = 70000

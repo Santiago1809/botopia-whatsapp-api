@@ -6,3 +6,5 @@ const router = express.Router()
 
 router.get('/price', authenticateToken, isAdmin, calculatePrice)
 router.get('/stats', authenticateToken, isAdmin, getUsageStats)
+
+export default router

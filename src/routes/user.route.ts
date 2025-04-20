@@ -20,3 +20,5 @@ router.delete(
 )
 
 router.patch('/update-prompt/:numberId', authenticateToken, updateAgentNumber)
+
+export default router
