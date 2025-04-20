@@ -8,9 +8,10 @@
     "@types/bun": "latest",
     "@types/compression": "^1.7.5",
     "@types/express": "^5.0.1",
-    "@types/jsonwebtoken": "^9.0.9",
-    "@types/qrcode": "^1.5.5",
     "@types/google-libphonenumber": "^7.4.30",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/nodemailer": "^6.4.17",
+    "@types/qrcode": "^1.5.5",
     "prisma": "^6.6.0"
   },
   "peerDependencies": {
