@@ -41,7 +41,7 @@ app.use(
 app.use(express.json())
 
 const allowedOrigins = [
-  'http://localhost:3000',
+  'http://localhost:5173',
   'https://frontend-clicsociable.vercel.app',
   'https://frontend-clicsociable-git-development-david-espejos-projects.vercel.app'
 ]
