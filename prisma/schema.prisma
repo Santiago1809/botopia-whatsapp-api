@@ -39,8 +39,8 @@ model WhatsAppNumber {
   number         String
   name           String  @default("Sin Nombre")
   aiEnabled      Boolean @default(false)
-  aiPrompt       String  @default("Eres un asistente útil.")
-  aiModel        String  @default("gpt-4o-mini")
+  aiPrompt       String  @default("")
+  aiModel        String  @default("gemini-1.5-turbo")
   responseGroups Boolean @default(false)
   user           User    @relation(fields: [userId], references: [id])
   userId         Int

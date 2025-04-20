@@ -6,6 +6,7 @@ import { Role } from '../../generated/prisma'
 import { prisma } from '../config/db'
 import type { ChangePassword, CustomRequest } from '../interfaces/global'
 import { clients } from '../WhatsAppClients'
+import { HttpStatusCode } from 'axios'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_super_seguro' /* 
 const otpStore: Record<string, string> = {} */
@@ -14,7 +15,9 @@ export const registerUser = async (req: Request, res: Response) => {
   try {
     const { username, password, role, email } = req.body as Partial<User>
     if (!username || !password || !email) {
-      res.status(400).json({ message: 'Faltan datos para el registro' })
+      res
+        .status(HttpStatusCode.BadRequest)
+        .json({ message: 'Faltan datos para el registro' })
       return
     }
     const existingUser = await prisma.user.findFirst({
@@ -43,7 +46,9 @@ export const registerUser = async (req: Request, res: Response) => {
     res.json({ token, user: { username: user.username, role: user.role } })
   } catch (error) {
     console.error('❌ Error en el registro:', error)
-    res.status(500).json({ message: 'Error en el servidor' })
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error en el servidor' })
   }
 }
 
@@ -51,7 +56,9 @@ export const loginUser = async (req: Request, res: Response) => {
   try {
     const { username, password } = req.body as Partial<User>
     if (!username || !password) {
-      res.status(400).json({ message: 'Faltan datos para el login' })
+      res
+        .status(HttpStatusCode.BadRequest)
+        .json({ message: 'Faltan datos para el login' })
     }
     const user = await prisma.user.findUnique({
       where: {
@@ -60,7 +67,9 @@ export const loginUser = async (req: Request, res: Response) => {
     })
 
     if (!user) {
-      res.status(400).json({ message: 'Usuario no encontrado' })
+      res
+        .status(HttpStatusCode.BadRequest)
+        .json({ message: 'Usuario no encontrado' })
       return
     }
 
@@ -87,7 +96,9 @@ export const loginUser = async (req: Request, res: Response) => {
     res.json({ token, user: { username: user.username, role: role } })
   } catch (error) {
     console.error('❌ Error en el login:', error)
-    res.status(500).json({ message: 'Error en el servidor' })
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error en el servidor' })
   }
 }
 
@@ -103,13 +114,17 @@ export const getUserInfo = async (req: CustomRequest, res: Response) => {
       }
     })
     if (!user) {
-      res.status(404).json({ message: 'Usuario no encontrado' })
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Usuario no encontrado' })
       return
     }
     res.json({ ...user })
   } catch (error) {
     console.error('❌ Error obteniendo usuario:', error)
-    res.status(500).json({ message: 'Error en el servidor' })
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error en el servidor' })
   }
 }
 
@@ -125,7 +140,9 @@ export const getUsersList = async (req: CustomRequest, res: Response) => {
     res.json(users)
   } catch (error) {
     console.error('❌ Error obteniendo la lista de usuarios:', error)
-    res.status(500).json({ message: 'Error en el servidor' })
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error en el servidor' })
   }
 }
 
@@ -150,7 +167,9 @@ export async function logOut(req: CustomRequest, res: Response) {
   })
 
   if (!user) {
-    res.status(404).json({ message: 'Usuario no encontrado' })
+    res
+      .status(HttpStatusCode.NotFound)
+      .json({ message: 'Usuario no encontrado' })
     return
   }
 
@@ -171,7 +190,9 @@ export async function logOut(req: CustomRequest, res: Response) {
       }
     })
   } catch {
-    res.status(500).json({ message: 'Error al cerrar sesión' })
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error al cerrar sesión' })
   }
 }
 
@@ -179,7 +200,7 @@ export async function logOut(req: CustomRequest, res: Response) {
   try {
     const { email } = req.body as Partial<User>
     if (!email) {
-      return res.status(400).json({ message: 'Falta el email' })
+      return res.status(HttpStatusCode.BadRequest).json({ message: 'Falta el email' })
     }
     const user = await prisma.user.findUnique({
       where: {
@@ -201,7 +222,9 @@ export const changePassword = async (req: Request, res: Response) => {
   const { email, newPassword } = req.body as ChangePassword
 
   if (!email || !newPassword) {
-    res.status(400).json({ message: 'Faltan datos para cambiar la contraseña' })
+    res
+      .status(HttpStatusCode.BadRequest)
+      .json({ message: 'Faltan datos para cambiar la contraseña' })
     return
   }
 

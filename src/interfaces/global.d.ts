@@ -1,6 +1,7 @@
 import type { Request } from 'express'
 import type { JwtPayload } from 'jsonwebtoken'
 import type { Role } from '../../generated/prisma'
+import type WAWebJS from 'whatsapp-web.js'
 
 export interface CustomRequest extends Request {
   user?: RequestUser
@@ -16,4 +17,21 @@ export interface RequestUser {
 }
 export interface CustomJwtPaylod extends JwtPayload {
   user: RequestUser
+}
+
+export interface StartWhatsApp {
+  numberId: number
+}
+
+export interface Message {
+  role: string
+  content: string
+  timestamp: number
+  to: WAWebJS.ChatId
+}
+
+export interface SendMessageBody {
+  content: string
+  to: string
+  numberId: number
 }
