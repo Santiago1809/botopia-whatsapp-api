@@ -161,3 +161,72 @@ export const resetPasswordTemplate = (otp: string | number) => `
 </body>
 </html>
 `
+
+export const welcomeUserTemplate = (name: string) => `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bienvenido a Botopia</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #FAECD4;
+      margin: 0;
+      padding: 0;
+      text-align: center;
+    }
+    .container {
+      max-width: 600px;
+      margin: 20px auto;
+      background: #050044;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+    }
+    .header {
+      background-color: #411E8A;
+      padding: 20px;
+      color: white;
+      font-size: 20px;
+      font-weight: bold;
+      border-radius: 8px 8px 0 0;
+    }
+    .content {
+      margin: 20px 0;
+      font-size: 16px;
+      color: #333;
+    }
+    .footer {
+      margin-top: 20px;
+      font-size: 14px;
+      color: #777;
+    }
+    .btn {
+      display: inline-block;
+      padding: 5px 10px;
+      background-color: #411E8A;
+      color: white;
+      text-decoration: none;
+      border-radius: 5px;
+      font-size: 12px;
+    }
+    .btn:hover {
+      background-color: #050044;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">🎉 ¡Bienvenido a Botopia!</div>
+    <div class="content">
+      <p>Hola${name ? `, ${name}` : ''} 👋</p>
+      <p>¡Gracias por registrarte en nuestra plataforma! Ahora puedes disfrutar de todos nuestros servicios y herramientas.</p>
+      <p>Si tienes alguna duda o necesitas ayuda, no dudes en contactarnos.</p>
+    </div>
+    <div class="footer">Powered by <a href="https://botopia.tech" class="btn">Botopia</a></div>
+  </div>
+</body>
+</html>
+`

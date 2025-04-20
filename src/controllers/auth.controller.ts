@@ -8,7 +8,7 @@ import type { ChangePassword, CustomRequest } from '../interfaces/global'
 import { clients } from '../WhatsAppClients'
 import { HttpStatusCode } from 'axios'
 import { transporter } from '../services/email.service'
-import { resetPasswordTemplate } from '../lib/constants'
+import { resetPasswordTemplate, welcomeUserTemplate } from '../lib/constants'
 import type { Server } from 'socket.io'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_super_seguro'
@@ -46,6 +46,12 @@ export const registerUser = async (req: Request, res: Response) => {
       JWT_SECRET,
       { expiresIn: '2h' }
     )
+    transporter.sendMail({
+      from: process.env.SMTP_USER,
+      to: email,
+      subject: 'Bienvenido Botopia',
+      html: welcomeUserTemplate(user.username)
+    })
     res.json({ token, user: { username: user.username, role: user.role } })
   } catch (error) {
     console.error('❌ Error en el registro:', error)
