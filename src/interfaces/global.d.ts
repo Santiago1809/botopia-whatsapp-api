@@ -35,3 +35,12 @@ export interface SendMessageBody {
   to: string
   numberId: number
 }
+
+export interface ToggleAIBody {
+  number: string
+  enabled: boolean
+}
+
+export interface AddWhatsAppNumber extends Omit<ToggleAIBody, 'enabled'> {
+  name: string
+}
