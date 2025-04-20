@@ -162,6 +162,14 @@ exports.Prisma.PaymentScalarFieldEnum = {
   userId: 'userId'
 };
 
+exports.Prisma.AgentScalarFieldEnum = {
+  id: 'id',
+  title: 'title',
+  prompt: 'prompt',
+  ownerId: 'ownerId',
+  isGlobal: 'isGlobal'
+};
+
 exports.Prisma.SortOrder = {
   asc: 'asc',
   desc: 'desc'
@@ -185,7 +193,8 @@ exports.Prisma.ModelName = {
   User: 'User',
   WhatsAppNumber: 'WhatsAppNumber',
   Telemetry: 'Telemetry',
-  Payment: 'Payment'
+  Payment: 'Payment',
+  Agent: 'Agent'
 };
 
 /**

@@ -44,3 +44,8 @@ export interface ToggleAIBody {
 export interface AddWhatsAppNumber extends Omit<ToggleAIBody, 'enabled'> {
   name: string
 }
+
+export interface AddAgent {
+  title: string
+  prompt: string
+}

@@ -55,7 +55,8 @@ export async function isAdmin(
   next: NextFunction
 ) {
   if (req.user?.role !== 'admin') {
-    return res.status(403).json({ message: 'Acceso denegado' })
+    res.status(403).json({ message: 'Acceso denegado' })
+    return
   }
   next()
 }

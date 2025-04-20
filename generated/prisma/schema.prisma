@@ -32,6 +32,7 @@ model User {
   AiTokensLimit     Int              @default(50000)
   tokensPerResponse Int              @default(120)
   Payment           Payment[]
+  Agent             Agent[]
 }
 
 model WhatsAppNumber {
@@ -66,4 +67,13 @@ model Payment {
   createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id])
   userId    Int?
+}
+
+model Agent {
+  id       Int     @id @default(autoincrement())
+  title    String
+  prompt   String
+  ownerId  Int
+  owner    User    @relation(fields: [ownerId], references: [id])
+  isGlobal Boolean @default(false)
 }
