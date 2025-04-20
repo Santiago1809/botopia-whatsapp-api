@@ -7,9 +7,12 @@ import { prisma } from '../config/db'
 import type { ChangePassword, CustomRequest } from '../interfaces/global'
 import { clients } from '../WhatsAppClients'
 import { HttpStatusCode } from 'axios'
+import { transporter } from '../services/email.service'
+import { resetPasswordTemplate } from '../lib/constants'
+import type { Server } from 'socket.io'
 
-const JWT_SECRET = process.env.JWT_SECRET || 'secret_super_seguro' /* 
-const otpStore: Record<string, string> = {} */
+const JWT_SECRET = process.env.JWT_SECRET || 'secret_super_seguro'
+const otpStore: Record<string, { otp: string; token: string }> = {}
 
 export const registerUser = async (req: Request, res: Response) => {
   try {
@@ -196,28 +199,72 @@ export async function logOut(req: CustomRequest, res: Response) {
   }
 }
 
-/* export const requestResetPassword = async (req: Request, res: Response) => {
+export const requestResetPassword = async (req: Request, res: Response) => {
   try {
     const { email } = req.body as Partial<User>
     if (!email) {
-      return res.status(HttpStatusCode.BadRequest).json({ message: 'Falta el email' })
+      res.status(HttpStatusCode.BadRequest).json({ message: 'Falta el email' })
+      return
     }
     const user = await prisma.user.findUnique({
       where: {
         email
       }
     })
-    if (!user)
-      return res
+    if (!user) {
+      res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Usuario no encontrado' })
+      return
+    }
     const otp = Math.floor(100000 + Math.random() * 900000).toString()
-    const token = jwt.sign({ email, otp }, process.env.JWT_SECRET, {
+    const token = jwt.sign({ email, otp }, process.env.JWT_SECRET ?? 'secret', {
       expiresIn: '5m'
     })
     otpStore[email] = { otp, token }
-  } catch (error) {}
-} */
+    transporter.sendMail({
+      from: process.env.SMTP_USER,
+      to: email,
+      subject: 'Contraseña actualizada',
+      html: resetPasswordTemplate(otp)
+    })
+    const io: Server = req.app.get('io')
+    io.emit('otp-sent', { email, message: 'OTP enviado correctamente' })
+    res.status(HttpStatusCode.Ok).json({
+      message: 'OTP enviado correctamente'
+    })
+  } catch (error) {
+    console.error(
+      '❌ Error al solicitar el restablecimiento de contraseña:',
+      error
+    )
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error al solicitar el restablecimiento de contraseña' })
+  }
+}
+export async function verifyOtp(req: Request, res: Response) {
+  const { email, otp } = req.body
+  const storedData = otpStore[email]
+
+  if (!storedData) {
+    res.status(HttpStatusCode.BadRequest).json({ message: 'OTP no encontrado' })
+    return
+  }
+  try {
+    if (storedData.otp !== otp) {
+      res.status(HttpStatusCode.BadRequest).json({ message: 'OTP incorrecto' })
+      return
+    }
+    delete otpStore[email]
+    res.status(HttpStatusCode.Ok).json({ message: 'OTP verificado' })
+  } catch (error) {
+    console.error('❌ Error al verificar el OTP:', error)
+    res.status(HttpStatusCode.InternalServerError).json({
+      message: 'Error al verificar el OTP'
+    })
+  }
+}
 export const changePassword = async (req: Request, res: Response) => {
   const { email, newPassword } = req.body as ChangePassword
 

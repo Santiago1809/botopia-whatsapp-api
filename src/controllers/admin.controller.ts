@@ -2,6 +2,10 @@ import type { Request, Response } from 'express'
 import { prisma } from '../config/db'
 import { HttpStatusCode } from 'axios'
 import type { AddAgent, CustomRequest } from '../interfaces/global'
+import { generateSecurePassword } from '../lib/utils'
+import bcrypt from 'bcrypt'
+import { notifyNewPassword } from '../lib/constants'
+import { transporter } from '../services/email.service'
 
 export async function getAgents(_req: Request, res: Response) {
   try {
@@ -262,6 +266,49 @@ export async function setUserTokenLimit(req: Request, res: Response) {
     console.error('Error updating user tokens:', error)
     res.status(HttpStatusCode.InternalServerError).json({
       message: 'Error updating user tokens',
+      error: (error as Error).message
+    })
+  }
+}
+
+export async function changeUserPassword(req: Request, res: Response) {
+  try {
+    const { email } = req.body
+    const password = generateSecurePassword()
+    const user = await prisma.user.findUnique({
+      where: {
+        email
+      }
+    })
+    if (!user) {
+      res.status(HttpStatusCode.NotFound).json({
+        message: 'User not found'
+      })
+      return
+    }
+    const hashedPassword = await bcrypt.hash(password, 10)
+    await prisma.user.update({
+      where: {
+        email
+      },
+      data: {
+        password: hashedPassword
+      }
+    })
+    const mailOptions = {
+      from: process.env.SMTP_USER,
+      to: email,
+      subject: 'Contraseña actualizada',
+      html: notifyNewPassword(password)
+    }
+    await transporter.sendMail(mailOptions)
+    res.status(HttpStatusCode.Ok).json({
+      message: 'Contraseña actualizada y enviada al correo electrónico'
+    })
+  } catch (error) {
+    console.error('Error changing user password:', error)
+    res.status(HttpStatusCode.InternalServerError).json({
+      message: 'Error changing user password',
       error: (error as Error).message
     })
   }
