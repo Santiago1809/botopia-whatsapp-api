@@ -9,7 +9,8 @@ dist
 # code coverage
 coverage
 *.lcov
-
+.wwebjs_auth
+.wwebjs_cache
 # logs
 logs
 _.log

@@ -1,56 +1,52 @@
 import { GoogleGenAI } from '@google/genai'
 import type { User } from '../../generated/prisma'
 import type { Message } from '../interfaces/global'
+import { config } from 'dotenv'
 
+config()
 const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_GENAI_API_KEY })
 
 export async function getAIResponse(
   prompt: string,
   userMsg: string,
-  model = 'gemini-1.5-turbo',
+  model = 'gemini-2.0-flash',
   chatHistory: Message[] = [],
   user: User | null = null
 ) {
   try {
-    const maxTokens =
-      user && user.tokensPerResponse ? user.tokensPerResponse : 120
-    let messages = []
-    if (prompt) {
-      const hasSystemMessage = chatHistory.some(
-        (msg) => msg.role === 'model' && msg.content === prompt
-      )
-      if (!hasSystemMessage) {
-        messages.push({
-          role: 'model',
-          content: prompt,
-          timestamp: Date.now()
-        })
+    const maxTokens = user?.tokensPerResponse || 120
+    // Formatea el historial (sin el prompt todavía)
+    let messages = chatHistory.map((msg) => ({
+      role: msg.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: msg.content }]
+    }))
+    // Asegura que el primer mensaje sea del usuario
+    if (messages.length > 0 && messages[0]?.role !== 'user') {
+      // Si no comienza con usuario, recorta desde el primer mensaje de usuario
+      const firstUserIndex = messages.findIndex((m) => m.role === 'user')
+      if (firstUserIndex === -1) {
+        messages = []
+      } else {
+        messages = messages.slice(firstUserIndex)
       }
     }
-    if (chatHistory && chatHistory.length > 0) {
-      const formattedHistory = chatHistory.map((msg) => ({
-        role: msg.role,
-        content: msg.content
-      }))
-      messages = [...messages, ...formattedHistory]
-    }
 
+    // Crea el chat
     const chat = ai.chats.create({
       model,
-      history: messages.map((msg) => ({
-        role: msg.role === 'user' ? 'user' : 'model',
-        parts: [{ text: msg.content }]
-      })),
+      history: messages,
       config: {
         maxOutputTokens: maxTokens,
         temperature: 0.1,
-        systemInstruction: prompt
+        systemInstruction: prompt // Aquí va el "prompt" como instrucción del sistema
       }
     })
+
+    // Envía el mensaje del usuario
     const response = await chat.sendMessage({
-      message: userMsg,
-      config: { systemInstruction: prompt }
+      message: userMsg
     })
+
     return [response.text, response.usageMetadata?.candidatesTokenCount]
   } catch (error) {
     console.error('Error in getAIResponse:', error)

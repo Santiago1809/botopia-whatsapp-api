@@ -100,12 +100,41 @@ export async function addWhatsAppNumber(req: CustomRequest, res: Response) {
     })
     res
       .status(HttpStatusCode.Created)
-      .json({ message: 'Número creado', number: newNumber })
+      .json({ message: 'Número creado', numberId: newNumber.id })
   } catch (error) {
     console.error('Error adding WhatsApp number:', error)
     res
       .status(HttpStatusCode.InternalServerError)
       .json({ message: 'Error creando número de WhatsApp' })
+  }
+}
+
+export async function getWhatsAppNumbers(req: CustomRequest, res: Response) {
+  try {
+    const user = await prisma.user.findFirst({
+      where: {
+        username: req.user?.username
+      },
+      include: {
+        whatsappNumbers: {
+          omit: {
+            userId: true
+          }
+        }
+      }
+    })
+    if (!user) {
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Usuario no encontrado' })
+      return
+    }
+    res.status(HttpStatusCode.Ok).json(user.whatsappNumbers)
+  } catch (error) {
+    console.error('Error getting WhatsApp numbers:', error)
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error obteniendo números de WhatsApp' })
   }
 }
 
@@ -129,11 +158,15 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
         .json({ message: 'Número no encontrado' })
       return
     }
+
+    // Handle WhatsApp client cleanup
     if (clients[numberId]) {
-      await clients[numberId].pupBrowser?.close()
-      await clients[numberId].destroy()
+      const client = clients[numberId]
+      await client.logout()
+      await client.destroy()
       delete clients[numberId]
     }
+
     await prisma.whatsAppNumber.delete({
       where: {
         id: Number(numberId)
@@ -147,6 +180,173 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
       .json({ message: 'Error eliminando número de WhatsApp' })
   }
 }
+
+export async function getAgents(req: CustomRequest, res: Response) {
+  try {
+    const user = await prisma.user.findFirst({
+      where: {
+        username: req.user?.username
+      }
+    })
+    if (!user) {
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Usuario no encontrado' })
+      return
+    }
+    const agents = await prisma.agent.findMany({
+      where: {
+        OR: [
+          {
+            isGlobal: true
+          },
+          {
+            ownerId: user.id
+          }
+        ]
+      }
+    })
+    if (!agents) {
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Agentes no encontrados' })
+      return
+    }
+    res.status(HttpStatusCode.Ok).json(agents)
+  } catch (error) {
+    console.error('Error getting agents:', error)
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error obteniendo agentes' })
+  }
+}
+
+export async function addAgent(req: CustomRequest, res: Response) {
+  const { title, prompt } = req.body as { title: string; prompt: string }
+  try {
+    const user = await prisma.user.findFirst({
+      where: {
+        username: req.user?.username
+      }
+    })
+    if (!user) {
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Usuario no encontrado' })
+      return
+    }
+    await prisma.agent.create({
+      data: {
+        title,
+        prompt,
+        ownerId: user.id,
+        isGlobal: false
+      }
+    })
+    res.status(HttpStatusCode.Created).json({ message: 'Agente creado' })
+  } catch (error) {
+    console.error('Error adding agent:', error)
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error creando agente' })
+  }
+}
+
+export async function updateAgent(req: CustomRequest, res: Response) {
+  const { agentId } = req.params
+  const { title, prompt } = req.body as { title: string; prompt: string }
+  try {
+    const agent = await prisma.agent.findFirst({
+      where: {
+        id: Number(agentId)
+      }
+    })
+    if (!agent) {
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Agente no encontrado' })
+      return
+    }
+    const user = await prisma.user.findFirst({
+      where: {
+        username: req.user?.username
+      }
+    })
+    if (!user) {
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Usuario no encontrado' })
+      return
+    }
+    if (agent.ownerId !== user.id) {
+      res.status(HttpStatusCode.Forbidden).json({
+        message: 'No tienes permiso para editar este agente'
+      })
+      return
+    }
+    await prisma.agent.update({
+      where: {
+        id: Number(agentId)
+      },
+      data: {
+        title: title ? title : agent.title,
+        prompt: prompt ? prompt : agent.prompt
+      }
+    })
+    res.status(HttpStatusCode.Ok).json({ message: 'Agente actualizado' })
+  } catch (error) {
+    console.error('Error updating agent:', error)
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error actualizando agente' })
+  }
+}
+
+export async function deleteAgent(req: CustomRequest, res: Response) {
+  const { agentId } = req.params
+  try {
+    const agent = await prisma.agent.findFirst({
+      where: {
+        id: Number(agentId)
+      }
+    })
+    if (!agent) {
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Agente no encontrado' })
+      return
+    }
+    const user = await prisma.user.findFirst({
+      where: {
+        username: req.user?.username
+      }
+    })
+    if (!user) {
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Usuario no encontrado' })
+      return
+    }
+    if (agent.ownerId !== user.id) {
+      res.status(HttpStatusCode.Forbidden).json({
+        message: 'No tienes permiso para eliminar este agente'
+      })
+      return
+    }
+    await prisma.agent.delete({
+      where: {
+        id: Number(agentId)
+      }
+    })
+    res.status(HttpStatusCode.Ok).json({ message: 'Agente eliminado' })
+  } catch (error) {
+    console.error('Error deleting agent:', error)
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error eliminando agente' })
+  }
+}
+
 export async function updateAgentNumber(req: Request, res: Response) {
   const { numberId } = req.params
   const { aiPrompt } = req.body as { aiPrompt: string }

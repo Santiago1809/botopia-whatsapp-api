@@ -13,59 +13,93 @@ export const notifyNewPassword = (password: string) => `
   <title>Recuperación de contraseña</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: 'Segoe UI', Arial, sans-serif;
       background-color: #FAECD4;
       margin: 0;
-      padding: 0;
+      padding: 20px;
       text-align: center;
+      color: #FAECD4;
     }
     .container {
       max-width: 600px;
-      margin: 20px auto;
-      background: #050044;
-      padding: 20px;
-      border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      margin: 0 auto;
+      background: linear-gradient(145deg, #050044, #0a0050);
+      padding: 0;
+      border-radius: 12px;
+      box-shadow: 0 5px 20px rgba(65, 30, 138, 0.3);
+      overflow: hidden;
+      border: 1px solid rgba(250, 236, 212, 0.1);
     }
     .header {
-      background-color: #411E8A;
-      padding: 20px;
-      color: white;
-      font-size: 20px;
+      background: linear-gradient(145deg, #411E8A, #362075);
+      padding: 25px 20px;
+      color: #FAECD4;
+      font-size: 22px;
       font-weight: bold;
-      border-radius: 8px 8px 0 0;
+      letter-spacing: 0.5px;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      border-bottom: 2px solid rgba(250, 236, 212, 0.1);
     }
     .content {
-      margin: 20px 0;
+      margin: 30px 25px;
       font-size: 16px;
-      color: #333;
+      color: #FAECD4;
+      line-height: 1.6;
     }
     .otp {
-      font-size: 24px;
+      font-size: 28px;
       font-weight: bold;
       color: #010009;
-      background: #F3E8FF;
-      padding: 10px;
-      border-radius: 5px;
+      background: linear-gradient(145deg, #F3E8FF, #E8DDFA);
+      padding: 15px;
+      border-radius: 8px;
       display: inline-block;
-      margin: 10px 0;
+      margin: 15px 0;
+      min-width: 150px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      letter-spacing: 2px;
+      border: 1px solid rgba(65, 30, 138, 0.1);
     }
     .footer {
-      margin-top: 20px;
+      margin-top: 25px;
+      padding: 15px;
       font-size: 14px;
-      color: #777;
+      color: rgba(250, 236, 212, 0.7);
+      border-top: 1px solid rgba(250, 236, 212, 0.1);
+      background-color: rgba(5, 0, 68, 0.8);
+    }
+    /* Global anchor style to ensure color is applied in all email clients */
+    a {
+      color: #FAECD4 !important;
+      text-decoration: none;
+      transition: color 0.3s ease;
+    }
+    a:hover {
+      color: #F3E8FF !important;
+      text-decoration: underline;
     }
     .btn {
       display: inline-block;
-      padding: 5px 10px;
-      background-color: #411E8A;
-      color: white;
+      padding: 8px 16px;
+      background: linear-gradient(145deg, #411E8A, #362075);
+      color: #FAECD4 !important;
       text-decoration: none;
-      border-radius: 5px;
-      font-size: 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 5px;
+      border: 1px solid rgba(250, 236, 212, 0.15);
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+      transition: all 0.3s ease;
     }
     .btn:hover {
-      background-color: #050044;
+      background: linear-gradient(145deg, #4C2A99, #411E8A);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+      text-decoration: none;
+    }
+    p {
+      margin: 10px 0;
     }
   </style>
 </head>
@@ -74,8 +108,9 @@ export const notifyNewPassword = (password: string) => `
     <div class="header">🔐 Nueva contraseña</div>
     <div class="content">
       <p>Hola,</p>
-      <p>El administrador ha restablecido tu contraseña, la cuál ahora es:</p>
+      <p>El administrador ha restablecido tu contraseña, la cual ahora es:</p>
       <div class="otp">${password}</div>
+      <p style="font-size: 14px; opacity: 0.8;">Por favor, cambia esta contraseña después de iniciar sesión por motivos de seguridad.</p>
     </div>
     <div class="footer">Powered by <a href="https://botopia.tech" class="btn">Botopia</a></div>
   </div>
@@ -91,59 +126,102 @@ export const resetPasswordTemplate = (otp: string | number) => `
   <title>Recuperación de contraseña</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: 'Segoe UI', Arial, sans-serif;
       background-color: #FAECD4;
       margin: 0;
-      padding: 0;
+      padding: 20px;
       text-align: center;
+      color: #FAECD4;
     }
     .container {
       max-width: 600px;
-      margin: 20px auto;
-      background: #050044;
-      padding: 20px;
-      border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      margin: 0 auto;
+      background: linear-gradient(145deg, #050044, #0a0050);
+      padding: 0;
+      border-radius: 12px;
+      box-shadow: 0 5px 20px rgba(65, 30, 138, 0.3);
+      overflow: hidden;
+      border: 1px solid rgba(250, 236, 212, 0.1);
     }
     .header {
-      background-color: #411E8A;
-      padding: 20px;
-      color: white;
-      font-size: 20px;
+      background: linear-gradient(145deg, #411E8A, #362075);
+      padding: 25px 20px;
+      color: #FAECD4;
+      font-size: 22px;
       font-weight: bold;
-      border-radius: 8px 8px 0 0;
+      letter-spacing: 0.5px;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      border-bottom: 2px solid rgba(250, 236, 212, 0.1);
     }
     .content {
-      margin: 20px 0;
+      margin: 30px 25px;
       font-size: 16px;
-      color: #333;
+      color: #FAECD4;
+      line-height: 1.6;
     }
     .otp {
-      font-size: 24px;
+      font-size: 28px;
       font-weight: bold;
       color: #010009;
-      background: #F3E8FF;
-      padding: 10px;
-      border-radius: 5px;
+      background: linear-gradient(145deg, #F3E8FF, #E8DDFA);
+      padding: 15px;
+      border-radius: 8px;
       display: inline-block;
-      margin: 10px 0;
+      margin: 15px 0;
+      min-width: 150px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      letter-spacing: 2px;
+      border: 1px solid rgba(65, 30, 138, 0.1);
     }
     .footer {
-      margin-top: 20px;
+      margin-top: 25px;
+      padding: 15px;
       font-size: 14px;
-      color: #777;
+      color: rgba(250, 236, 212, 0.7);
+      border-top: 1px solid rgba(250, 236, 212, 0.1);
+      background-color: rgba(5, 0, 68, 0.8);
+    }
+    /* Global anchor style to ensure color is applied in all email clients */
+    a {
+      color: #FAECD4 !important;
+      text-decoration: none;
+      transition: color 0.3s ease;
+    }
+    a:hover {
+      color: #F3E8FF !important;
+      text-decoration: underline;
     }
     .btn {
       display: inline-block;
-      padding: 5px 10px;
-      background-color: #411E8A;
-      color: white;
+      padding: 8px 16px;
+      background: linear-gradient(145deg, #411E8A, #362075);
+      color: #FAECD4 !important;
       text-decoration: none;
-      border-radius: 5px;
-      font-size: 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 5px;
+      border: 1px solid rgba(250, 236, 212, 0.15);
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+      transition: all 0.3s ease;
     }
     .btn:hover {
-      background-color: #050044;
+      background: linear-gradient(145deg, #4C2A99, #411E8A);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+      text-decoration: none;
+    }
+    p {
+      margin: 10px 0;
+    }
+    .note {
+      font-size: 14px;
+      opacity: 0.8;
+      font-style: italic;
+      margin-top: 15px;
+      padding: 10px;
+      background-color: rgba(250, 236, 212, 0.05);
+      border-radius: 6px;
     }
   </style>
 </head>
@@ -154,7 +232,7 @@ export const resetPasswordTemplate = (otp: string | number) => `
       <p>Hola,</p>
       <p>Recibimos una solicitud para restablecer tu contraseña. Usa el siguiente código OTP:</p>
       <div class="otp">${otp}</div>
-      <p>Si no solicitaste esto, puedes ignorar este mensaje.</p>
+      <p class="note">Si no solicitaste esto, puedes ignorar este mensaje o contactar con soporte.</p>
     </div>
     <div class="footer">Powered by <a href="https://botopia.tech" class="btn">Botopia</a></div>
   </div>
@@ -171,58 +249,122 @@ export const welcomeUserTemplate = (name: string) => `
   <title>Bienvenido a Botopia</title>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: 'Segoe UI', Arial, sans-serif;
       background-color: #FAECD4;
       margin: 0;
-      padding: 0;
+      padding: 20px;
       text-align: center;
+      color: #FAECD4;
     }
     .container {
       max-width: 600px;
-      margin: 20px auto;
-      background: #050044;
-      padding: 20px;
-      border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      margin: 0 auto;
+      background: linear-gradient(145deg, #050044, #0a0050);
+      padding: 0;
+      border-radius: 12px;
+      box-shadow: 0 5px 20px rgba(65, 30, 138, 0.3);
+      overflow: hidden;
+      border: 1px solid rgba(250, 236, 212, 0.1);
     }
     .header {
-      background-color: #411E8A;
-      padding: 20px;
-      color: white;
-      font-size: 20px;
+      background: linear-gradient(145deg, #411E8A, #362075);
+      padding: 25px 20px;
+      color: #FAECD4;
+      font-size: 22px;
       font-weight: bold;
-      border-radius: 8px 8px 0 0;
+      letter-spacing: 0.5px;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+      border-bottom: 2px solid rgba(250, 236, 212, 0.1);
     }
     .content {
-      margin: 20px 0;
+      margin: 30px 25px;
       font-size: 16px;
-      color: #333;
+      color: #FAECD4;
+      line-height: 1.6;
+    }
+    .feature {
+      display: inline-block;
+      margin: 10px 5px;
+      padding: 10px 15px;
+      background-color: rgba(65, 30, 138, 0.4);
+      border-radius: 8px;
+      font-size: 14px;
+      border: 1px solid rgba(250, 236, 212, 0.1);
     }
     .footer {
-      margin-top: 20px;
+      margin-top: 25px;
+      padding: 15px;
       font-size: 14px;
-      color: #777;
+      color: rgba(250, 236, 212, 0.7);
+      border-top: 1px solid rgba(250, 236, 212, 0.1);
+      background-color: rgba(5, 0, 68, 0.8);
+    }
+    /* Global anchor style to ensure color is applied in all email clients */
+    a {
+      color: #FAECD4 !important;
+      text-decoration: none;
+      transition: color 0.3s ease;
+    }
+    a:hover {
+      color: #F3E8FF !important;
+      text-decoration: underline;
     }
     .btn {
       display: inline-block;
-      padding: 5px 10px;
-      background-color: #411E8A;
-      color: white;
+      padding: 8px 16px;
+      background: linear-gradient(145deg, #411E8A, #362075);
+      color: #FAECD4 !important;
       text-decoration: none;
-      border-radius: 5px;
-      font-size: 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 5px;
+      border: 1px solid rgba(250, 236, 212, 0.15);
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+      transition: all 0.3s ease;
     }
     .btn:hover {
-      background-color: #050044;
+      background: linear-gradient(145deg, #4C2A99, #411E8A);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+      text-decoration: none;
+    }
+    .highlight {
+      font-weight: bold;
+      color: #F3E8FF;
+    }
+    .welcome-emoji {
+      font-size: 35px;
+      margin-bottom: 10px;
+    }
+    p {
+      margin: 10px 0;
+    }
+    .features-container {
+      margin: 20px 0;
+      padding: 10px;
+      background-color: rgba(250, 236, 212, 0.05);
+      border-radius: 8px;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <div class="header">🎉 ¡Bienvenido a Botopia!</div>
+    <div class="header">
+      <div class="welcome-emoji">🎉</div>
+      ¡Bienvenido a Botopia!
+    </div>
     <div class="content">
-      <p>Hola${name ? `, ${name}` : ''} 👋</p>
+      <p>Hola${name ? ` <span class="highlight">${name}</span>` : ''} 👋</p>
       <p>¡Gracias por registrarte en nuestra plataforma! Ahora puedes disfrutar de todos nuestros servicios y herramientas.</p>
+      
+      <div class="features-container">
+        <p>Algunos servicios que podemos ofrecerte:</p>
+        <div class="feature">✅ WhatsApp API</div>
+        <div class="feature">🤖 Chatbots</div>
+        <div class="feature">📊 Análisis</div>
+      </div>
+      
       <p>Si tienes alguna duda o necesitas ayuda, no dudes en contactarnos.</p>
     </div>
     <div class="footer">Powered by <a href="https://botopia.tech" class="btn">Botopia</a></div>

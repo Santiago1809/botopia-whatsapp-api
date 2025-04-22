@@ -5,7 +5,11 @@ import {
   addWhatsAppNumber,
   deleteWhatsAppNumer,
   toggleAI,
-  toggleResponseGroups
+  toggleResponseGroups,
+  getWhatsAppNumbers,
+  getAgents,
+  addAgent,
+  updateAgent
 } from '../controllers/user.controller'
 
 const router = express.Router()
@@ -13,6 +17,11 @@ const router = express.Router()
 router.post('/toggle-ai', authenticateToken, toggleAI)
 router.post('/response-groups', authenticateToken, toggleResponseGroups)
 router.post('/add-number', authenticateToken, addWhatsAppNumber)
+router.get('/get-numbers', authenticateToken, getWhatsAppNumbers)
+router.get('/agents', authenticateToken, getAgents)
+router.post('/agents', authenticateToken, addAgent)
+router.patch('/agents/:agentId', authenticateToken, updateAgent)
+router.delete('/agents/:agentId', authenticateToken, updateAgent)
 router.delete(
   '/delete-number/:numberId',
   authenticateToken,

@@ -1329,8 +1329,9 @@ export namespace Prisma {
     username: string | null
     password: string | null
     email: string | null
+    phoneNumber: string | null
+    countryCode: string | null
     role: $Enums.Role | null
-    token: string | null
     active: boolean | null
     AiTokensUse: number | null
     AiTokensLimit: number | null
@@ -1342,8 +1343,9 @@ export namespace Prisma {
     username: string | null
     password: string | null
     email: string | null
+    phoneNumber: string | null
+    countryCode: string | null
     role: $Enums.Role | null
-    token: string | null
     active: boolean | null
     AiTokensUse: number | null
     AiTokensLimit: number | null
@@ -1355,8 +1357,9 @@ export namespace Prisma {
     username: number
     password: number
     email: number
+    phoneNumber: number
+    countryCode: number
     role: number
-    token: number
     active: number
     AiTokensUse: number
     AiTokensLimit: number
@@ -1384,8 +1387,9 @@ export namespace Prisma {
     username?: true
     password?: true
     email?: true
+    phoneNumber?: true
+    countryCode?: true
     role?: true
-    token?: true
     active?: true
     AiTokensUse?: true
     AiTokensLimit?: true
@@ -1397,8 +1401,9 @@ export namespace Prisma {
     username?: true
     password?: true
     email?: true
+    phoneNumber?: true
+    countryCode?: true
     role?: true
-    token?: true
     active?: true
     AiTokensUse?: true
     AiTokensLimit?: true
@@ -1410,8 +1415,9 @@ export namespace Prisma {
     username?: true
     password?: true
     email?: true
+    phoneNumber?: true
+    countryCode?: true
     role?: true
-    token?: true
     active?: true
     AiTokensUse?: true
     AiTokensLimit?: true
@@ -1510,8 +1516,9 @@ export namespace Prisma {
     username: string
     password: string
     email: string
+    phoneNumber: string | null
+    countryCode: string | null
     role: $Enums.Role
-    token: string | null
     active: boolean
     AiTokensUse: number
     AiTokensLimit: number
@@ -1542,8 +1549,9 @@ export namespace Prisma {
     username?: boolean
     password?: boolean
     email?: boolean
+    phoneNumber?: boolean
+    countryCode?: boolean
     role?: boolean
-    token?: boolean
     active?: boolean
     AiTokensUse?: boolean
     AiTokensLimit?: boolean
@@ -1559,8 +1567,9 @@ export namespace Prisma {
     username?: boolean
     password?: boolean
     email?: boolean
+    phoneNumber?: boolean
+    countryCode?: boolean
     role?: boolean
-    token?: boolean
     active?: boolean
     AiTokensUse?: boolean
     AiTokensLimit?: boolean
@@ -1572,8 +1581,9 @@ export namespace Prisma {
     username?: boolean
     password?: boolean
     email?: boolean
+    phoneNumber?: boolean
+    countryCode?: boolean
     role?: boolean
-    token?: boolean
     active?: boolean
     AiTokensUse?: boolean
     AiTokensLimit?: boolean
@@ -1585,15 +1595,16 @@ export namespace Prisma {
     username?: boolean
     password?: boolean
     email?: boolean
+    phoneNumber?: boolean
+    countryCode?: boolean
     role?: boolean
-    token?: boolean
     active?: boolean
     AiTokensUse?: boolean
     AiTokensLimit?: boolean
     tokensPerResponse?: boolean
   }
 
-  export type UserOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "username" | "password" | "email" | "role" | "token" | "active" | "AiTokensUse" | "AiTokensLimit" | "tokensPerResponse", ExtArgs["result"]["user"]>
+  export type UserOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "username" | "password" | "email" | "phoneNumber" | "countryCode" | "role" | "active" | "AiTokensUse" | "AiTokensLimit" | "tokensPerResponse", ExtArgs["result"]["user"]>
   export type UserInclude<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
     whatsappNumbers?: boolean | User$whatsappNumbersArgs<ExtArgs>
     Payment?: boolean | User$PaymentArgs<ExtArgs>
@@ -1615,8 +1626,9 @@ export namespace Prisma {
       username: string
       password: string
       email: string
+      phoneNumber: string | null
+      countryCode: string | null
       role: $Enums.Role
-      token: string | null
       active: boolean
       AiTokensUse: number
       AiTokensLimit: number
@@ -2051,8 +2063,9 @@ export namespace Prisma {
     readonly username: FieldRef<"User", 'String'>
     readonly password: FieldRef<"User", 'String'>
     readonly email: FieldRef<"User", 'String'>
+    readonly phoneNumber: FieldRef<"User", 'String'>
+    readonly countryCode: FieldRef<"User", 'String'>
     readonly role: FieldRef<"User", 'Role'>
-    readonly token: FieldRef<"User", 'String'>
     readonly active: FieldRef<"User", 'Boolean'>
     readonly AiTokensUse: FieldRef<"User", 'Int'>
     readonly AiTokensLimit: FieldRef<"User", 'Int'>
@@ -7010,8 +7023,9 @@ export namespace Prisma {
     username: 'username',
     password: 'password',
     email: 'email',
+    phoneNumber: 'phoneNumber',
+    countryCode: 'countryCode',
     role: 'role',
-    token: 'token',
     active: 'active',
     AiTokensUse: 'AiTokensUse',
     AiTokensLimit: 'AiTokensLimit',
@@ -7190,8 +7204,9 @@ export namespace Prisma {
     username?: StringFilter<"User"> | string
     password?: StringFilter<"User"> | string
     email?: StringFilter<"User"> | string
+    phoneNumber?: StringNullableFilter<"User"> | string | null
+    countryCode?: StringNullableFilter<"User"> | string | null
     role?: EnumRoleFilter<"User"> | $Enums.Role
-    token?: StringNullableFilter<"User"> | string | null
     active?: BoolFilter<"User"> | boolean
     AiTokensUse?: IntFilter<"User"> | number
     AiTokensLimit?: IntFilter<"User"> | number
@@ -7206,8 +7221,9 @@ export namespace Prisma {
     username?: SortOrder
     password?: SortOrder
     email?: SortOrder
+    phoneNumber?: SortOrderInput | SortOrder
+    countryCode?: SortOrderInput | SortOrder
     role?: SortOrder
-    token?: SortOrderInput | SortOrder
     active?: SortOrder
     AiTokensUse?: SortOrder
     AiTokensLimit?: SortOrder
@@ -7221,12 +7237,13 @@ export namespace Prisma {
     id?: number
     username?: string
     email?: string
+    phoneNumber?: string
     AND?: UserWhereInput | UserWhereInput[]
     OR?: UserWhereInput[]
     NOT?: UserWhereInput | UserWhereInput[]
     password?: StringFilter<"User"> | string
+    countryCode?: StringNullableFilter<"User"> | string | null
     role?: EnumRoleFilter<"User"> | $Enums.Role
-    token?: StringNullableFilter<"User"> | string | null
     active?: BoolFilter<"User"> | boolean
     AiTokensUse?: IntFilter<"User"> | number
     AiTokensLimit?: IntFilter<"User"> | number
@@ -7234,15 +7251,16 @@ export namespace Prisma {
     whatsappNumbers?: WhatsAppNumberListRelationFilter
     Payment?: PaymentListRelationFilter
     Agent?: AgentListRelationFilter
-  }, "id" | "username" | "email">
+  }, "id" | "username" | "email" | "phoneNumber">
 
   export type UserOrderByWithAggregationInput = {
     id?: SortOrder
     username?: SortOrder
     password?: SortOrder
     email?: SortOrder
+    phoneNumber?: SortOrderInput | SortOrder
+    countryCode?: SortOrderInput | SortOrder
     role?: SortOrder
-    token?: SortOrderInput | SortOrder
     active?: SortOrder
     AiTokensUse?: SortOrder
     AiTokensLimit?: SortOrder
@@ -7262,8 +7280,9 @@ export namespace Prisma {
     username?: StringWithAggregatesFilter<"User"> | string
     password?: StringWithAggregatesFilter<"User"> | string
     email?: StringWithAggregatesFilter<"User"> | string
+    phoneNumber?: StringNullableWithAggregatesFilter<"User"> | string | null
+    countryCode?: StringNullableWithAggregatesFilter<"User"> | string | null
     role?: EnumRoleWithAggregatesFilter<"User"> | $Enums.Role
-    token?: StringNullableWithAggregatesFilter<"User"> | string | null
     active?: BoolWithAggregatesFilter<"User"> | boolean
     AiTokensUse?: IntWithAggregatesFilter<"User"> | number
     AiTokensLimit?: IntWithAggregatesFilter<"User"> | number
@@ -7539,8 +7558,9 @@ export namespace Prisma {
     username: string
     password: string
     email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
     role?: $Enums.Role
-    token?: string | null
     active?: boolean
     AiTokensUse?: number
     AiTokensLimit?: number
@@ -7555,8 +7575,9 @@ export namespace Prisma {
     username: string
     password: string
     email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
     role?: $Enums.Role
-    token?: string | null
     active?: boolean
     AiTokensUse?: number
     AiTokensLimit?: number
@@ -7570,8 +7591,9 @@ export namespace Prisma {
     username?: StringFieldUpdateOperationsInput | string
     password?: StringFieldUpdateOperationsInput | string
     email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
-    token?: NullableStringFieldUpdateOperationsInput | string | null
     active?: BoolFieldUpdateOperationsInput | boolean
     AiTokensUse?: IntFieldUpdateOperationsInput | number
     AiTokensLimit?: IntFieldUpdateOperationsInput | number
@@ -7586,8 +7608,9 @@ export namespace Prisma {
     username?: StringFieldUpdateOperationsInput | string
     password?: StringFieldUpdateOperationsInput | string
     email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
-    token?: NullableStringFieldUpdateOperationsInput | string | null
     active?: BoolFieldUpdateOperationsInput | boolean
     AiTokensUse?: IntFieldUpdateOperationsInput | number
     AiTokensLimit?: IntFieldUpdateOperationsInput | number
@@ -7602,8 +7625,9 @@ export namespace Prisma {
     username: string
     password: string
     email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
     role?: $Enums.Role
-    token?: string | null
     active?: boolean
     AiTokensUse?: number
     AiTokensLimit?: number
@@ -7614,8 +7638,9 @@ export namespace Prisma {
     username?: StringFieldUpdateOperationsInput | string
     password?: StringFieldUpdateOperationsInput | string
     email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
-    token?: NullableStringFieldUpdateOperationsInput | string | null
     active?: BoolFieldUpdateOperationsInput | boolean
     AiTokensUse?: IntFieldUpdateOperationsInput | number
     AiTokensLimit?: IntFieldUpdateOperationsInput | number
@@ -7627,8 +7652,9 @@ export namespace Prisma {
     username?: StringFieldUpdateOperationsInput | string
     password?: StringFieldUpdateOperationsInput | string
     email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
-    token?: NullableStringFieldUpdateOperationsInput | string | null
     active?: BoolFieldUpdateOperationsInput | boolean
     AiTokensUse?: IntFieldUpdateOperationsInput | number
     AiTokensLimit?: IntFieldUpdateOperationsInput | number
@@ -7926,13 +7952,6 @@ export namespace Prisma {
     not?: NestedStringFilter<$PrismaModel> | string
   }
 
-  export type EnumRoleFilter<$PrismaModel = never> = {
-    equals?: $Enums.Role | EnumRoleFieldRefInput<$PrismaModel>
-    in?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
-    notIn?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
-    not?: NestedEnumRoleFilter<$PrismaModel> | $Enums.Role
-  }
-
   export type StringNullableFilter<$PrismaModel = never> = {
     equals?: string | StringFieldRefInput<$PrismaModel> | null
     in?: string[] | ListStringFieldRefInput<$PrismaModel> | null
@@ -7946,6 +7965,13 @@ export namespace Prisma {
     endsWith?: string | StringFieldRefInput<$PrismaModel>
     mode?: QueryMode
     not?: NestedStringNullableFilter<$PrismaModel> | string | null
+  }
+
+  export type EnumRoleFilter<$PrismaModel = never> = {
+    equals?: $Enums.Role | EnumRoleFieldRefInput<$PrismaModel>
+    in?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
+    notIn?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
+    not?: NestedEnumRoleFilter<$PrismaModel> | $Enums.Role
   }
 
   export type BoolFilter<$PrismaModel = never> = {
@@ -7993,8 +8019,9 @@ export namespace Prisma {
     username?: SortOrder
     password?: SortOrder
     email?: SortOrder
+    phoneNumber?: SortOrder
+    countryCode?: SortOrder
     role?: SortOrder
-    token?: SortOrder
     active?: SortOrder
     AiTokensUse?: SortOrder
     AiTokensLimit?: SortOrder
@@ -8013,8 +8040,9 @@ export namespace Prisma {
     username?: SortOrder
     password?: SortOrder
     email?: SortOrder
+    phoneNumber?: SortOrder
+    countryCode?: SortOrder
     role?: SortOrder
-    token?: SortOrder
     active?: SortOrder
     AiTokensUse?: SortOrder
     AiTokensLimit?: SortOrder
@@ -8026,8 +8054,9 @@ export namespace Prisma {
     username?: SortOrder
     password?: SortOrder
     email?: SortOrder
+    phoneNumber?: SortOrder
+    countryCode?: SortOrder
     role?: SortOrder
-    token?: SortOrder
     active?: SortOrder
     AiTokensUse?: SortOrder
     AiTokensLimit?: SortOrder
@@ -8075,16 +8104,6 @@ export namespace Prisma {
     _max?: NestedStringFilter<$PrismaModel>
   }
 
-  export type EnumRoleWithAggregatesFilter<$PrismaModel = never> = {
-    equals?: $Enums.Role | EnumRoleFieldRefInput<$PrismaModel>
-    in?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
-    notIn?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
-    not?: NestedEnumRoleWithAggregatesFilter<$PrismaModel> | $Enums.Role
-    _count?: NestedIntFilter<$PrismaModel>
-    _min?: NestedEnumRoleFilter<$PrismaModel>
-    _max?: NestedEnumRoleFilter<$PrismaModel>
-  }
-
   export type StringNullableWithAggregatesFilter<$PrismaModel = never> = {
     equals?: string | StringFieldRefInput<$PrismaModel> | null
     in?: string[] | ListStringFieldRefInput<$PrismaModel> | null
@@ -8101,6 +8120,16 @@ export namespace Prisma {
     _count?: NestedIntNullableFilter<$PrismaModel>
     _min?: NestedStringNullableFilter<$PrismaModel>
     _max?: NestedStringNullableFilter<$PrismaModel>
+  }
+
+  export type EnumRoleWithAggregatesFilter<$PrismaModel = never> = {
+    equals?: $Enums.Role | EnumRoleFieldRefInput<$PrismaModel>
+    in?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
+    notIn?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
+    not?: NestedEnumRoleWithAggregatesFilter<$PrismaModel> | $Enums.Role
+    _count?: NestedIntFilter<$PrismaModel>
+    _min?: NestedEnumRoleFilter<$PrismaModel>
+    _max?: NestedEnumRoleFilter<$PrismaModel>
   }
 
   export type BoolWithAggregatesFilter<$PrismaModel = never> = {
@@ -8412,12 +8441,12 @@ export namespace Prisma {
     set?: string
   }
 
-  export type EnumRoleFieldUpdateOperationsInput = {
-    set?: $Enums.Role
-  }
-
   export type NullableStringFieldUpdateOperationsInput = {
     set?: string | null
+  }
+
+  export type EnumRoleFieldUpdateOperationsInput = {
+    set?: $Enums.Role
   }
 
   export type BoolFieldUpdateOperationsInput = {
@@ -8605,13 +8634,6 @@ export namespace Prisma {
     not?: NestedStringFilter<$PrismaModel> | string
   }
 
-  export type NestedEnumRoleFilter<$PrismaModel = never> = {
-    equals?: $Enums.Role | EnumRoleFieldRefInput<$PrismaModel>
-    in?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
-    notIn?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
-    not?: NestedEnumRoleFilter<$PrismaModel> | $Enums.Role
-  }
-
   export type NestedStringNullableFilter<$PrismaModel = never> = {
     equals?: string | StringFieldRefInput<$PrismaModel> | null
     in?: string[] | ListStringFieldRefInput<$PrismaModel> | null
@@ -8624,6 +8646,13 @@ export namespace Prisma {
     startsWith?: string | StringFieldRefInput<$PrismaModel>
     endsWith?: string | StringFieldRefInput<$PrismaModel>
     not?: NestedStringNullableFilter<$PrismaModel> | string | null
+  }
+
+  export type NestedEnumRoleFilter<$PrismaModel = never> = {
+    equals?: $Enums.Role | EnumRoleFieldRefInput<$PrismaModel>
+    in?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
+    notIn?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
+    not?: NestedEnumRoleFilter<$PrismaModel> | $Enums.Role
   }
 
   export type NestedBoolFilter<$PrismaModel = never> = {
@@ -8675,16 +8704,6 @@ export namespace Prisma {
     _max?: NestedStringFilter<$PrismaModel>
   }
 
-  export type NestedEnumRoleWithAggregatesFilter<$PrismaModel = never> = {
-    equals?: $Enums.Role | EnumRoleFieldRefInput<$PrismaModel>
-    in?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
-    notIn?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
-    not?: NestedEnumRoleWithAggregatesFilter<$PrismaModel> | $Enums.Role
-    _count?: NestedIntFilter<$PrismaModel>
-    _min?: NestedEnumRoleFilter<$PrismaModel>
-    _max?: NestedEnumRoleFilter<$PrismaModel>
-  }
-
   export type NestedStringNullableWithAggregatesFilter<$PrismaModel = never> = {
     equals?: string | StringFieldRefInput<$PrismaModel> | null
     in?: string[] | ListStringFieldRefInput<$PrismaModel> | null
@@ -8711,6 +8730,16 @@ export namespace Prisma {
     gt?: number | IntFieldRefInput<$PrismaModel>
     gte?: number | IntFieldRefInput<$PrismaModel>
     not?: NestedIntNullableFilter<$PrismaModel> | number | null
+  }
+
+  export type NestedEnumRoleWithAggregatesFilter<$PrismaModel = never> = {
+    equals?: $Enums.Role | EnumRoleFieldRefInput<$PrismaModel>
+    in?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
+    notIn?: $Enums.Role[] | ListEnumRoleFieldRefInput<$PrismaModel>
+    not?: NestedEnumRoleWithAggregatesFilter<$PrismaModel> | $Enums.Role
+    _count?: NestedIntFilter<$PrismaModel>
+    _min?: NestedEnumRoleFilter<$PrismaModel>
+    _max?: NestedEnumRoleFilter<$PrismaModel>
   }
 
   export type NestedBoolWithAggregatesFilter<$PrismaModel = never> = {
@@ -8958,8 +8987,9 @@ export namespace Prisma {
     username: string
     password: string
     email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
     role?: $Enums.Role
-    token?: string | null
     active?: boolean
     AiTokensUse?: number
     AiTokensLimit?: number
@@ -8973,8 +9003,9 @@ export namespace Prisma {
     username: string
     password: string
     email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
     role?: $Enums.Role
-    token?: string | null
     active?: boolean
     AiTokensUse?: number
     AiTokensLimit?: number
@@ -9003,8 +9034,9 @@ export namespace Prisma {
     username?: StringFieldUpdateOperationsInput | string
     password?: StringFieldUpdateOperationsInput | string
     email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
-    token?: NullableStringFieldUpdateOperationsInput | string | null
     active?: BoolFieldUpdateOperationsInput | boolean
     AiTokensUse?: IntFieldUpdateOperationsInput | number
     AiTokensLimit?: IntFieldUpdateOperationsInput | number
@@ -9018,8 +9050,9 @@ export namespace Prisma {
     username?: StringFieldUpdateOperationsInput | string
     password?: StringFieldUpdateOperationsInput | string
     email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
-    token?: NullableStringFieldUpdateOperationsInput | string | null
     active?: BoolFieldUpdateOperationsInput | boolean
     AiTokensUse?: IntFieldUpdateOperationsInput | number
     AiTokensLimit?: IntFieldUpdateOperationsInput | number
@@ -9032,8 +9065,9 @@ export namespace Prisma {
     username: string
     password: string
     email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
     role?: $Enums.Role
-    token?: string | null
     active?: boolean
     AiTokensUse?: number
     AiTokensLimit?: number
@@ -9047,8 +9081,9 @@ export namespace Prisma {
     username: string
     password: string
     email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
     role?: $Enums.Role
-    token?: string | null
     active?: boolean
     AiTokensUse?: number
     AiTokensLimit?: number
@@ -9077,8 +9112,9 @@ export namespace Prisma {
     username?: StringFieldUpdateOperationsInput | string
     password?: StringFieldUpdateOperationsInput | string
     email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
-    token?: NullableStringFieldUpdateOperationsInput | string | null
     active?: BoolFieldUpdateOperationsInput | boolean
     AiTokensUse?: IntFieldUpdateOperationsInput | number
     AiTokensLimit?: IntFieldUpdateOperationsInput | number
@@ -9092,8 +9128,9 @@ export namespace Prisma {
     username?: StringFieldUpdateOperationsInput | string
     password?: StringFieldUpdateOperationsInput | string
     email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
-    token?: NullableStringFieldUpdateOperationsInput | string | null
     active?: BoolFieldUpdateOperationsInput | boolean
     AiTokensUse?: IntFieldUpdateOperationsInput | number
     AiTokensLimit?: IntFieldUpdateOperationsInput | number
@@ -9106,8 +9143,9 @@ export namespace Prisma {
     username: string
     password: string
     email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
     role?: $Enums.Role
-    token?: string | null
     active?: boolean
     AiTokensUse?: number
     AiTokensLimit?: number
@@ -9121,8 +9159,9 @@ export namespace Prisma {
     username: string
     password: string
     email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
     role?: $Enums.Role
-    token?: string | null
     active?: boolean
     AiTokensUse?: number
     AiTokensLimit?: number
@@ -9151,8 +9190,9 @@ export namespace Prisma {
     username?: StringFieldUpdateOperationsInput | string
     password?: StringFieldUpdateOperationsInput | string
     email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
-    token?: NullableStringFieldUpdateOperationsInput | string | null
     active?: BoolFieldUpdateOperationsInput | boolean
     AiTokensUse?: IntFieldUpdateOperationsInput | number
     AiTokensLimit?: IntFieldUpdateOperationsInput | number
@@ -9166,8 +9206,9 @@ export namespace Prisma {
     username?: StringFieldUpdateOperationsInput | string
     password?: StringFieldUpdateOperationsInput | string
     email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
-    token?: NullableStringFieldUpdateOperationsInput | string | null
     active?: BoolFieldUpdateOperationsInput | boolean
     AiTokensUse?: IntFieldUpdateOperationsInput | number
     AiTokensLimit?: IntFieldUpdateOperationsInput | number

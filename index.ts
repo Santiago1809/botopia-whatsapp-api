@@ -1,20 +1,20 @@
-import express from 'express'
-import { Server } from 'socket.io'
-import http from 'http'
-import cors, { type CorsOptions } from 'cors'
 import compression from 'compression'
-import helmet from 'helmet'
-import rateLimit from 'express-rate-limit'
-import { prisma } from './src/config/db'
-import { telemetryMiddleware } from './src/middleware/telemetry.middleware'
-import { HttpStatusCode } from 'axios'
-import { setupSocketEvents } from './src/controllers/whatsapp.controller'
+import cors, { type CorsOptions } from 'cors'
 import { config } from 'dotenv'
+import express from 'express'
+import rateLimit from 'express-rate-limit'
+import helmet from 'helmet'
+import http from 'http'
+import { Server } from 'socket.io'
+import { prisma } from './src/config/db'
+import { setupSocketEvents } from './src/controllers/whatsapp.controller'
+import { telemetryMiddleware } from './src/middleware/telemetry.middleware'
 import adminRoutes from './src/routes/admin.route'
-import statsRoutes from './src/routes/stats.route'
 import authRoutes from './src/routes/auth.route'
+import statsRoutes from './src/routes/stats.route'
 import userRoutes from './src/routes/user.route'
 import whatsAppRoutes from './src/routes/whatsapp.route'
+import payuRoutes from './src/routes/payments.route'
 
 config()
 
@@ -41,7 +41,7 @@ app.use(
 app.use(express.json())
 
 const allowedOrigins = [
-  'http://localhost:5173',
+  'http://localhost:3000',
   'https://frontend-clicsociable.vercel.app',
   'https://frontend-clicsociable-git-development-david-espejos-projects.vercel.app'
 ]
@@ -53,7 +53,7 @@ const corsOptions: CorsOptions = {
       callback(new Error('🚫 CORS bloqueado para este origen'))
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   credentials: true
 }
 app.use(cors(corsOptions))
@@ -61,23 +61,22 @@ const io = new Server(server, { cors: corsOptions })
 app.set('io', io)
 setupSocketEvents(io)
 
-app.use((req, res) => {
-  res.status(HttpStatusCode.Ok).json({ message: 'Server is running' })
-})
-
-app.use((req, res) => {
-  res
-    .status(HttpStatusCode.InternalServerError)
-    .json({ message: 'Internal Server Error' })
-})
 app.use('/api/admin', adminRoutes)
 app.use('/api/stats', statsRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/user', userRoutes)
 app.use('/api/whatsapp', whatsAppRoutes)
+app.use('/api/payments', payuRoutes)
 const port = process.env.PORT || 3001
 server.keepAliveTimeout = 65000
 server.headersTimeout = 70000
+
+process.on("uncaughtException", () => {
+  console.error();
+});
+process.on("unhandledRejection", () => {
+  console.error();
+});
 
 prisma.$connect().then(() => {
   server.listen(port, () => {

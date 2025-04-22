@@ -16,7 +16,15 @@ const otpStore: Record<string, { otp: string; token: string }> = {}
 
 export const registerUser = async (req: Request, res: Response) => {
   try {
-    const { username, password, role, email } = req.body as Partial<User>
+    const {
+      username,
+      password,
+      role,
+      email,
+      phoneNumber,
+      countryCode
+    } = //private String final username
+      req.body as Partial<User>
     if (!username || !password || !email) {
       res
         .status(HttpStatusCode.BadRequest)
@@ -25,11 +33,13 @@ export const registerUser = async (req: Request, res: Response) => {
     }
     const existingUser = await prisma.user.findFirst({
       where: {
-        OR: [{ username }, { email }]
+        OR: [{ username }, { email }, ...(phoneNumber ? [{ phoneNumber }] : [])]
       }
     })
     if (existingUser) {
-      res.status(409).json({ message: 'El usuario o correo ya existe' })
+      res
+        .status(409)
+        .json({ message: 'El usuario, correo o número de teléfono ya existe' })
       return
     }
     const hashedPassword = await bcrypt.hash(password, 10)
@@ -38,13 +48,15 @@ export const registerUser = async (req: Request, res: Response) => {
         username,
         password: hashedPassword,
         email,
+        phoneNumber,
+        countryCode,
         role: role ?? Role.user
       }
     })
     const token = jwt.sign(
       { username: user.username, role: user.role },
       JWT_SECRET,
-      { expiresIn: '2h' }
+      { expiresIn: '5h' }
     )
     transporter.sendMail({
       from: process.env.SMTP_USER,
@@ -63,15 +75,22 @@ export const registerUser = async (req: Request, res: Response) => {
 
 export const loginUser = async (req: Request, res: Response) => {
   try {
-    const { username, password } = req.body as Partial<User>
-    if (!username || !password) {
+    const { identifier, password } = req.body
+    if (!identifier || !password) {
       res
         .status(HttpStatusCode.BadRequest)
         .json({ message: 'Faltan datos para el login' })
+      return
     }
-    const user = await prisma.user.findUnique({
+
+    // Buscar usuario por username, email o phoneNumber
+    const user = await prisma.user.findFirst({
       where: {
-        username
+        OR: [
+          { username: identifier },
+          { email: identifier },
+          { phoneNumber: identifier }
+        ]
       }
     })
 
@@ -100,7 +119,7 @@ export const loginUser = async (req: Request, res: Response) => {
     const token = jwt.sign(
       { username: user.username, role: role },
       JWT_SECRET,
-      { expiresIn: '2h' }
+      { expiresIn: '5h' }
     )
     res.json({ token, user: { username: user.username, role: role } })
   } catch (error) {
@@ -185,19 +204,87 @@ export async function logOut(req: CustomRequest, res: Response) {
   try {
     for (const numberData of user?.whatsappNumbers || []) {
       const numberId = numberData.id
-
       if (clients[numberId]) {
-        await clients[numberId].logout()
-        await clients[numberId].pupBrowser?.close()
-        await clients[numberId].destroy()
+        try {
+          const client = clients[numberId]
+          // Define a safer cleanup function
+          const safeCleanup = async () => {
+            // Remove event listeners first
+            try {
+              client.removeAllListeners()
+            } catch (err) {
+              console.warn('removeAllListeners failed', err)
+            }
+
+            // Attempt logout if possible
+            try {
+              if (client.pupBrowser && client.pupBrowser.isConnected()) {
+                await client.logout()
+              }
+            } catch (err) {
+              console.warn('logout failed', err)
+            }
+
+            // Close browser resources
+            try {
+              // Check if page exists and is not closed before attempting to close
+              if (client.pupPage && !client.pupPage.isClosed?.()) {
+                await client.pupPage.close().catch(() => {})
+              }
+            } catch (err) {
+              console.warn('pupPage close failed', err)
+            }
+
+            // Handle browser disconnection
+            try {
+              if (client.pupBrowser) {
+                if (client.pupBrowser.isConnected?.()) {
+                  client.pupBrowser.disconnect()
+                }
+                await client.pupBrowser.close().catch(() => {})
+              }
+            } catch (err) {
+              console.warn('pupBrowser close failed', err)
+            }
+
+            // Final cleanup
+            try {
+              if (typeof client.destroy === 'function') {
+                await client.destroy()
+              }
+            } catch (err) {
+              console.warn('destroy failed', err)
+            }
+          }
+
+          // Execute the cleanup with timeout protection
+          try {
+            await Promise.race([
+              safeCleanup(),
+              new Promise((resolve) => setTimeout(resolve, 5000))
+            ])
+          } catch (err) {
+            console.error('Client cleanup failed:', err)
+          }
+        } catch (err) {
+          console.warn(`Error cleaning up client ${numberId}:`, err)
+        }
+        // Always delete the client reference
+        delete clients[numberId]
       }
-      delete clients[numberId]
     }
-    await prisma.whatsAppNumber.deleteMany({
-      where: {
-        userId: user?.id
-      }
-    })
+    // Attempt to delete WhatsApp numbers without crashing
+    try {
+      await prisma.whatsAppNumber.deleteMany({
+        where: {
+          userId: user?.id
+        }
+      })
+    } catch (err) {
+      console.warn('Error deleting WhatsApp numbers:', err)
+    }
+    // Respond success
+    return res.json({ message: 'Sesión cerrada correctamente' })
   } catch {
     res
       .status(HttpStatusCode.InternalServerError)

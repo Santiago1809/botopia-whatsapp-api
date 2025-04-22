@@ -12,7 +12,6 @@ const phoneUtil = PhoneNumberUtil.getInstance()
 
 export async function startWhatsApp(req: Request, res: Response) {
   const { numberId } = req.body as Partial<StartWhatsApp>
-
   if (!numberId) {
     res
       .status(HttpStatusCode.BadRequest)
@@ -33,8 +32,69 @@ export async function startWhatsApp(req: Request, res: Response) {
       return
     }
     if (clients[numberId]) {
-      await clients[numberId].pupBrowser?.close()
-      await clients[numberId].destroy()
+      const client = clients[numberId]
+
+      // Define a safer cleanup function
+      const safeCleanup = async () => {
+        // Remove event listeners first
+        try {
+          client.removeAllListeners()
+        } catch (err) {
+          console.warn('removeAllListeners failed', err)
+        }
+
+        // Attempt logout if possible
+        try {
+          if (client.pupBrowser && client.pupBrowser.isConnected()) {
+            await client.logout()
+          }
+        } catch (err) {
+          console.warn('logout failed', err)
+        }
+
+        // Close browser resources
+        try {
+          // Check if page exists and is not closed before attempting to close
+          if (client.pupPage && !client.pupPage.isClosed?.()) {
+            await client.pupPage.close().catch(() => {})
+          }
+        } catch (err) {
+          console.warn('pupPage close failed', err)
+        }
+
+        // Handle browser disconnection
+        try {
+          if (client.pupBrowser) {
+            if (client.pupBrowser.isConnected?.()) {
+              client.pupBrowser.disconnect()
+            }
+            await client.pupBrowser.close().catch(() => {})
+          }
+        } catch (err) {
+          console.warn('pupBrowser close failed', err)
+        }
+
+        // Final cleanup
+        try {
+          if (typeof client.destroy === 'function') {
+            await client.destroy()
+          }
+        } catch (err) {
+          console.warn('destroy failed', err)
+        }
+      }
+
+      // Execute the cleanup with timeout protection
+      try {
+        await Promise.race([
+          safeCleanup(),
+          new Promise((resolve) => setTimeout(resolve, 5000))
+        ])
+      } catch (err) {
+        console.error('Client cleanup failed:', err)
+      }
+
+      // Always delete the client reference
       delete clients[numberId]
     }
     const client = new Client({
@@ -63,8 +123,69 @@ export async function startWhatsApp(req: Request, res: Response) {
     client.on('disconnected', async () => {
       try {
         if (clients[numberId]) {
-          await clients[numberId].pupBrowser?.close()
-          await clients[numberId].destroy()
+          const client = clients[numberId]
+
+          // Define a safer cleanup function
+          const safeCleanup = async () => {
+            // Remove event listeners first
+            try {
+              client.removeAllListeners()
+            } catch (err) {
+              console.warn('removeAllListeners failed', err)
+            }
+
+            // Attempt logout if possible
+            try {
+              if (client.pupBrowser && client.pupBrowser.isConnected()) {
+                await client.logout()
+              }
+            } catch (err) {
+              console.warn('logout failed', err)
+            }
+
+            // Close browser resources
+            try {
+              // Check if page exists and is not closed before attempting to close
+              if (client.pupPage && !client.pupPage.isClosed?.()) {
+                await client.pupPage.close().catch(() => {})
+              }
+            } catch (err) {
+              console.warn('pupPage close failed', err)
+            }
+
+            // Handle browser disconnection
+            try {
+              if (client.pupBrowser) {
+                if (client.pupBrowser.isConnected?.()) {
+                  client.pupBrowser.disconnect()
+                }
+                await client.pupBrowser.close().catch(() => {})
+              }
+            } catch (err) {
+              console.warn('pupBrowser close failed', err)
+            }
+
+            // Final cleanup
+            try {
+              if (typeof client.destroy === 'function') {
+                await client.destroy()
+              }
+            } catch (err) {
+              console.warn('destroy failed', err)
+            }
+          }
+
+          // Execute the cleanup with timeout protection
+          try {
+            await Promise.race([
+              safeCleanup(),
+              new Promise((resolve) => setTimeout(resolve, 5000))
+            ])
+          } catch (err) {
+            console.error('Client cleanup failed:', err)
+          }
+
+          // Always delete the client reference
           delete clients[numberId]
           io.to(numberId.toString()).emit('whatsapp-numbers-updated')
         }
@@ -208,10 +329,11 @@ export async function stopWhatsApp(req: Request, res: Response) {
 
   try {
     if (clients[numberId]) {
-      await clients[numberId].pupBrowser?.close()
+      const client = clients[numberId]
+      await client.logout()
+      await client.destroy()
+      delete clients[numberId]
     }
-    await clients[numberId].destroy()
-    delete clients[numberId]
     res.status(HttpStatusCode.Ok).json({ message: 'Sesión cerrada' })
   } catch (error) {
     console.error('❌ Error cerrando sesión:', error)
