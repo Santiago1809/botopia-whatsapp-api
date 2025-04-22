@@ -30,7 +30,7 @@ model User {
   active            Boolean          @default(true)
   whatsappNumbers   WhatsAppNumber[]
   AiTokensUse       Int              @default(0)
-  AiTokensLimit     Int              @default(50000)
+  AiTokensLimit     Int              @default(100000)
   tokensPerResponse Int              @default(120)
   Payment           Payment[]
   Agent             Agent[]

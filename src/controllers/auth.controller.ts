@@ -284,7 +284,7 @@ export async function logOut(req: CustomRequest, res: Response) {
       console.warn('Error deleting WhatsApp numbers:', err)
     }
     // Respond success
-    return res.json({ message: 'Sesión cerrada correctamente' })
+    res.json({ message: 'Sesión cerrada correctamente' })
   } catch {
     res
       .status(HttpStatusCode.InternalServerError)

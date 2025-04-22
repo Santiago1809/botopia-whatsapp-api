@@ -62,8 +62,8 @@ export const telemetryMiddleware = (
         )
         country = geoRes.data.country || ''
         city = geoRes.data.city || ''
-      } catch (geoErr) {
-        console.error('Geo lookup failed:', geoErr)
+      } catch {
+        console.error() 
       }
       await prisma.telemetry.create({
         data: {
@@ -75,8 +75,8 @@ export const telemetryMiddleware = (
           ramUsageMB: +memoryUsageMB
         }
       })
-    } catch (error) {
-      console.error('Error saving telemetry data:', error)
+    } catch {
+      console.error('Error saving telemetry data:')
     }
   })
 
