@@ -10,7 +10,6 @@ CREATE TABLE "User" (
     "phoneNumber" TEXT,
     "countryCode" TEXT,
     "role" "Role" NOT NULL DEFAULT 'user',
-    "token" TEXT,
     "active" BOOLEAN NOT NULL DEFAULT true,
     "AiTokensUse" INTEGER NOT NULL DEFAULT 0,
     "AiTokensLimit" INTEGER NOT NULL DEFAULT 50000,
@@ -26,7 +25,7 @@ CREATE TABLE "WhatsAppNumber" (
     "name" TEXT NOT NULL DEFAULT 'Sin Nombre',
     "aiEnabled" BOOLEAN NOT NULL DEFAULT false,
     "aiPrompt" TEXT NOT NULL DEFAULT '',
-    "aiModel" TEXT NOT NULL DEFAULT 'gemini-1.5-turbo',
+    "aiModel" TEXT NOT NULL DEFAULT 'gemini-2.0-flash',
     "responseGroups" BOOLEAN NOT NULL DEFAULT false,
     "userId" INTEGER NOT NULL,
 

@@ -213,7 +213,7 @@ const config = {
     "db": {
       "url": {
         "fromEnvVar": "DATABASE_URL",
-        "value": "postgresql://postgres:Sa18Aa15Rh18Ca24_@localhost:5432/whatsapp_api?schema=public"
+        "value": "postgres://avnadmin:AVNS_9tvzhRm5B2gY_Tgn4DZ@whatsapp-agents-whatsapp-agents.g.aivencloud.com:10110/defaultdb?sslmode=require"
       }
     }
   },
