@@ -42,8 +42,7 @@ app.use(express.json())
 
 const allowedOrigins = [
   'http://localhost:3000',
-  'https://frontend-clicsociable.vercel.app',
-  'https://frontend-clicsociable-git-development-david-espejos-projects.vercel.app'
+  'https://botopia-whatsapp.vercel.app',
 ]
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback) {
