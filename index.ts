@@ -70,11 +70,12 @@ const port = process.env.PORT || 3001
 server.keepAliveTimeout = 65000
 server.headersTimeout = 70000
 
-process.on("uncaughtException", () => {
-  console.error();
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
 });
-process.on("unhandledRejection", () => {
-  console.error();
+
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
 });
 
 prisma.$connect().then(() => {
