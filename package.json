@@ -1,11 +1,12 @@
 {
   "name": "whatsapp-api",
   "module": "index.ts",
-  "type": "module",
+  "type": "commonjs",
   "private": true,
   "scripts": {
+    "build": "bun install && bun build --packages=external . --outdir ./out --target=node --format=cjs",
     "dev": "bun --watch index.ts",
-    "start": "bun index.ts"
+    "start": "node out/index.js"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",
