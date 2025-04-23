@@ -38,6 +38,7 @@ app.use(
     }
   })
 )
+app.set('trust proxy', 1); // confía en el primer proxy
 app.use(express.json())
 
 const allowedOrigins = [
@@ -70,12 +71,11 @@ const port = process.env.PORT || 3001
 server.keepAliveTimeout = 65000
 server.headersTimeout = 70000
 
-process.on("uncaughtException", (err) => {
-  console.error("Uncaught Exception:", err);
+process.on("uncaughtException", () => {
+  console.error();
 });
-
-process.on("unhandledRejection", (reason, promise) => {
-  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+process.on("unhandledRejection", () => {
+  console.error();
 });
 
 prisma.$connect().then(() => {
