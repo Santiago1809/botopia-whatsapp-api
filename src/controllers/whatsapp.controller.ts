@@ -1,5 +1,9 @@
 import type { Request, Response } from 'express'
-import type { SendMessageBody, StartWhatsApp } from '../interfaces/global'
+import type {
+  CustomRequest,
+  SendMessageBody,
+  StartWhatsApp
+} from '../interfaces/global'
 import { prisma } from '../config/db'
 import { clients } from '../WhatsAppClients'
 import { Client, LocalAuth } from 'whatsapp-web.js'
@@ -312,34 +316,103 @@ export async function sendMessage(req: Request, res: Response) {
     })
   }
 }
-export async function stopWhatsApp(req: Request, res: Response) {
-  const { numberId } = req.body as Partial<StartWhatsApp>
-  if (!numberId) {
-    res
-      .status(HttpStatusCode.BadRequest)
-      .json({ message: 'Falta el id del número' })
-    return
-  }
-  if (!clients[numberId]) {
+export async function stopWhatsApp(req: CustomRequest, res: Response) {
+  const user = await prisma.user.findFirst({
+    where: {
+      username: req.user?.username
+    },
+    include: {
+      whatsappNumbers: true
+    }
+  })
+
+  if (!user) {
     res
       .status(HttpStatusCode.NotFound)
-      .json({ message: 'No hay sesión para este número' })
+      .json({ message: 'Usuario no encontrado' })
     return
   }
 
   try {
-    if (clients[numberId]) {
-      const client = clients[numberId]
-      await client.logout()
-      await client.destroy()
-      delete clients[numberId]
+    for (const number of user.whatsappNumbers || []) {
+      await prisma.whatsAppNumber.delete({
+        where: {
+          id: number.id
+        }
+      })
+      if (clients[number.id]) {
+        const client = clients[number.id]
+
+        // Define a safer cleanup function
+        const safeCleanup = async () => {
+          // Remove event listeners first
+          try {
+            client?.removeAllListeners()
+          } catch (err) {
+            console.warn('removeAllListeners failed', err)
+          }
+
+          // Attempt logout if possible
+          try {
+            if (client?.pupBrowser && client.pupBrowser.isConnected()) {
+              await client.logout()
+            }
+          } catch (err) {
+            console.warn('logout failed', err)
+          }
+
+          // Close browser resources
+          try {
+            // Check if page exists and is not closed before attempting to close
+            if (client?.pupPage && !client.pupPage.isClosed?.()) {
+              await client.pupPage.close().catch(() => {})
+            }
+          } catch (err) {
+            console.warn('pupPage close failed', err)
+          }
+
+          // Handle browser disconnection
+          try {
+            if (client?.pupBrowser) {
+              if (client.pupBrowser.isConnected?.()) {
+                client.pupBrowser.disconnect()
+              }
+              await client.pupBrowser.close().catch(() => {})
+            }
+          } catch (err) {
+            console.warn('pupBrowser close failed', err)
+          }
+
+          // Final cleanup
+          try {
+            if (typeof client?.destroy === 'function') {
+              await client.destroy()
+            }
+          } catch (err) {
+            console.warn('destroy failed', err)
+          }
+        }
+        
+        // Execute the cleanup with timeout protection
+        try {
+          await Promise.race([
+            safeCleanup(),
+            new Promise((resolve) => setTimeout(resolve, 5000))
+          ])
+        } catch (err) {
+          console.error('Client cleanup failed:', err)
+        }
+        
+        // Always delete the client reference
+        delete clients[number.id]
+      }
     }
-    res.status(HttpStatusCode.Ok).json({ message: 'Sesión cerrada' })
+    res.status(HttpStatusCode.Ok).json({ message: 'WhatsApp detenido' })
   } catch (error) {
-    console.error('❌ Error cerrando sesión:', error)
-    res
-      .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error cerrando sesión' })
+    console.error('❌ Error al detener WhatsApp:', (error as Error).message)
+    res.status(HttpStatusCode.InternalServerError).json({
+      message: 'Error interno del servidor al detener WhatsApp'
+    })
   }
 }
 export function setupSocketEvents(io: Server) {

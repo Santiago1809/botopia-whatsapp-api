@@ -1,6 +1,6 @@
 import type { NextFunction, Response } from 'express'
 import jwt from 'jsonwebtoken'
-import type { CustomJwtPaylod, CustomRequest } from '../interfaces/global'
+import type { CustomRequest, RequestUser } from '../interfaces/global'
 
 export async function authenticateToken(
   req: CustomRequest,
@@ -11,22 +11,25 @@ export async function authenticateToken(
   const token = authHeader && authHeader.split(' ')[1]
 
   if (!token) {
-    void res.sendStatus(401) // Unauthorized
+    res.sendStatus(401) // Unauthorized
+    return
   }
 
   try {
-    jwt.verify(
-      token as string,
-      process.env.JWT_SECRET || 'secret',
-      (err, decoded) => {
-        if (err) {
-          return res.sendStatus(403)
+    // Convertir jwt.verify a promesa para mejor manejo de async/await
+    const decoded = await new Promise<RequestUser>((resolve, reject) => {
+      jwt.verify(
+        token as string,
+        process.env.JWT_SECRET || 'secret',
+        (err, decoded) => {
+          if (err) reject(err)
+          else resolve(decoded as RequestUser)
         }
-        const user = (decoded as CustomJwtPaylod)?.user
-        req.user = user
-        next()
-      }
-    )
+      )
+    })
+    // Asignar usuario decodificado a la solicitud
+    req.user = decoded
+    next()
   } catch (error) {
     if (error instanceof Error) {
       console.error('❌ Error en la verificación del token:', error.message)
@@ -43,9 +46,11 @@ export async function authenticateToken(
       res
         .status(401)
         .json({ message: 'Token expirado. Por favor, inicia sesión de nuevo.' })
+      return
     }
 
     res.status(403).json({ message: 'Token inválido.' })
+    return
   }
 }
 
