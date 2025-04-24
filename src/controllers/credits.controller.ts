@@ -85,7 +85,7 @@ export async function registerCreditUsage(userId: number, creditsUsed: number) {
       }
     })
 
-    const DEFAULT_CREDIT_LIMIT = 100000 // Definimos un valor predeterminado
+    const DEFAULT_CREDIT_LIMIT = 10000 // Definimos un valor predeterminado
 
     if (!userCredits) {
       const user = await prisma.user.findUnique({
