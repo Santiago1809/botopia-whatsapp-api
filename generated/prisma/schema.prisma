@@ -25,7 +25,7 @@ model User {
   username          String           @unique
   password          String
   email             String           @unique
-  phoneNumber       String?          @unique
+  phoneNumber       String? // Sin @unique
   countryCode       String?
   role              Role             @default(user)
   active            Boolean          @default(true)
@@ -34,7 +34,12 @@ model User {
   Payment           Payment[]
   Agent             Agent[]
   userCredits       UserCredits[]
+
+  @@index([phoneNumber])
 }
+
+// Necesitaremos crear un índice único parcial directamente en PostgreSQL
+// con una migración SQL personalizada
 
 model UserCredits {
   id           Int      @id @default(autoincrement())
