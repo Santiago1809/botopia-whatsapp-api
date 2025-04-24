@@ -254,7 +254,7 @@ export const welcomeUserTemplate = (name: string) => `
       margin: 0;
       padding: 20px;
       text-align: center;
-      color: #FAECD4;
+      color: #FAECD4 !important;
     }
     .container {
       max-width: 600px;
@@ -269,7 +269,7 @@ export const welcomeUserTemplate = (name: string) => `
     .header {
       background: linear-gradient(145deg, #411E8A, #362075);
       padding: 25px 20px;
-      color: #FAECD4;
+      color: #FAECD4 !important;
       font-size: 22px;
       font-weight: bold;
       letter-spacing: 0.5px;
@@ -279,7 +279,7 @@ export const welcomeUserTemplate = (name: string) => `
     .content {
       margin: 30px 25px;
       font-size: 16px;
-      color: #FAECD4;
+      color: #FAECD4 !important;
       line-height: 1.6;
     }
     .feature {
@@ -331,7 +331,7 @@ export const welcomeUserTemplate = (name: string) => `
     }
     .highlight {
       font-weight: bold;
-      color: #F3E8FF;
+      color: #F3E8FF !important;
     }
     .welcome-emoji {
       font-size: 35px;
@@ -363,7 +363,10 @@ export const welcomeUserTemplate = (name: string) => `
         <div class="feature">✅ WhatsApp API</div>
         <div class="feature">🤖 Chatbots</div>
         <div class="feature">📊 Análisis</div>
+        <div class="feature">👷🏻‍♂️ Equipo de ingenieros</div>
       </div>
+
+      <p>Con tu registro, tienes 10,000 créditos gratis para que conozcas nuestro potencial y te animes a adquirir nuestros planes y juntos construir el futuro ⚡.</p>
       
       <p>Si tienes alguna duda o necesitas ayuda, no dudes en contactarnos.</p>
     </div>

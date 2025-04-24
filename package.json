@@ -4,7 +4,7 @@
   "type": "commonjs",
   "private": true,
   "scripts": {
-    "build": "bun install && bun build --packages=external . --outdir ./out --target=node --format=cjs",
+    "build": "bun install && bun build --packages=external . --outdir ./out --target=node --format=cjs && bunx prisma migrate dev",
     "dev": "bun --watch index.ts",
     "start": "node out/index.js"
   },

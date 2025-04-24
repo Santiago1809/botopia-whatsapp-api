@@ -9,7 +9,8 @@ import {
   getWhatsAppNumbers,
   getAgents,
   addAgent,
-  updateAgent
+  updateAgent,
+  deleteAgent
 } from '../controllers/user.controller'
 
 const router = express.Router()
@@ -21,7 +22,7 @@ router.get('/get-numbers', authenticateToken, getWhatsAppNumbers)
 router.get('/agents', authenticateToken, getAgents)
 router.post('/agents', authenticateToken, addAgent)
 router.patch('/agents/:agentId', authenticateToken, updateAgent)
-router.delete('/agents/:agentId', authenticateToken, updateAgent)
+router.delete('/agents/:agentId', authenticateToken, deleteAgent)
 router.delete(
   '/delete-number/:numberId',
   authenticateToken,

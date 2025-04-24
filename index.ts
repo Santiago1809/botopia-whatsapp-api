@@ -15,6 +15,7 @@ import statsRoutes from './src/routes/stats.route'
 import userRoutes from './src/routes/user.route'
 import whatsAppRoutes from './src/routes/whatsapp.route'
 import payuRoutes from './src/routes/payments.route'
+import creditsRoutes from './src/routes/credits.route'
 
 config()
 
@@ -38,13 +39,13 @@ app.use(
     }
   })
 )
-app.set('trust proxy', 1); // confía en el primer proxy
+app.set('trust proxy', 1) // confía en el primer proxy
 app.use(express.json())
 
 const allowedOrigins = [
   'http://localhost:3000',
   'https://botopia-whatsapp.vercel.app',
-  'https://app.botopia.online',
+  'https://app.botopia.online'
 ]
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback) {
@@ -68,16 +69,17 @@ app.use('/api/auth', authRoutes)
 app.use('/api/user', userRoutes)
 app.use('/api/whatsapp', whatsAppRoutes)
 app.use('/api/payments', payuRoutes)
+app.use('/api/credits', creditsRoutes)
 const port = process.env.PORT || 3001
 server.keepAliveTimeout = 65000
 server.headersTimeout = 70000
 
-process.on("uncaughtException", () => {
-  console.error();
-});
-process.on("unhandledRejection", () => {
-  console.error();
-});
+process.on('uncaughtException', () => {
+  console.error()
+})
+process.on('unhandledRejection', () => {
+  console.error()
+})
 
 prisma.$connect().then(() => {
   server.listen(port, () => {

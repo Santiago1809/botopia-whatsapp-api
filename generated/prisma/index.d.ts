@@ -19,6 +19,11 @@ export type PrismaPromise<T> = $Public.PrismaPromise<T>
  */
 export type User = $Result.DefaultSelection<Prisma.$UserPayload>
 /**
+ * Model UserCredits
+ * 
+ */
+export type UserCredits = $Result.DefaultSelection<Prisma.$UserCreditsPayload>
+/**
  * Model WhatsAppNumber
  * 
  */
@@ -190,6 +195,16 @@ export class PrismaClient<
     * ```
     */
   get user(): Prisma.UserDelegate<ExtArgs, ClientOptions>;
+
+  /**
+   * `prisma.userCredits`: Exposes CRUD operations for the **UserCredits** model.
+    * Example usage:
+    * ```ts
+    * // Fetch zero or more UserCredits
+    * const userCredits = await prisma.userCredits.findMany()
+    * ```
+    */
+  get userCredits(): Prisma.UserCreditsDelegate<ExtArgs, ClientOptions>;
 
   /**
    * `prisma.whatsAppNumber`: Exposes CRUD operations for the **WhatsAppNumber** model.
@@ -671,6 +686,7 @@ export namespace Prisma {
 
   export const ModelName: {
     User: 'User',
+    UserCredits: 'UserCredits',
     WhatsAppNumber: 'WhatsAppNumber',
     Telemetry: 'Telemetry',
     Payment: 'Payment',
@@ -693,7 +709,7 @@ export namespace Prisma {
       omit: GlobalOmitOptions
     }
     meta: {
-      modelProps: "user" | "whatsAppNumber" | "telemetry" | "payment" | "agent"
+      modelProps: "user" | "userCredits" | "whatsAppNumber" | "telemetry" | "payment" | "agent"
       txIsolationLevel: Prisma.TransactionIsolationLevel
     }
     model: {
@@ -768,6 +784,80 @@ export namespace Prisma {
           count: {
             args: Prisma.UserCountArgs<ExtArgs>
             result: $Utils.Optional<UserCountAggregateOutputType> | number
+          }
+        }
+      }
+      UserCredits: {
+        payload: Prisma.$UserCreditsPayload<ExtArgs>
+        fields: Prisma.UserCreditsFieldRefs
+        operations: {
+          findUnique: {
+            args: Prisma.UserCreditsFindUniqueArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload> | null
+          }
+          findUniqueOrThrow: {
+            args: Prisma.UserCreditsFindUniqueOrThrowArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload>
+          }
+          findFirst: {
+            args: Prisma.UserCreditsFindFirstArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload> | null
+          }
+          findFirstOrThrow: {
+            args: Prisma.UserCreditsFindFirstOrThrowArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload>
+          }
+          findMany: {
+            args: Prisma.UserCreditsFindManyArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload>[]
+          }
+          create: {
+            args: Prisma.UserCreditsCreateArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload>
+          }
+          createMany: {
+            args: Prisma.UserCreditsCreateManyArgs<ExtArgs>
+            result: BatchPayload
+          }
+          createManyAndReturn: {
+            args: Prisma.UserCreditsCreateManyAndReturnArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload>[]
+          }
+          delete: {
+            args: Prisma.UserCreditsDeleteArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload>
+          }
+          update: {
+            args: Prisma.UserCreditsUpdateArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload>
+          }
+          deleteMany: {
+            args: Prisma.UserCreditsDeleteManyArgs<ExtArgs>
+            result: BatchPayload
+          }
+          updateMany: {
+            args: Prisma.UserCreditsUpdateManyArgs<ExtArgs>
+            result: BatchPayload
+          }
+          updateManyAndReturn: {
+            args: Prisma.UserCreditsUpdateManyAndReturnArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload>[]
+          }
+          upsert: {
+            args: Prisma.UserCreditsUpsertArgs<ExtArgs>
+            result: $Utils.PayloadToResult<Prisma.$UserCreditsPayload>
+          }
+          aggregate: {
+            args: Prisma.UserCreditsAggregateArgs<ExtArgs>
+            result: $Utils.Optional<AggregateUserCredits>
+          }
+          groupBy: {
+            args: Prisma.UserCreditsGroupByArgs<ExtArgs>
+            result: $Utils.Optional<UserCreditsGroupByOutputType>[]
+          }
+          count: {
+            args: Prisma.UserCreditsCountArgs<ExtArgs>
+            result: $Utils.Optional<UserCreditsCountAggregateOutputType> | number
           }
         }
       }
@@ -1152,6 +1242,7 @@ export namespace Prisma {
   }
   export type GlobalOmitConfig = {
     user?: UserOmit
+    userCredits?: UserCreditsOmit
     whatsAppNumber?: WhatsAppNumberOmit
     telemetry?: TelemetryOmit
     payment?: PaymentOmit
@@ -1253,12 +1344,14 @@ export namespace Prisma {
     whatsappNumbers: number
     Payment: number
     Agent: number
+    userCredits: number
   }
 
   export type UserCountOutputTypeSelect<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
     whatsappNumbers?: boolean | UserCountOutputTypeCountWhatsappNumbersArgs
     Payment?: boolean | UserCountOutputTypeCountPaymentArgs
     Agent?: boolean | UserCountOutputTypeCountAgentArgs
+    userCredits?: boolean | UserCountOutputTypeCountUserCreditsArgs
   }
 
   // Custom InputTypes
@@ -1293,6 +1386,13 @@ export namespace Prisma {
     where?: AgentWhereInput
   }
 
+  /**
+   * UserCountOutputType without action
+   */
+  export type UserCountOutputTypeCountUserCreditsArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    where?: UserCreditsWhereInput
+  }
+
 
   /**
    * Models
@@ -1312,15 +1412,11 @@ export namespace Prisma {
 
   export type UserAvgAggregateOutputType = {
     id: number | null
-    AiTokensUse: number | null
-    AiTokensLimit: number | null
     tokensPerResponse: number | null
   }
 
   export type UserSumAggregateOutputType = {
     id: number | null
-    AiTokensUse: number | null
-    AiTokensLimit: number | null
     tokensPerResponse: number | null
   }
 
@@ -1333,8 +1429,6 @@ export namespace Prisma {
     countryCode: string | null
     role: $Enums.Role | null
     active: boolean | null
-    AiTokensUse: number | null
-    AiTokensLimit: number | null
     tokensPerResponse: number | null
   }
 
@@ -1347,8 +1441,6 @@ export namespace Prisma {
     countryCode: string | null
     role: $Enums.Role | null
     active: boolean | null
-    AiTokensUse: number | null
-    AiTokensLimit: number | null
     tokensPerResponse: number | null
   }
 
@@ -1361,8 +1453,6 @@ export namespace Prisma {
     countryCode: number
     role: number
     active: number
-    AiTokensUse: number
-    AiTokensLimit: number
     tokensPerResponse: number
     _all: number
   }
@@ -1370,15 +1460,11 @@ export namespace Prisma {
 
   export type UserAvgAggregateInputType = {
     id?: true
-    AiTokensUse?: true
-    AiTokensLimit?: true
     tokensPerResponse?: true
   }
 
   export type UserSumAggregateInputType = {
     id?: true
-    AiTokensUse?: true
-    AiTokensLimit?: true
     tokensPerResponse?: true
   }
 
@@ -1391,8 +1477,6 @@ export namespace Prisma {
     countryCode?: true
     role?: true
     active?: true
-    AiTokensUse?: true
-    AiTokensLimit?: true
     tokensPerResponse?: true
   }
 
@@ -1405,8 +1489,6 @@ export namespace Prisma {
     countryCode?: true
     role?: true
     active?: true
-    AiTokensUse?: true
-    AiTokensLimit?: true
     tokensPerResponse?: true
   }
 
@@ -1419,8 +1501,6 @@ export namespace Prisma {
     countryCode?: true
     role?: true
     active?: true
-    AiTokensUse?: true
-    AiTokensLimit?: true
     tokensPerResponse?: true
     _all?: true
   }
@@ -1520,8 +1600,6 @@ export namespace Prisma {
     countryCode: string | null
     role: $Enums.Role
     active: boolean
-    AiTokensUse: number
-    AiTokensLimit: number
     tokensPerResponse: number
     _count: UserCountAggregateOutputType | null
     _avg: UserAvgAggregateOutputType | null
@@ -1553,12 +1631,11 @@ export namespace Prisma {
     countryCode?: boolean
     role?: boolean
     active?: boolean
-    AiTokensUse?: boolean
-    AiTokensLimit?: boolean
     tokensPerResponse?: boolean
     whatsappNumbers?: boolean | User$whatsappNumbersArgs<ExtArgs>
     Payment?: boolean | User$PaymentArgs<ExtArgs>
     Agent?: boolean | User$AgentArgs<ExtArgs>
+    userCredits?: boolean | User$userCreditsArgs<ExtArgs>
     _count?: boolean | UserCountOutputTypeDefaultArgs<ExtArgs>
   }, ExtArgs["result"]["user"]>
 
@@ -1571,8 +1648,6 @@ export namespace Prisma {
     countryCode?: boolean
     role?: boolean
     active?: boolean
-    AiTokensUse?: boolean
-    AiTokensLimit?: boolean
     tokensPerResponse?: boolean
   }, ExtArgs["result"]["user"]>
 
@@ -1585,8 +1660,6 @@ export namespace Prisma {
     countryCode?: boolean
     role?: boolean
     active?: boolean
-    AiTokensUse?: boolean
-    AiTokensLimit?: boolean
     tokensPerResponse?: boolean
   }, ExtArgs["result"]["user"]>
 
@@ -1599,16 +1672,15 @@ export namespace Prisma {
     countryCode?: boolean
     role?: boolean
     active?: boolean
-    AiTokensUse?: boolean
-    AiTokensLimit?: boolean
     tokensPerResponse?: boolean
   }
 
-  export type UserOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "username" | "password" | "email" | "phoneNumber" | "countryCode" | "role" | "active" | "AiTokensUse" | "AiTokensLimit" | "tokensPerResponse", ExtArgs["result"]["user"]>
+  export type UserOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "username" | "password" | "email" | "phoneNumber" | "countryCode" | "role" | "active" | "tokensPerResponse", ExtArgs["result"]["user"]>
   export type UserInclude<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
     whatsappNumbers?: boolean | User$whatsappNumbersArgs<ExtArgs>
     Payment?: boolean | User$PaymentArgs<ExtArgs>
     Agent?: boolean | User$AgentArgs<ExtArgs>
+    userCredits?: boolean | User$userCreditsArgs<ExtArgs>
     _count?: boolean | UserCountOutputTypeDefaultArgs<ExtArgs>
   }
   export type UserIncludeCreateManyAndReturn<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {}
@@ -1620,6 +1692,7 @@ export namespace Prisma {
       whatsappNumbers: Prisma.$WhatsAppNumberPayload<ExtArgs>[]
       Payment: Prisma.$PaymentPayload<ExtArgs>[]
       Agent: Prisma.$AgentPayload<ExtArgs>[]
+      userCredits: Prisma.$UserCreditsPayload<ExtArgs>[]
     }
     scalars: $Extensions.GetPayloadResult<{
       id: number
@@ -1630,8 +1703,6 @@ export namespace Prisma {
       countryCode: string | null
       role: $Enums.Role
       active: boolean
-      AiTokensUse: number
-      AiTokensLimit: number
       tokensPerResponse: number
     }, ExtArgs["result"]["user"]>
     composites: {}
@@ -2030,6 +2101,7 @@ export namespace Prisma {
     whatsappNumbers<T extends User$whatsappNumbersArgs<ExtArgs> = {}>(args?: Subset<T, User$whatsappNumbersArgs<ExtArgs>>): Prisma.PrismaPromise<$Result.GetResult<Prisma.$WhatsAppNumberPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
     Payment<T extends User$PaymentArgs<ExtArgs> = {}>(args?: Subset<T, User$PaymentArgs<ExtArgs>>): Prisma.PrismaPromise<$Result.GetResult<Prisma.$PaymentPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
     Agent<T extends User$AgentArgs<ExtArgs> = {}>(args?: Subset<T, User$AgentArgs<ExtArgs>>): Prisma.PrismaPromise<$Result.GetResult<Prisma.$AgentPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
+    userCredits<T extends User$userCreditsArgs<ExtArgs> = {}>(args?: Subset<T, User$userCreditsArgs<ExtArgs>>): Prisma.PrismaPromise<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions> | Null>
     /**
      * Attaches callbacks for the resolution and/or rejection of the Promise.
      * @param onfulfilled The callback to execute when the Promise is resolved.
@@ -2067,8 +2139,6 @@ export namespace Prisma {
     readonly countryCode: FieldRef<"User", 'String'>
     readonly role: FieldRef<"User", 'Role'>
     readonly active: FieldRef<"User", 'Boolean'>
-    readonly AiTokensUse: FieldRef<"User", 'Int'>
-    readonly AiTokensLimit: FieldRef<"User", 'Int'>
     readonly tokensPerResponse: FieldRef<"User", 'Int'>
   }
     
@@ -2530,6 +2600,30 @@ export namespace Prisma {
   }
 
   /**
+   * User.userCredits
+   */
+  export type User$userCreditsArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
+    where?: UserCreditsWhereInput
+    orderBy?: UserCreditsOrderByWithRelationInput | UserCreditsOrderByWithRelationInput[]
+    cursor?: UserCreditsWhereUniqueInput
+    take?: number
+    skip?: number
+    distinct?: UserCreditsScalarFieldEnum | UserCreditsScalarFieldEnum[]
+  }
+
+  /**
    * User without action
    */
   export type UserDefaultArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
@@ -2545,6 +2639,1174 @@ export namespace Prisma {
      * Choose, which related nodes to fetch as well
      */
     include?: UserInclude<ExtArgs> | null
+  }
+
+
+  /**
+   * Model UserCredits
+   */
+
+  export type AggregateUserCredits = {
+    _count: UserCreditsCountAggregateOutputType | null
+    _avg: UserCreditsAvgAggregateOutputType | null
+    _sum: UserCreditsSumAggregateOutputType | null
+    _min: UserCreditsMinAggregateOutputType | null
+    _max: UserCreditsMaxAggregateOutputType | null
+  }
+
+  export type UserCreditsAvgAggregateOutputType = {
+    id: number | null
+    month: number | null
+    year: number | null
+    totalCredits: number | null
+    usedCredits: number | null
+    creditsLimit: number | null
+    userId: number | null
+  }
+
+  export type UserCreditsSumAggregateOutputType = {
+    id: number | null
+    month: number | null
+    year: number | null
+    totalCredits: number | null
+    usedCredits: number | null
+    creditsLimit: number | null
+    userId: number | null
+  }
+
+  export type UserCreditsMinAggregateOutputType = {
+    id: number | null
+    month: number | null
+    year: number | null
+    totalCredits: number | null
+    usedCredits: number | null
+    creditsLimit: number | null
+    userId: number | null
+    createdAt: Date | null
+    updatedAt: Date | null
+  }
+
+  export type UserCreditsMaxAggregateOutputType = {
+    id: number | null
+    month: number | null
+    year: number | null
+    totalCredits: number | null
+    usedCredits: number | null
+    creditsLimit: number | null
+    userId: number | null
+    createdAt: Date | null
+    updatedAt: Date | null
+  }
+
+  export type UserCreditsCountAggregateOutputType = {
+    id: number
+    month: number
+    year: number
+    totalCredits: number
+    usedCredits: number
+    creditsLimit: number
+    userId: number
+    createdAt: number
+    updatedAt: number
+    _all: number
+  }
+
+
+  export type UserCreditsAvgAggregateInputType = {
+    id?: true
+    month?: true
+    year?: true
+    totalCredits?: true
+    usedCredits?: true
+    creditsLimit?: true
+    userId?: true
+  }
+
+  export type UserCreditsSumAggregateInputType = {
+    id?: true
+    month?: true
+    year?: true
+    totalCredits?: true
+    usedCredits?: true
+    creditsLimit?: true
+    userId?: true
+  }
+
+  export type UserCreditsMinAggregateInputType = {
+    id?: true
+    month?: true
+    year?: true
+    totalCredits?: true
+    usedCredits?: true
+    creditsLimit?: true
+    userId?: true
+    createdAt?: true
+    updatedAt?: true
+  }
+
+  export type UserCreditsMaxAggregateInputType = {
+    id?: true
+    month?: true
+    year?: true
+    totalCredits?: true
+    usedCredits?: true
+    creditsLimit?: true
+    userId?: true
+    createdAt?: true
+    updatedAt?: true
+  }
+
+  export type UserCreditsCountAggregateInputType = {
+    id?: true
+    month?: true
+    year?: true
+    totalCredits?: true
+    usedCredits?: true
+    creditsLimit?: true
+    userId?: true
+    createdAt?: true
+    updatedAt?: true
+    _all?: true
+  }
+
+  export type UserCreditsAggregateArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Filter which UserCredits to aggregate.
+     */
+    where?: UserCreditsWhereInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/sorting Sorting Docs}
+     * 
+     * Determine the order of UserCredits to fetch.
+     */
+    orderBy?: UserCreditsOrderByWithRelationInput | UserCreditsOrderByWithRelationInput[]
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination#cursor-based-pagination Cursor Docs}
+     * 
+     * Sets the start position
+     */
+    cursor?: UserCreditsWhereUniqueInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Take `±n` UserCredits from the position of the cursor.
+     */
+    take?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Skip the first `n` UserCredits.
+     */
+    skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+     * 
+     * Count returned UserCredits
+    **/
+    _count?: true | UserCreditsCountAggregateInputType
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+     * 
+     * Select which fields to average
+    **/
+    _avg?: UserCreditsAvgAggregateInputType
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+     * 
+     * Select which fields to sum
+    **/
+    _sum?: UserCreditsSumAggregateInputType
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+     * 
+     * Select which fields to find the minimum value
+    **/
+    _min?: UserCreditsMinAggregateInputType
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/aggregations Aggregation Docs}
+     * 
+     * Select which fields to find the maximum value
+    **/
+    _max?: UserCreditsMaxAggregateInputType
+  }
+
+  export type GetUserCreditsAggregateType<T extends UserCreditsAggregateArgs> = {
+        [P in keyof T & keyof AggregateUserCredits]: P extends '_count' | 'count'
+      ? T[P] extends true
+        ? number
+        : GetScalarType<T[P], AggregateUserCredits[P]>
+      : GetScalarType<T[P], AggregateUserCredits[P]>
+  }
+
+
+
+
+  export type UserCreditsGroupByArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    where?: UserCreditsWhereInput
+    orderBy?: UserCreditsOrderByWithAggregationInput | UserCreditsOrderByWithAggregationInput[]
+    by: UserCreditsScalarFieldEnum[] | UserCreditsScalarFieldEnum
+    having?: UserCreditsScalarWhereWithAggregatesInput
+    take?: number
+    skip?: number
+    _count?: UserCreditsCountAggregateInputType | true
+    _avg?: UserCreditsAvgAggregateInputType
+    _sum?: UserCreditsSumAggregateInputType
+    _min?: UserCreditsMinAggregateInputType
+    _max?: UserCreditsMaxAggregateInputType
+  }
+
+  export type UserCreditsGroupByOutputType = {
+    id: number
+    month: number
+    year: number
+    totalCredits: number
+    usedCredits: number
+    creditsLimit: number
+    userId: number
+    createdAt: Date
+    updatedAt: Date
+    _count: UserCreditsCountAggregateOutputType | null
+    _avg: UserCreditsAvgAggregateOutputType | null
+    _sum: UserCreditsSumAggregateOutputType | null
+    _min: UserCreditsMinAggregateOutputType | null
+    _max: UserCreditsMaxAggregateOutputType | null
+  }
+
+  type GetUserCreditsGroupByPayload<T extends UserCreditsGroupByArgs> = Prisma.PrismaPromise<
+    Array<
+      PickEnumerable<UserCreditsGroupByOutputType, T['by']> &
+        {
+          [P in ((keyof T) & (keyof UserCreditsGroupByOutputType))]: P extends '_count'
+            ? T[P] extends boolean
+              ? number
+              : GetScalarType<T[P], UserCreditsGroupByOutputType[P]>
+            : GetScalarType<T[P], UserCreditsGroupByOutputType[P]>
+        }
+      >
+    >
+
+
+  export type UserCreditsSelect<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetSelect<{
+    id?: boolean
+    month?: boolean
+    year?: boolean
+    totalCredits?: boolean
+    usedCredits?: boolean
+    creditsLimit?: boolean
+    userId?: boolean
+    createdAt?: boolean
+    updatedAt?: boolean
+    user?: boolean | UserDefaultArgs<ExtArgs>
+  }, ExtArgs["result"]["userCredits"]>
+
+  export type UserCreditsSelectCreateManyAndReturn<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetSelect<{
+    id?: boolean
+    month?: boolean
+    year?: boolean
+    totalCredits?: boolean
+    usedCredits?: boolean
+    creditsLimit?: boolean
+    userId?: boolean
+    createdAt?: boolean
+    updatedAt?: boolean
+    user?: boolean | UserDefaultArgs<ExtArgs>
+  }, ExtArgs["result"]["userCredits"]>
+
+  export type UserCreditsSelectUpdateManyAndReturn<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetSelect<{
+    id?: boolean
+    month?: boolean
+    year?: boolean
+    totalCredits?: boolean
+    usedCredits?: boolean
+    creditsLimit?: boolean
+    userId?: boolean
+    createdAt?: boolean
+    updatedAt?: boolean
+    user?: boolean | UserDefaultArgs<ExtArgs>
+  }, ExtArgs["result"]["userCredits"]>
+
+  export type UserCreditsSelectScalar = {
+    id?: boolean
+    month?: boolean
+    year?: boolean
+    totalCredits?: boolean
+    usedCredits?: boolean
+    creditsLimit?: boolean
+    userId?: boolean
+    createdAt?: boolean
+    updatedAt?: boolean
+  }
+
+  export type UserCreditsOmit<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = $Extensions.GetOmit<"id" | "month" | "year" | "totalCredits" | "usedCredits" | "creditsLimit" | "userId" | "createdAt" | "updatedAt", ExtArgs["result"]["userCredits"]>
+  export type UserCreditsInclude<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    user?: boolean | UserDefaultArgs<ExtArgs>
+  }
+  export type UserCreditsIncludeCreateManyAndReturn<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    user?: boolean | UserDefaultArgs<ExtArgs>
+  }
+  export type UserCreditsIncludeUpdateManyAndReturn<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    user?: boolean | UserDefaultArgs<ExtArgs>
+  }
+
+  export type $UserCreditsPayload<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    name: "UserCredits"
+    objects: {
+      user: Prisma.$UserPayload<ExtArgs>
+    }
+    scalars: $Extensions.GetPayloadResult<{
+      id: number
+      month: number
+      year: number
+      totalCredits: number
+      usedCredits: number
+      creditsLimit: number
+      userId: number
+      createdAt: Date
+      updatedAt: Date
+    }, ExtArgs["result"]["userCredits"]>
+    composites: {}
+  }
+
+  type UserCreditsGetPayload<S extends boolean | null | undefined | UserCreditsDefaultArgs> = $Result.GetResult<Prisma.$UserCreditsPayload, S>
+
+  type UserCreditsCountArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> =
+    Omit<UserCreditsFindManyArgs, 'select' | 'include' | 'distinct' | 'omit'> & {
+      select?: UserCreditsCountAggregateInputType | true
+    }
+
+  export interface UserCreditsDelegate<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs, GlobalOmitOptions = {}> {
+    [K: symbol]: { types: Prisma.TypeMap<ExtArgs>['model']['UserCredits'], meta: { name: 'UserCredits' } }
+    /**
+     * Find zero or one UserCredits that matches the filter.
+     * @param {UserCreditsFindUniqueArgs} args - Arguments to find a UserCredits
+     * @example
+     * // Get one UserCredits
+     * const userCredits = await prisma.userCredits.findUnique({
+     *   where: {
+     *     // ... provide filter here
+     *   }
+     * })
+     */
+    findUnique<T extends UserCreditsFindUniqueArgs>(args: SelectSubset<T, UserCreditsFindUniqueArgs<ExtArgs>>): Prisma__UserCreditsClient<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "findUnique", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Find one UserCredits that matches the filter or throw an error with `error.code='P2025'`
+     * if no matches were found.
+     * @param {UserCreditsFindUniqueOrThrowArgs} args - Arguments to find a UserCredits
+     * @example
+     * // Get one UserCredits
+     * const userCredits = await prisma.userCredits.findUniqueOrThrow({
+     *   where: {
+     *     // ... provide filter here
+     *   }
+     * })
+     */
+    findUniqueOrThrow<T extends UserCreditsFindUniqueOrThrowArgs>(args: SelectSubset<T, UserCreditsFindUniqueOrThrowArgs<ExtArgs>>): Prisma__UserCreditsClient<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Find the first UserCredits that matches the filter.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {UserCreditsFindFirstArgs} args - Arguments to find a UserCredits
+     * @example
+     * // Get one UserCredits
+     * const userCredits = await prisma.userCredits.findFirst({
+     *   where: {
+     *     // ... provide filter here
+     *   }
+     * })
+     */
+    findFirst<T extends UserCreditsFindFirstArgs>(args?: SelectSubset<T, UserCreditsFindFirstArgs<ExtArgs>>): Prisma__UserCreditsClient<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "findFirst", GlobalOmitOptions> | null, null, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Find the first UserCredits that matches the filter or
+     * throw `PrismaKnownClientError` with `P2025` code if no matches were found.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {UserCreditsFindFirstOrThrowArgs} args - Arguments to find a UserCredits
+     * @example
+     * // Get one UserCredits
+     * const userCredits = await prisma.userCredits.findFirstOrThrow({
+     *   where: {
+     *     // ... provide filter here
+     *   }
+     * })
+     */
+    findFirstOrThrow<T extends UserCreditsFindFirstOrThrowArgs>(args?: SelectSubset<T, UserCreditsFindFirstOrThrowArgs<ExtArgs>>): Prisma__UserCreditsClient<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "findFirstOrThrow", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Find zero or more UserCredits that matches the filter.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {UserCreditsFindManyArgs} args - Arguments to filter and select certain fields only.
+     * @example
+     * // Get all UserCredits
+     * const userCredits = await prisma.userCredits.findMany()
+     * 
+     * // Get first 10 UserCredits
+     * const userCredits = await prisma.userCredits.findMany({ take: 10 })
+     * 
+     * // Only select the `id`
+     * const userCreditsWithIdOnly = await prisma.userCredits.findMany({ select: { id: true } })
+     * 
+     */
+    findMany<T extends UserCreditsFindManyArgs>(args?: SelectSubset<T, UserCreditsFindManyArgs<ExtArgs>>): Prisma.PrismaPromise<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "findMany", GlobalOmitOptions>>
+
+    /**
+     * Create a UserCredits.
+     * @param {UserCreditsCreateArgs} args - Arguments to create a UserCredits.
+     * @example
+     * // Create one UserCredits
+     * const UserCredits = await prisma.userCredits.create({
+     *   data: {
+     *     // ... data to create a UserCredits
+     *   }
+     * })
+     * 
+     */
+    create<T extends UserCreditsCreateArgs>(args: SelectSubset<T, UserCreditsCreateArgs<ExtArgs>>): Prisma__UserCreditsClient<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "create", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Create many UserCredits.
+     * @param {UserCreditsCreateManyArgs} args - Arguments to create many UserCredits.
+     * @example
+     * // Create many UserCredits
+     * const userCredits = await prisma.userCredits.createMany({
+     *   data: [
+     *     // ... provide data here
+     *   ]
+     * })
+     *     
+     */
+    createMany<T extends UserCreditsCreateManyArgs>(args?: SelectSubset<T, UserCreditsCreateManyArgs<ExtArgs>>): Prisma.PrismaPromise<BatchPayload>
+
+    /**
+     * Create many UserCredits and returns the data saved in the database.
+     * @param {UserCreditsCreateManyAndReturnArgs} args - Arguments to create many UserCredits.
+     * @example
+     * // Create many UserCredits
+     * const userCredits = await prisma.userCredits.createManyAndReturn({
+     *   data: [
+     *     // ... provide data here
+     *   ]
+     * })
+     * 
+     * // Create many UserCredits and only return the `id`
+     * const userCreditsWithIdOnly = await prisma.userCredits.createManyAndReturn({
+     *   select: { id: true },
+     *   data: [
+     *     // ... provide data here
+     *   ]
+     * })
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * 
+     */
+    createManyAndReturn<T extends UserCreditsCreateManyAndReturnArgs>(args?: SelectSubset<T, UserCreditsCreateManyAndReturnArgs<ExtArgs>>): Prisma.PrismaPromise<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "createManyAndReturn", GlobalOmitOptions>>
+
+    /**
+     * Delete a UserCredits.
+     * @param {UserCreditsDeleteArgs} args - Arguments to delete one UserCredits.
+     * @example
+     * // Delete one UserCredits
+     * const UserCredits = await prisma.userCredits.delete({
+     *   where: {
+     *     // ... filter to delete one UserCredits
+     *   }
+     * })
+     * 
+     */
+    delete<T extends UserCreditsDeleteArgs>(args: SelectSubset<T, UserCreditsDeleteArgs<ExtArgs>>): Prisma__UserCreditsClient<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "delete", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Update one UserCredits.
+     * @param {UserCreditsUpdateArgs} args - Arguments to update one UserCredits.
+     * @example
+     * // Update one UserCredits
+     * const userCredits = await prisma.userCredits.update({
+     *   where: {
+     *     // ... provide filter here
+     *   },
+     *   data: {
+     *     // ... provide data here
+     *   }
+     * })
+     * 
+     */
+    update<T extends UserCreditsUpdateArgs>(args: SelectSubset<T, UserCreditsUpdateArgs<ExtArgs>>): Prisma__UserCreditsClient<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "update", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+    /**
+     * Delete zero or more UserCredits.
+     * @param {UserCreditsDeleteManyArgs} args - Arguments to filter UserCredits to delete.
+     * @example
+     * // Delete a few UserCredits
+     * const { count } = await prisma.userCredits.deleteMany({
+     *   where: {
+     *     // ... provide filter here
+     *   }
+     * })
+     * 
+     */
+    deleteMany<T extends UserCreditsDeleteManyArgs>(args?: SelectSubset<T, UserCreditsDeleteManyArgs<ExtArgs>>): Prisma.PrismaPromise<BatchPayload>
+
+    /**
+     * Update zero or more UserCredits.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {UserCreditsUpdateManyArgs} args - Arguments to update one or more rows.
+     * @example
+     * // Update many UserCredits
+     * const userCredits = await prisma.userCredits.updateMany({
+     *   where: {
+     *     // ... provide filter here
+     *   },
+     *   data: {
+     *     // ... provide data here
+     *   }
+     * })
+     * 
+     */
+    updateMany<T extends UserCreditsUpdateManyArgs>(args: SelectSubset<T, UserCreditsUpdateManyArgs<ExtArgs>>): Prisma.PrismaPromise<BatchPayload>
+
+    /**
+     * Update zero or more UserCredits and returns the data updated in the database.
+     * @param {UserCreditsUpdateManyAndReturnArgs} args - Arguments to update many UserCredits.
+     * @example
+     * // Update many UserCredits
+     * const userCredits = await prisma.userCredits.updateManyAndReturn({
+     *   where: {
+     *     // ... provide filter here
+     *   },
+     *   data: [
+     *     // ... provide data here
+     *   ]
+     * })
+     * 
+     * // Update zero or more UserCredits and only return the `id`
+     * const userCreditsWithIdOnly = await prisma.userCredits.updateManyAndReturn({
+     *   select: { id: true },
+     *   where: {
+     *     // ... provide filter here
+     *   },
+     *   data: [
+     *     // ... provide data here
+     *   ]
+     * })
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * 
+     */
+    updateManyAndReturn<T extends UserCreditsUpdateManyAndReturnArgs>(args: SelectSubset<T, UserCreditsUpdateManyAndReturnArgs<ExtArgs>>): Prisma.PrismaPromise<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "updateManyAndReturn", GlobalOmitOptions>>
+
+    /**
+     * Create or update one UserCredits.
+     * @param {UserCreditsUpsertArgs} args - Arguments to update or create a UserCredits.
+     * @example
+     * // Update or create a UserCredits
+     * const userCredits = await prisma.userCredits.upsert({
+     *   create: {
+     *     // ... data to create a UserCredits
+     *   },
+     *   update: {
+     *     // ... in case it already exists, update
+     *   },
+     *   where: {
+     *     // ... the filter for the UserCredits we want to update
+     *   }
+     * })
+     */
+    upsert<T extends UserCreditsUpsertArgs>(args: SelectSubset<T, UserCreditsUpsertArgs<ExtArgs>>): Prisma__UserCreditsClient<$Result.GetResult<Prisma.$UserCreditsPayload<ExtArgs>, T, "upsert", GlobalOmitOptions>, never, ExtArgs, GlobalOmitOptions>
+
+
+    /**
+     * Count the number of UserCredits.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {UserCreditsCountArgs} args - Arguments to filter UserCredits to count.
+     * @example
+     * // Count the number of UserCredits
+     * const count = await prisma.userCredits.count({
+     *   where: {
+     *     // ... the filter for the UserCredits we want to count
+     *   }
+     * })
+    **/
+    count<T extends UserCreditsCountArgs>(
+      args?: Subset<T, UserCreditsCountArgs>,
+    ): Prisma.PrismaPromise<
+      T extends $Utils.Record<'select', any>
+        ? T['select'] extends true
+          ? number
+          : GetScalarType<T['select'], UserCreditsCountAggregateOutputType>
+        : number
+    >
+
+    /**
+     * Allows you to perform aggregations operations on a UserCredits.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {UserCreditsAggregateArgs} args - Select which aggregations you would like to apply and on what fields.
+     * @example
+     * // Ordered by age ascending
+     * // Where email contains prisma.io
+     * // Limited to the 10 users
+     * const aggregations = await prisma.user.aggregate({
+     *   _avg: {
+     *     age: true,
+     *   },
+     *   where: {
+     *     email: {
+     *       contains: "prisma.io",
+     *     },
+     *   },
+     *   orderBy: {
+     *     age: "asc",
+     *   },
+     *   take: 10,
+     * })
+    **/
+    aggregate<T extends UserCreditsAggregateArgs>(args: Subset<T, UserCreditsAggregateArgs>): Prisma.PrismaPromise<GetUserCreditsAggregateType<T>>
+
+    /**
+     * Group by UserCredits.
+     * Note, that providing `undefined` is treated as the value not being there.
+     * Read more here: https://pris.ly/d/null-undefined
+     * @param {UserCreditsGroupByArgs} args - Group by arguments.
+     * @example
+     * // Group by city, order by createdAt, get count
+     * const result = await prisma.user.groupBy({
+     *   by: ['city', 'createdAt'],
+     *   orderBy: {
+     *     createdAt: true
+     *   },
+     *   _count: {
+     *     _all: true
+     *   },
+     * })
+     * 
+    **/
+    groupBy<
+      T extends UserCreditsGroupByArgs,
+      HasSelectOrTake extends Or<
+        Extends<'skip', Keys<T>>,
+        Extends<'take', Keys<T>>
+      >,
+      OrderByArg extends True extends HasSelectOrTake
+        ? { orderBy: UserCreditsGroupByArgs['orderBy'] }
+        : { orderBy?: UserCreditsGroupByArgs['orderBy'] },
+      OrderFields extends ExcludeUnderscoreKeys<Keys<MaybeTupleToUnion<T['orderBy']>>>,
+      ByFields extends MaybeTupleToUnion<T['by']>,
+      ByValid extends Has<ByFields, OrderFields>,
+      HavingFields extends GetHavingFields<T['having']>,
+      HavingValid extends Has<ByFields, HavingFields>,
+      ByEmpty extends T['by'] extends never[] ? True : False,
+      InputErrors extends ByEmpty extends True
+      ? `Error: "by" must not be empty.`
+      : HavingValid extends False
+      ? {
+          [P in HavingFields]: P extends ByFields
+            ? never
+            : P extends string
+            ? `Error: Field "${P}" used in "having" needs to be provided in "by".`
+            : [
+                Error,
+                'Field ',
+                P,
+                ` in "having" needs to be provided in "by"`,
+              ]
+        }[HavingFields]
+      : 'take' extends Keys<T>
+      ? 'orderBy' extends Keys<T>
+        ? ByValid extends True
+          ? {}
+          : {
+              [P in OrderFields]: P extends ByFields
+                ? never
+                : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`
+            }[OrderFields]
+        : 'Error: If you provide "take", you also need to provide "orderBy"'
+      : 'skip' extends Keys<T>
+      ? 'orderBy' extends Keys<T>
+        ? ByValid extends True
+          ? {}
+          : {
+              [P in OrderFields]: P extends ByFields
+                ? never
+                : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`
+            }[OrderFields]
+        : 'Error: If you provide "skip", you also need to provide "orderBy"'
+      : ByValid extends True
+      ? {}
+      : {
+          [P in OrderFields]: P extends ByFields
+            ? never
+            : `Error: Field "${P}" in "orderBy" needs to be provided in "by"`
+        }[OrderFields]
+    >(args: SubsetIntersection<T, UserCreditsGroupByArgs, OrderByArg> & InputErrors): {} extends InputErrors ? GetUserCreditsGroupByPayload<T> : Prisma.PrismaPromise<InputErrors>
+  /**
+   * Fields of the UserCredits model
+   */
+  readonly fields: UserCreditsFieldRefs;
+  }
+
+  /**
+   * The delegate class that acts as a "Promise-like" for UserCredits.
+   * Why is this prefixed with `Prisma__`?
+   * Because we want to prevent naming conflicts as mentioned in
+   * https://github.com/prisma/prisma-client-js/issues/707
+   */
+  export interface Prisma__UserCreditsClient<T, Null = never, ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs, GlobalOmitOptions = {}> extends Prisma.PrismaPromise<T> {
+    readonly [Symbol.toStringTag]: "PrismaPromise"
+    user<T extends UserDefaultArgs<ExtArgs> = {}>(args?: Subset<T, UserDefaultArgs<ExtArgs>>): Prisma__UserClient<$Result.GetResult<Prisma.$UserPayload<ExtArgs>, T, "findUniqueOrThrow", GlobalOmitOptions> | Null, Null, ExtArgs, GlobalOmitOptions>
+    /**
+     * Attaches callbacks for the resolution and/or rejection of the Promise.
+     * @param onfulfilled The callback to execute when the Promise is resolved.
+     * @param onrejected The callback to execute when the Promise is rejected.
+     * @returns A Promise for the completion of which ever callback is executed.
+     */
+    then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): $Utils.JsPromise<TResult1 | TResult2>
+    /**
+     * Attaches a callback for only the rejection of the Promise.
+     * @param onrejected The callback to execute when the Promise is rejected.
+     * @returns A Promise for the completion of the callback.
+     */
+    catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): $Utils.JsPromise<T | TResult>
+    /**
+     * Attaches a callback that is invoked when the Promise is settled (fulfilled or rejected). The
+     * resolved value cannot be modified from the callback.
+     * @param onfinally The callback to execute when the Promise is settled (fulfilled or rejected).
+     * @returns A Promise for the completion of the callback.
+     */
+    finally(onfinally?: (() => void) | undefined | null): $Utils.JsPromise<T>
+  }
+
+
+
+
+  /**
+   * Fields of the UserCredits model
+   */
+  interface UserCreditsFieldRefs {
+    readonly id: FieldRef<"UserCredits", 'Int'>
+    readonly month: FieldRef<"UserCredits", 'Int'>
+    readonly year: FieldRef<"UserCredits", 'Int'>
+    readonly totalCredits: FieldRef<"UserCredits", 'Int'>
+    readonly usedCredits: FieldRef<"UserCredits", 'Int'>
+    readonly creditsLimit: FieldRef<"UserCredits", 'Int'>
+    readonly userId: FieldRef<"UserCredits", 'Int'>
+    readonly createdAt: FieldRef<"UserCredits", 'DateTime'>
+    readonly updatedAt: FieldRef<"UserCredits", 'DateTime'>
+  }
+    
+
+  // Custom InputTypes
+  /**
+   * UserCredits findUnique
+   */
+  export type UserCreditsFindUniqueArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
+    /**
+     * Filter, which UserCredits to fetch.
+     */
+    where: UserCreditsWhereUniqueInput
+  }
+
+  /**
+   * UserCredits findUniqueOrThrow
+   */
+  export type UserCreditsFindUniqueOrThrowArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
+    /**
+     * Filter, which UserCredits to fetch.
+     */
+    where: UserCreditsWhereUniqueInput
+  }
+
+  /**
+   * UserCredits findFirst
+   */
+  export type UserCreditsFindFirstArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
+    /**
+     * Filter, which UserCredits to fetch.
+     */
+    where?: UserCreditsWhereInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/sorting Sorting Docs}
+     * 
+     * Determine the order of UserCredits to fetch.
+     */
+    orderBy?: UserCreditsOrderByWithRelationInput | UserCreditsOrderByWithRelationInput[]
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination#cursor-based-pagination Cursor Docs}
+     * 
+     * Sets the position for searching for UserCredits.
+     */
+    cursor?: UserCreditsWhereUniqueInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Take `±n` UserCredits from the position of the cursor.
+     */
+    take?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Skip the first `n` UserCredits.
+     */
+    skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of UserCredits.
+     */
+    distinct?: UserCreditsScalarFieldEnum | UserCreditsScalarFieldEnum[]
+  }
+
+  /**
+   * UserCredits findFirstOrThrow
+   */
+  export type UserCreditsFindFirstOrThrowArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
+    /**
+     * Filter, which UserCredits to fetch.
+     */
+    where?: UserCreditsWhereInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/sorting Sorting Docs}
+     * 
+     * Determine the order of UserCredits to fetch.
+     */
+    orderBy?: UserCreditsOrderByWithRelationInput | UserCreditsOrderByWithRelationInput[]
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination#cursor-based-pagination Cursor Docs}
+     * 
+     * Sets the position for searching for UserCredits.
+     */
+    cursor?: UserCreditsWhereUniqueInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Take `±n` UserCredits from the position of the cursor.
+     */
+    take?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Skip the first `n` UserCredits.
+     */
+    skip?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/distinct Distinct Docs}
+     * 
+     * Filter by unique combinations of UserCredits.
+     */
+    distinct?: UserCreditsScalarFieldEnum | UserCreditsScalarFieldEnum[]
+  }
+
+  /**
+   * UserCredits findMany
+   */
+  export type UserCreditsFindManyArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
+    /**
+     * Filter, which UserCredits to fetch.
+     */
+    where?: UserCreditsWhereInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/sorting Sorting Docs}
+     * 
+     * Determine the order of UserCredits to fetch.
+     */
+    orderBy?: UserCreditsOrderByWithRelationInput | UserCreditsOrderByWithRelationInput[]
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination#cursor-based-pagination Cursor Docs}
+     * 
+     * Sets the position for listing UserCredits.
+     */
+    cursor?: UserCreditsWhereUniqueInput
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Take `±n` UserCredits from the position of the cursor.
+     */
+    take?: number
+    /**
+     * {@link https://www.prisma.io/docs/concepts/components/prisma-client/pagination Pagination Docs}
+     * 
+     * Skip the first `n` UserCredits.
+     */
+    skip?: number
+    distinct?: UserCreditsScalarFieldEnum | UserCreditsScalarFieldEnum[]
+  }
+
+  /**
+   * UserCredits create
+   */
+  export type UserCreditsCreateArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
+    /**
+     * The data needed to create a UserCredits.
+     */
+    data: XOR<UserCreditsCreateInput, UserCreditsUncheckedCreateInput>
+  }
+
+  /**
+   * UserCredits createMany
+   */
+  export type UserCreditsCreateManyArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * The data used to create many UserCredits.
+     */
+    data: UserCreditsCreateManyInput | UserCreditsCreateManyInput[]
+    skipDuplicates?: boolean
+  }
+
+  /**
+   * UserCredits createManyAndReturn
+   */
+  export type UserCreditsCreateManyAndReturnArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelectCreateManyAndReturn<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * The data used to create many UserCredits.
+     */
+    data: UserCreditsCreateManyInput | UserCreditsCreateManyInput[]
+    skipDuplicates?: boolean
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsIncludeCreateManyAndReturn<ExtArgs> | null
+  }
+
+  /**
+   * UserCredits update
+   */
+  export type UserCreditsUpdateArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
+    /**
+     * The data needed to update a UserCredits.
+     */
+    data: XOR<UserCreditsUpdateInput, UserCreditsUncheckedUpdateInput>
+    /**
+     * Choose, which UserCredits to update.
+     */
+    where: UserCreditsWhereUniqueInput
+  }
+
+  /**
+   * UserCredits updateMany
+   */
+  export type UserCreditsUpdateManyArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * The data used to update UserCredits.
+     */
+    data: XOR<UserCreditsUpdateManyMutationInput, UserCreditsUncheckedUpdateManyInput>
+    /**
+     * Filter which UserCredits to update
+     */
+    where?: UserCreditsWhereInput
+    /**
+     * Limit how many UserCredits to update.
+     */
+    limit?: number
+  }
+
+  /**
+   * UserCredits updateManyAndReturn
+   */
+  export type UserCreditsUpdateManyAndReturnArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelectUpdateManyAndReturn<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * The data used to update UserCredits.
+     */
+    data: XOR<UserCreditsUpdateManyMutationInput, UserCreditsUncheckedUpdateManyInput>
+    /**
+     * Filter which UserCredits to update
+     */
+    where?: UserCreditsWhereInput
+    /**
+     * Limit how many UserCredits to update.
+     */
+    limit?: number
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsIncludeUpdateManyAndReturn<ExtArgs> | null
+  }
+
+  /**
+   * UserCredits upsert
+   */
+  export type UserCreditsUpsertArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
+    /**
+     * The filter to search for the UserCredits to update in case it exists.
+     */
+    where: UserCreditsWhereUniqueInput
+    /**
+     * In case the UserCredits found by the `where` argument doesn't exist, create a new UserCredits with this data.
+     */
+    create: XOR<UserCreditsCreateInput, UserCreditsUncheckedCreateInput>
+    /**
+     * In case the UserCredits was found with the provided `where` argument, update it with this data.
+     */
+    update: XOR<UserCreditsUpdateInput, UserCreditsUncheckedUpdateInput>
+  }
+
+  /**
+   * UserCredits delete
+   */
+  export type UserCreditsDeleteArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
+    /**
+     * Filter which UserCredits to delete.
+     */
+    where: UserCreditsWhereUniqueInput
+  }
+
+  /**
+   * UserCredits deleteMany
+   */
+  export type UserCreditsDeleteManyArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Filter which UserCredits to delete
+     */
+    where?: UserCreditsWhereInput
+    /**
+     * Limit how many UserCredits to delete.
+     */
+    limit?: number
+  }
+
+  /**
+   * UserCredits without action
+   */
+  export type UserCreditsDefaultArgs<ExtArgs extends $Extensions.InternalArgs = $Extensions.DefaultArgs> = {
+    /**
+     * Select specific fields to fetch from the UserCredits
+     */
+    select?: UserCreditsSelect<ExtArgs> | null
+    /**
+     * Omit specific fields from the UserCredits
+     */
+    omit?: UserCreditsOmit<ExtArgs> | null
+    /**
+     * Choose, which related nodes to fetch as well
+     */
+    include?: UserCreditsInclude<ExtArgs> | null
   }
 
 
@@ -7027,12 +8289,25 @@ export namespace Prisma {
     countryCode: 'countryCode',
     role: 'role',
     active: 'active',
-    AiTokensUse: 'AiTokensUse',
-    AiTokensLimit: 'AiTokensLimit',
     tokensPerResponse: 'tokensPerResponse'
   };
 
   export type UserScalarFieldEnum = (typeof UserScalarFieldEnum)[keyof typeof UserScalarFieldEnum]
+
+
+  export const UserCreditsScalarFieldEnum: {
+    id: 'id',
+    month: 'month',
+    year: 'year',
+    totalCredits: 'totalCredits',
+    usedCredits: 'usedCredits',
+    creditsLimit: 'creditsLimit',
+    userId: 'userId',
+    createdAt: 'createdAt',
+    updatedAt: 'updatedAt'
+  };
+
+  export type UserCreditsScalarFieldEnum = (typeof UserCreditsScalarFieldEnum)[keyof typeof UserCreditsScalarFieldEnum]
 
 
   export const WhatsAppNumberScalarFieldEnum: {
@@ -7208,12 +8483,11 @@ export namespace Prisma {
     countryCode?: StringNullableFilter<"User"> | string | null
     role?: EnumRoleFilter<"User"> | $Enums.Role
     active?: BoolFilter<"User"> | boolean
-    AiTokensUse?: IntFilter<"User"> | number
-    AiTokensLimit?: IntFilter<"User"> | number
     tokensPerResponse?: IntFilter<"User"> | number
     whatsappNumbers?: WhatsAppNumberListRelationFilter
     Payment?: PaymentListRelationFilter
     Agent?: AgentListRelationFilter
+    userCredits?: UserCreditsListRelationFilter
   }
 
   export type UserOrderByWithRelationInput = {
@@ -7225,33 +8499,31 @@ export namespace Prisma {
     countryCode?: SortOrderInput | SortOrder
     role?: SortOrder
     active?: SortOrder
-    AiTokensUse?: SortOrder
-    AiTokensLimit?: SortOrder
     tokensPerResponse?: SortOrder
     whatsappNumbers?: WhatsAppNumberOrderByRelationAggregateInput
     Payment?: PaymentOrderByRelationAggregateInput
     Agent?: AgentOrderByRelationAggregateInput
+    userCredits?: UserCreditsOrderByRelationAggregateInput
   }
 
   export type UserWhereUniqueInput = Prisma.AtLeast<{
     id?: number
     username?: string
     email?: string
-    phoneNumber?: string
     AND?: UserWhereInput | UserWhereInput[]
     OR?: UserWhereInput[]
     NOT?: UserWhereInput | UserWhereInput[]
     password?: StringFilter<"User"> | string
+    phoneNumber?: StringNullableFilter<"User"> | string | null
     countryCode?: StringNullableFilter<"User"> | string | null
     role?: EnumRoleFilter<"User"> | $Enums.Role
     active?: BoolFilter<"User"> | boolean
-    AiTokensUse?: IntFilter<"User"> | number
-    AiTokensLimit?: IntFilter<"User"> | number
     tokensPerResponse?: IntFilter<"User"> | number
     whatsappNumbers?: WhatsAppNumberListRelationFilter
     Payment?: PaymentListRelationFilter
     Agent?: AgentListRelationFilter
-  }, "id" | "username" | "email" | "phoneNumber">
+    userCredits?: UserCreditsListRelationFilter
+  }, "id" | "username" | "email">
 
   export type UserOrderByWithAggregationInput = {
     id?: SortOrder
@@ -7262,8 +8534,6 @@ export namespace Prisma {
     countryCode?: SortOrderInput | SortOrder
     role?: SortOrder
     active?: SortOrder
-    AiTokensUse?: SortOrder
-    AiTokensLimit?: SortOrder
     tokensPerResponse?: SortOrder
     _count?: UserCountOrderByAggregateInput
     _avg?: UserAvgOrderByAggregateInput
@@ -7284,9 +8554,85 @@ export namespace Prisma {
     countryCode?: StringNullableWithAggregatesFilter<"User"> | string | null
     role?: EnumRoleWithAggregatesFilter<"User"> | $Enums.Role
     active?: BoolWithAggregatesFilter<"User"> | boolean
-    AiTokensUse?: IntWithAggregatesFilter<"User"> | number
-    AiTokensLimit?: IntWithAggregatesFilter<"User"> | number
     tokensPerResponse?: IntWithAggregatesFilter<"User"> | number
+  }
+
+  export type UserCreditsWhereInput = {
+    AND?: UserCreditsWhereInput | UserCreditsWhereInput[]
+    OR?: UserCreditsWhereInput[]
+    NOT?: UserCreditsWhereInput | UserCreditsWhereInput[]
+    id?: IntFilter<"UserCredits"> | number
+    month?: IntFilter<"UserCredits"> | number
+    year?: IntFilter<"UserCredits"> | number
+    totalCredits?: IntFilter<"UserCredits"> | number
+    usedCredits?: IntFilter<"UserCredits"> | number
+    creditsLimit?: IntFilter<"UserCredits"> | number
+    userId?: IntFilter<"UserCredits"> | number
+    createdAt?: DateTimeFilter<"UserCredits"> | Date | string
+    updatedAt?: DateTimeFilter<"UserCredits"> | Date | string
+    user?: XOR<UserScalarRelationFilter, UserWhereInput>
+  }
+
+  export type UserCreditsOrderByWithRelationInput = {
+    id?: SortOrder
+    month?: SortOrder
+    year?: SortOrder
+    totalCredits?: SortOrder
+    usedCredits?: SortOrder
+    creditsLimit?: SortOrder
+    userId?: SortOrder
+    createdAt?: SortOrder
+    updatedAt?: SortOrder
+    user?: UserOrderByWithRelationInput
+  }
+
+  export type UserCreditsWhereUniqueInput = Prisma.AtLeast<{
+    id?: number
+    userId_month_year?: UserCreditsUserIdMonthYearCompoundUniqueInput
+    AND?: UserCreditsWhereInput | UserCreditsWhereInput[]
+    OR?: UserCreditsWhereInput[]
+    NOT?: UserCreditsWhereInput | UserCreditsWhereInput[]
+    month?: IntFilter<"UserCredits"> | number
+    year?: IntFilter<"UserCredits"> | number
+    totalCredits?: IntFilter<"UserCredits"> | number
+    usedCredits?: IntFilter<"UserCredits"> | number
+    creditsLimit?: IntFilter<"UserCredits"> | number
+    userId?: IntFilter<"UserCredits"> | number
+    createdAt?: DateTimeFilter<"UserCredits"> | Date | string
+    updatedAt?: DateTimeFilter<"UserCredits"> | Date | string
+    user?: XOR<UserScalarRelationFilter, UserWhereInput>
+  }, "id" | "userId_month_year">
+
+  export type UserCreditsOrderByWithAggregationInput = {
+    id?: SortOrder
+    month?: SortOrder
+    year?: SortOrder
+    totalCredits?: SortOrder
+    usedCredits?: SortOrder
+    creditsLimit?: SortOrder
+    userId?: SortOrder
+    createdAt?: SortOrder
+    updatedAt?: SortOrder
+    _count?: UserCreditsCountOrderByAggregateInput
+    _avg?: UserCreditsAvgOrderByAggregateInput
+    _max?: UserCreditsMaxOrderByAggregateInput
+    _min?: UserCreditsMinOrderByAggregateInput
+    _sum?: UserCreditsSumOrderByAggregateInput
+  }
+
+  export type UserCreditsScalarWhereWithAggregatesInput = {
+    AND?: UserCreditsScalarWhereWithAggregatesInput | UserCreditsScalarWhereWithAggregatesInput[]
+    OR?: UserCreditsScalarWhereWithAggregatesInput[]
+    NOT?: UserCreditsScalarWhereWithAggregatesInput | UserCreditsScalarWhereWithAggregatesInput[]
+    id?: IntWithAggregatesFilter<"UserCredits"> | number
+    month?: IntWithAggregatesFilter<"UserCredits"> | number
+    year?: IntWithAggregatesFilter<"UserCredits"> | number
+    totalCredits?: IntWithAggregatesFilter<"UserCredits"> | number
+    usedCredits?: IntWithAggregatesFilter<"UserCredits"> | number
+    creditsLimit?: IntWithAggregatesFilter<"UserCredits"> | number
+    userId?: IntWithAggregatesFilter<"UserCredits"> | number
+    createdAt?: DateTimeWithAggregatesFilter<"UserCredits"> | Date | string
+    updatedAt?: DateTimeWithAggregatesFilter<"UserCredits"> | Date | string
   }
 
   export type WhatsAppNumberWhereInput = {
@@ -7562,12 +8908,11 @@ export namespace Prisma {
     countryCode?: string | null
     role?: $Enums.Role
     active?: boolean
-    AiTokensUse?: number
-    AiTokensLimit?: number
     tokensPerResponse?: number
     whatsappNumbers?: WhatsAppNumberCreateNestedManyWithoutUserInput
     Payment?: PaymentCreateNestedManyWithoutUserInput
     Agent?: AgentCreateNestedManyWithoutOwnerInput
+    userCredits?: UserCreditsCreateNestedManyWithoutUserInput
   }
 
   export type UserUncheckedCreateInput = {
@@ -7579,12 +8924,11 @@ export namespace Prisma {
     countryCode?: string | null
     role?: $Enums.Role
     active?: boolean
-    AiTokensUse?: number
-    AiTokensLimit?: number
     tokensPerResponse?: number
     whatsappNumbers?: WhatsAppNumberUncheckedCreateNestedManyWithoutUserInput
     Payment?: PaymentUncheckedCreateNestedManyWithoutUserInput
     Agent?: AgentUncheckedCreateNestedManyWithoutOwnerInput
+    userCredits?: UserCreditsUncheckedCreateNestedManyWithoutUserInput
   }
 
   export type UserUpdateInput = {
@@ -7595,12 +8939,11 @@ export namespace Prisma {
     countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
     active?: BoolFieldUpdateOperationsInput | boolean
-    AiTokensUse?: IntFieldUpdateOperationsInput | number
-    AiTokensLimit?: IntFieldUpdateOperationsInput | number
     tokensPerResponse?: IntFieldUpdateOperationsInput | number
     whatsappNumbers?: WhatsAppNumberUpdateManyWithoutUserNestedInput
     Payment?: PaymentUpdateManyWithoutUserNestedInput
     Agent?: AgentUpdateManyWithoutOwnerNestedInput
+    userCredits?: UserCreditsUpdateManyWithoutUserNestedInput
   }
 
   export type UserUncheckedUpdateInput = {
@@ -7612,12 +8955,11 @@ export namespace Prisma {
     countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
     active?: BoolFieldUpdateOperationsInput | boolean
-    AiTokensUse?: IntFieldUpdateOperationsInput | number
-    AiTokensLimit?: IntFieldUpdateOperationsInput | number
     tokensPerResponse?: IntFieldUpdateOperationsInput | number
     whatsappNumbers?: WhatsAppNumberUncheckedUpdateManyWithoutUserNestedInput
     Payment?: PaymentUncheckedUpdateManyWithoutUserNestedInput
     Agent?: AgentUncheckedUpdateManyWithoutOwnerNestedInput
+    userCredits?: UserCreditsUncheckedUpdateManyWithoutUserNestedInput
   }
 
   export type UserCreateManyInput = {
@@ -7629,8 +8971,6 @@ export namespace Prisma {
     countryCode?: string | null
     role?: $Enums.Role
     active?: boolean
-    AiTokensUse?: number
-    AiTokensLimit?: number
     tokensPerResponse?: number
   }
 
@@ -7642,8 +8982,6 @@ export namespace Prisma {
     countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
     active?: BoolFieldUpdateOperationsInput | boolean
-    AiTokensUse?: IntFieldUpdateOperationsInput | number
-    AiTokensLimit?: IntFieldUpdateOperationsInput | number
     tokensPerResponse?: IntFieldUpdateOperationsInput | number
   }
 
@@ -7656,9 +8994,87 @@ export namespace Prisma {
     countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
     active?: BoolFieldUpdateOperationsInput | boolean
-    AiTokensUse?: IntFieldUpdateOperationsInput | number
-    AiTokensLimit?: IntFieldUpdateOperationsInput | number
     tokensPerResponse?: IntFieldUpdateOperationsInput | number
+  }
+
+  export type UserCreditsCreateInput = {
+    month: number
+    year: number
+    totalCredits?: number
+    usedCredits?: number
+    creditsLimit?: number
+    createdAt?: Date | string
+    updatedAt?: Date | string
+    user: UserCreateNestedOneWithoutUserCreditsInput
+  }
+
+  export type UserCreditsUncheckedCreateInput = {
+    id?: number
+    month: number
+    year: number
+    totalCredits?: number
+    usedCredits?: number
+    creditsLimit?: number
+    userId: number
+    createdAt?: Date | string
+    updatedAt?: Date | string
+  }
+
+  export type UserCreditsUpdateInput = {
+    month?: IntFieldUpdateOperationsInput | number
+    year?: IntFieldUpdateOperationsInput | number
+    totalCredits?: IntFieldUpdateOperationsInput | number
+    usedCredits?: IntFieldUpdateOperationsInput | number
+    creditsLimit?: IntFieldUpdateOperationsInput | number
+    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    user?: UserUpdateOneRequiredWithoutUserCreditsNestedInput
+  }
+
+  export type UserCreditsUncheckedUpdateInput = {
+    id?: IntFieldUpdateOperationsInput | number
+    month?: IntFieldUpdateOperationsInput | number
+    year?: IntFieldUpdateOperationsInput | number
+    totalCredits?: IntFieldUpdateOperationsInput | number
+    usedCredits?: IntFieldUpdateOperationsInput | number
+    creditsLimit?: IntFieldUpdateOperationsInput | number
+    userId?: IntFieldUpdateOperationsInput | number
+    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+  }
+
+  export type UserCreditsCreateManyInput = {
+    id?: number
+    month: number
+    year: number
+    totalCredits?: number
+    usedCredits?: number
+    creditsLimit?: number
+    userId: number
+    createdAt?: Date | string
+    updatedAt?: Date | string
+  }
+
+  export type UserCreditsUpdateManyMutationInput = {
+    month?: IntFieldUpdateOperationsInput | number
+    year?: IntFieldUpdateOperationsInput | number
+    totalCredits?: IntFieldUpdateOperationsInput | number
+    usedCredits?: IntFieldUpdateOperationsInput | number
+    creditsLimit?: IntFieldUpdateOperationsInput | number
+    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+  }
+
+  export type UserCreditsUncheckedUpdateManyInput = {
+    id?: IntFieldUpdateOperationsInput | number
+    month?: IntFieldUpdateOperationsInput | number
+    year?: IntFieldUpdateOperationsInput | number
+    totalCredits?: IntFieldUpdateOperationsInput | number
+    usedCredits?: IntFieldUpdateOperationsInput | number
+    creditsLimit?: IntFieldUpdateOperationsInput | number
+    userId?: IntFieldUpdateOperationsInput | number
+    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
 
   export type WhatsAppNumberCreateInput = {
@@ -7997,6 +9413,12 @@ export namespace Prisma {
     none?: AgentWhereInput
   }
 
+  export type UserCreditsListRelationFilter = {
+    every?: UserCreditsWhereInput
+    some?: UserCreditsWhereInput
+    none?: UserCreditsWhereInput
+  }
+
   export type SortOrderInput = {
     sort: SortOrder
     nulls?: NullsOrder
@@ -8014,6 +9436,10 @@ export namespace Prisma {
     _count?: SortOrder
   }
 
+  export type UserCreditsOrderByRelationAggregateInput = {
+    _count?: SortOrder
+  }
+
   export type UserCountOrderByAggregateInput = {
     id?: SortOrder
     username?: SortOrder
@@ -8023,15 +9449,11 @@ export namespace Prisma {
     countryCode?: SortOrder
     role?: SortOrder
     active?: SortOrder
-    AiTokensUse?: SortOrder
-    AiTokensLimit?: SortOrder
     tokensPerResponse?: SortOrder
   }
 
   export type UserAvgOrderByAggregateInput = {
     id?: SortOrder
-    AiTokensUse?: SortOrder
-    AiTokensLimit?: SortOrder
     tokensPerResponse?: SortOrder
   }
 
@@ -8044,8 +9466,6 @@ export namespace Prisma {
     countryCode?: SortOrder
     role?: SortOrder
     active?: SortOrder
-    AiTokensUse?: SortOrder
-    AiTokensLimit?: SortOrder
     tokensPerResponse?: SortOrder
   }
 
@@ -8058,15 +9478,11 @@ export namespace Prisma {
     countryCode?: SortOrder
     role?: SortOrder
     active?: SortOrder
-    AiTokensUse?: SortOrder
-    AiTokensLimit?: SortOrder
     tokensPerResponse?: SortOrder
   }
 
   export type UserSumOrderByAggregateInput = {
     id?: SortOrder
-    AiTokensUse?: SortOrder
-    AiTokensLimit?: SortOrder
     tokensPerResponse?: SortOrder
   }
 
@@ -8140,9 +9556,96 @@ export namespace Prisma {
     _max?: NestedBoolFilter<$PrismaModel>
   }
 
+  export type DateTimeFilter<$PrismaModel = never> = {
+    equals?: Date | string | DateTimeFieldRefInput<$PrismaModel>
+    in?: Date[] | string[] | ListDateTimeFieldRefInput<$PrismaModel>
+    notIn?: Date[] | string[] | ListDateTimeFieldRefInput<$PrismaModel>
+    lt?: Date | string | DateTimeFieldRefInput<$PrismaModel>
+    lte?: Date | string | DateTimeFieldRefInput<$PrismaModel>
+    gt?: Date | string | DateTimeFieldRefInput<$PrismaModel>
+    gte?: Date | string | DateTimeFieldRefInput<$PrismaModel>
+    not?: NestedDateTimeFilter<$PrismaModel> | Date | string
+  }
+
   export type UserScalarRelationFilter = {
     is?: UserWhereInput
     isNot?: UserWhereInput
+  }
+
+  export type UserCreditsUserIdMonthYearCompoundUniqueInput = {
+    userId: number
+    month: number
+    year: number
+  }
+
+  export type UserCreditsCountOrderByAggregateInput = {
+    id?: SortOrder
+    month?: SortOrder
+    year?: SortOrder
+    totalCredits?: SortOrder
+    usedCredits?: SortOrder
+    creditsLimit?: SortOrder
+    userId?: SortOrder
+    createdAt?: SortOrder
+    updatedAt?: SortOrder
+  }
+
+  export type UserCreditsAvgOrderByAggregateInput = {
+    id?: SortOrder
+    month?: SortOrder
+    year?: SortOrder
+    totalCredits?: SortOrder
+    usedCredits?: SortOrder
+    creditsLimit?: SortOrder
+    userId?: SortOrder
+  }
+
+  export type UserCreditsMaxOrderByAggregateInput = {
+    id?: SortOrder
+    month?: SortOrder
+    year?: SortOrder
+    totalCredits?: SortOrder
+    usedCredits?: SortOrder
+    creditsLimit?: SortOrder
+    userId?: SortOrder
+    createdAt?: SortOrder
+    updatedAt?: SortOrder
+  }
+
+  export type UserCreditsMinOrderByAggregateInput = {
+    id?: SortOrder
+    month?: SortOrder
+    year?: SortOrder
+    totalCredits?: SortOrder
+    usedCredits?: SortOrder
+    creditsLimit?: SortOrder
+    userId?: SortOrder
+    createdAt?: SortOrder
+    updatedAt?: SortOrder
+  }
+
+  export type UserCreditsSumOrderByAggregateInput = {
+    id?: SortOrder
+    month?: SortOrder
+    year?: SortOrder
+    totalCredits?: SortOrder
+    usedCredits?: SortOrder
+    creditsLimit?: SortOrder
+    userId?: SortOrder
+  }
+
+  export type DateTimeWithAggregatesFilter<$PrismaModel = never> = {
+    equals?: Date | string | DateTimeFieldRefInput<$PrismaModel>
+    in?: Date[] | string[] | ListDateTimeFieldRefInput<$PrismaModel>
+    notIn?: Date[] | string[] | ListDateTimeFieldRefInput<$PrismaModel>
+    lt?: Date | string | DateTimeFieldRefInput<$PrismaModel>
+    lte?: Date | string | DateTimeFieldRefInput<$PrismaModel>
+    gt?: Date | string | DateTimeFieldRefInput<$PrismaModel>
+    gte?: Date | string | DateTimeFieldRefInput<$PrismaModel>
+    not?: NestedDateTimeWithAggregatesFilter<$PrismaModel> | Date | string
+    _count?: NestedIntFilter<$PrismaModel>
+    _min?: NestedDateTimeFilter<$PrismaModel>
+    _max?: NestedDateTimeFilter<$PrismaModel>
   }
 
   export type WhatsAppNumberCountOrderByAggregateInput = {
@@ -8186,17 +9689,6 @@ export namespace Prisma {
   export type WhatsAppNumberSumOrderByAggregateInput = {
     id?: SortOrder
     userId?: SortOrder
-  }
-
-  export type DateTimeFilter<$PrismaModel = never> = {
-    equals?: Date | string | DateTimeFieldRefInput<$PrismaModel>
-    in?: Date[] | string[] | ListDateTimeFieldRefInput<$PrismaModel>
-    notIn?: Date[] | string[] | ListDateTimeFieldRefInput<$PrismaModel>
-    lt?: Date | string | DateTimeFieldRefInput<$PrismaModel>
-    lte?: Date | string | DateTimeFieldRefInput<$PrismaModel>
-    gt?: Date | string | DateTimeFieldRefInput<$PrismaModel>
-    gte?: Date | string | DateTimeFieldRefInput<$PrismaModel>
-    not?: NestedDateTimeFilter<$PrismaModel> | Date | string
   }
 
   export type IntNullableFilter<$PrismaModel = never> = {
@@ -8255,20 +9747,6 @@ export namespace Prisma {
     cpuUsageMs?: SortOrder
     ramUsageMB?: SortOrder
     networkEgressKB?: SortOrder
-  }
-
-  export type DateTimeWithAggregatesFilter<$PrismaModel = never> = {
-    equals?: Date | string | DateTimeFieldRefInput<$PrismaModel>
-    in?: Date[] | string[] | ListDateTimeFieldRefInput<$PrismaModel>
-    notIn?: Date[] | string[] | ListDateTimeFieldRefInput<$PrismaModel>
-    lt?: Date | string | DateTimeFieldRefInput<$PrismaModel>
-    lte?: Date | string | DateTimeFieldRefInput<$PrismaModel>
-    gt?: Date | string | DateTimeFieldRefInput<$PrismaModel>
-    gte?: Date | string | DateTimeFieldRefInput<$PrismaModel>
-    not?: NestedDateTimeWithAggregatesFilter<$PrismaModel> | Date | string
-    _count?: NestedIntFilter<$PrismaModel>
-    _min?: NestedDateTimeFilter<$PrismaModel>
-    _max?: NestedDateTimeFilter<$PrismaModel>
   }
 
   export type IntNullableWithAggregatesFilter<$PrismaModel = never> = {
@@ -8416,6 +9894,13 @@ export namespace Prisma {
     connect?: AgentWhereUniqueInput | AgentWhereUniqueInput[]
   }
 
+  export type UserCreditsCreateNestedManyWithoutUserInput = {
+    create?: XOR<UserCreditsCreateWithoutUserInput, UserCreditsUncheckedCreateWithoutUserInput> | UserCreditsCreateWithoutUserInput[] | UserCreditsUncheckedCreateWithoutUserInput[]
+    connectOrCreate?: UserCreditsCreateOrConnectWithoutUserInput | UserCreditsCreateOrConnectWithoutUserInput[]
+    createMany?: UserCreditsCreateManyUserInputEnvelope
+    connect?: UserCreditsWhereUniqueInput | UserCreditsWhereUniqueInput[]
+  }
+
   export type WhatsAppNumberUncheckedCreateNestedManyWithoutUserInput = {
     create?: XOR<WhatsAppNumberCreateWithoutUserInput, WhatsAppNumberUncheckedCreateWithoutUserInput> | WhatsAppNumberCreateWithoutUserInput[] | WhatsAppNumberUncheckedCreateWithoutUserInput[]
     connectOrCreate?: WhatsAppNumberCreateOrConnectWithoutUserInput | WhatsAppNumberCreateOrConnectWithoutUserInput[]
@@ -8435,6 +9920,13 @@ export namespace Prisma {
     connectOrCreate?: AgentCreateOrConnectWithoutOwnerInput | AgentCreateOrConnectWithoutOwnerInput[]
     createMany?: AgentCreateManyOwnerInputEnvelope
     connect?: AgentWhereUniqueInput | AgentWhereUniqueInput[]
+  }
+
+  export type UserCreditsUncheckedCreateNestedManyWithoutUserInput = {
+    create?: XOR<UserCreditsCreateWithoutUserInput, UserCreditsUncheckedCreateWithoutUserInput> | UserCreditsCreateWithoutUserInput[] | UserCreditsUncheckedCreateWithoutUserInput[]
+    connectOrCreate?: UserCreditsCreateOrConnectWithoutUserInput | UserCreditsCreateOrConnectWithoutUserInput[]
+    createMany?: UserCreditsCreateManyUserInputEnvelope
+    connect?: UserCreditsWhereUniqueInput | UserCreditsWhereUniqueInput[]
   }
 
   export type StringFieldUpdateOperationsInput = {
@@ -8503,6 +9995,20 @@ export namespace Prisma {
     deleteMany?: AgentScalarWhereInput | AgentScalarWhereInput[]
   }
 
+  export type UserCreditsUpdateManyWithoutUserNestedInput = {
+    create?: XOR<UserCreditsCreateWithoutUserInput, UserCreditsUncheckedCreateWithoutUserInput> | UserCreditsCreateWithoutUserInput[] | UserCreditsUncheckedCreateWithoutUserInput[]
+    connectOrCreate?: UserCreditsCreateOrConnectWithoutUserInput | UserCreditsCreateOrConnectWithoutUserInput[]
+    upsert?: UserCreditsUpsertWithWhereUniqueWithoutUserInput | UserCreditsUpsertWithWhereUniqueWithoutUserInput[]
+    createMany?: UserCreditsCreateManyUserInputEnvelope
+    set?: UserCreditsWhereUniqueInput | UserCreditsWhereUniqueInput[]
+    disconnect?: UserCreditsWhereUniqueInput | UserCreditsWhereUniqueInput[]
+    delete?: UserCreditsWhereUniqueInput | UserCreditsWhereUniqueInput[]
+    connect?: UserCreditsWhereUniqueInput | UserCreditsWhereUniqueInput[]
+    update?: UserCreditsUpdateWithWhereUniqueWithoutUserInput | UserCreditsUpdateWithWhereUniqueWithoutUserInput[]
+    updateMany?: UserCreditsUpdateManyWithWhereWithoutUserInput | UserCreditsUpdateManyWithWhereWithoutUserInput[]
+    deleteMany?: UserCreditsScalarWhereInput | UserCreditsScalarWhereInput[]
+  }
+
   export type WhatsAppNumberUncheckedUpdateManyWithoutUserNestedInput = {
     create?: XOR<WhatsAppNumberCreateWithoutUserInput, WhatsAppNumberUncheckedCreateWithoutUserInput> | WhatsAppNumberCreateWithoutUserInput[] | WhatsAppNumberUncheckedCreateWithoutUserInput[]
     connectOrCreate?: WhatsAppNumberCreateOrConnectWithoutUserInput | WhatsAppNumberCreateOrConnectWithoutUserInput[]
@@ -8545,6 +10051,38 @@ export namespace Prisma {
     deleteMany?: AgentScalarWhereInput | AgentScalarWhereInput[]
   }
 
+  export type UserCreditsUncheckedUpdateManyWithoutUserNestedInput = {
+    create?: XOR<UserCreditsCreateWithoutUserInput, UserCreditsUncheckedCreateWithoutUserInput> | UserCreditsCreateWithoutUserInput[] | UserCreditsUncheckedCreateWithoutUserInput[]
+    connectOrCreate?: UserCreditsCreateOrConnectWithoutUserInput | UserCreditsCreateOrConnectWithoutUserInput[]
+    upsert?: UserCreditsUpsertWithWhereUniqueWithoutUserInput | UserCreditsUpsertWithWhereUniqueWithoutUserInput[]
+    createMany?: UserCreditsCreateManyUserInputEnvelope
+    set?: UserCreditsWhereUniqueInput | UserCreditsWhereUniqueInput[]
+    disconnect?: UserCreditsWhereUniqueInput | UserCreditsWhereUniqueInput[]
+    delete?: UserCreditsWhereUniqueInput | UserCreditsWhereUniqueInput[]
+    connect?: UserCreditsWhereUniqueInput | UserCreditsWhereUniqueInput[]
+    update?: UserCreditsUpdateWithWhereUniqueWithoutUserInput | UserCreditsUpdateWithWhereUniqueWithoutUserInput[]
+    updateMany?: UserCreditsUpdateManyWithWhereWithoutUserInput | UserCreditsUpdateManyWithWhereWithoutUserInput[]
+    deleteMany?: UserCreditsScalarWhereInput | UserCreditsScalarWhereInput[]
+  }
+
+  export type UserCreateNestedOneWithoutUserCreditsInput = {
+    create?: XOR<UserCreateWithoutUserCreditsInput, UserUncheckedCreateWithoutUserCreditsInput>
+    connectOrCreate?: UserCreateOrConnectWithoutUserCreditsInput
+    connect?: UserWhereUniqueInput
+  }
+
+  export type DateTimeFieldUpdateOperationsInput = {
+    set?: Date | string
+  }
+
+  export type UserUpdateOneRequiredWithoutUserCreditsNestedInput = {
+    create?: XOR<UserCreateWithoutUserCreditsInput, UserUncheckedCreateWithoutUserCreditsInput>
+    connectOrCreate?: UserCreateOrConnectWithoutUserCreditsInput
+    upsert?: UserUpsertWithoutUserCreditsInput
+    connect?: UserWhereUniqueInput
+    update?: XOR<XOR<UserUpdateToOneWithWhereWithoutUserCreditsInput, UserUpdateWithoutUserCreditsInput>, UserUncheckedUpdateWithoutUserCreditsInput>
+  }
+
   export type UserCreateNestedOneWithoutWhatsappNumbersInput = {
     create?: XOR<UserCreateWithoutWhatsappNumbersInput, UserUncheckedCreateWithoutWhatsappNumbersInput>
     connectOrCreate?: UserCreateOrConnectWithoutWhatsappNumbersInput
@@ -8557,10 +10095,6 @@ export namespace Prisma {
     upsert?: UserUpsertWithoutWhatsappNumbersInput
     connect?: UserWhereUniqueInput
     update?: XOR<XOR<UserUpdateToOneWithWhereWithoutWhatsappNumbersInput, UserUpdateWithoutWhatsappNumbersInput>, UserUncheckedUpdateWithoutWhatsappNumbersInput>
-  }
-
-  export type DateTimeFieldUpdateOperationsInput = {
-    set?: Date | string
   }
 
   export type NullableIntFieldUpdateOperationsInput = {
@@ -8897,6 +10431,37 @@ export namespace Prisma {
     skipDuplicates?: boolean
   }
 
+  export type UserCreditsCreateWithoutUserInput = {
+    month: number
+    year: number
+    totalCredits?: number
+    usedCredits?: number
+    creditsLimit?: number
+    createdAt?: Date | string
+    updatedAt?: Date | string
+  }
+
+  export type UserCreditsUncheckedCreateWithoutUserInput = {
+    id?: number
+    month: number
+    year: number
+    totalCredits?: number
+    usedCredits?: number
+    creditsLimit?: number
+    createdAt?: Date | string
+    updatedAt?: Date | string
+  }
+
+  export type UserCreditsCreateOrConnectWithoutUserInput = {
+    where: UserCreditsWhereUniqueInput
+    create: XOR<UserCreditsCreateWithoutUserInput, UserCreditsUncheckedCreateWithoutUserInput>
+  }
+
+  export type UserCreditsCreateManyUserInputEnvelope = {
+    data: UserCreditsCreateManyUserInput | UserCreditsCreateManyUserInput[]
+    skipDuplicates?: boolean
+  }
+
   export type WhatsAppNumberUpsertWithWhereUniqueWithoutUserInput = {
     where: WhatsAppNumberWhereUniqueInput
     update: XOR<WhatsAppNumberUpdateWithoutUserInput, WhatsAppNumberUncheckedUpdateWithoutUserInput>
@@ -8983,6 +10548,111 @@ export namespace Prisma {
     isGlobal?: BoolFilter<"Agent"> | boolean
   }
 
+  export type UserCreditsUpsertWithWhereUniqueWithoutUserInput = {
+    where: UserCreditsWhereUniqueInput
+    update: XOR<UserCreditsUpdateWithoutUserInput, UserCreditsUncheckedUpdateWithoutUserInput>
+    create: XOR<UserCreditsCreateWithoutUserInput, UserCreditsUncheckedCreateWithoutUserInput>
+  }
+
+  export type UserCreditsUpdateWithWhereUniqueWithoutUserInput = {
+    where: UserCreditsWhereUniqueInput
+    data: XOR<UserCreditsUpdateWithoutUserInput, UserCreditsUncheckedUpdateWithoutUserInput>
+  }
+
+  export type UserCreditsUpdateManyWithWhereWithoutUserInput = {
+    where: UserCreditsScalarWhereInput
+    data: XOR<UserCreditsUpdateManyMutationInput, UserCreditsUncheckedUpdateManyWithoutUserInput>
+  }
+
+  export type UserCreditsScalarWhereInput = {
+    AND?: UserCreditsScalarWhereInput | UserCreditsScalarWhereInput[]
+    OR?: UserCreditsScalarWhereInput[]
+    NOT?: UserCreditsScalarWhereInput | UserCreditsScalarWhereInput[]
+    id?: IntFilter<"UserCredits"> | number
+    month?: IntFilter<"UserCredits"> | number
+    year?: IntFilter<"UserCredits"> | number
+    totalCredits?: IntFilter<"UserCredits"> | number
+    usedCredits?: IntFilter<"UserCredits"> | number
+    creditsLimit?: IntFilter<"UserCredits"> | number
+    userId?: IntFilter<"UserCredits"> | number
+    createdAt?: DateTimeFilter<"UserCredits"> | Date | string
+    updatedAt?: DateTimeFilter<"UserCredits"> | Date | string
+  }
+
+  export type UserCreateWithoutUserCreditsInput = {
+    username: string
+    password: string
+    email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
+    role?: $Enums.Role
+    active?: boolean
+    tokensPerResponse?: number
+    whatsappNumbers?: WhatsAppNumberCreateNestedManyWithoutUserInput
+    Payment?: PaymentCreateNestedManyWithoutUserInput
+    Agent?: AgentCreateNestedManyWithoutOwnerInput
+  }
+
+  export type UserUncheckedCreateWithoutUserCreditsInput = {
+    id?: number
+    username: string
+    password: string
+    email: string
+    phoneNumber?: string | null
+    countryCode?: string | null
+    role?: $Enums.Role
+    active?: boolean
+    tokensPerResponse?: number
+    whatsappNumbers?: WhatsAppNumberUncheckedCreateNestedManyWithoutUserInput
+    Payment?: PaymentUncheckedCreateNestedManyWithoutUserInput
+    Agent?: AgentUncheckedCreateNestedManyWithoutOwnerInput
+  }
+
+  export type UserCreateOrConnectWithoutUserCreditsInput = {
+    where: UserWhereUniqueInput
+    create: XOR<UserCreateWithoutUserCreditsInput, UserUncheckedCreateWithoutUserCreditsInput>
+  }
+
+  export type UserUpsertWithoutUserCreditsInput = {
+    update: XOR<UserUpdateWithoutUserCreditsInput, UserUncheckedUpdateWithoutUserCreditsInput>
+    create: XOR<UserCreateWithoutUserCreditsInput, UserUncheckedCreateWithoutUserCreditsInput>
+    where?: UserWhereInput
+  }
+
+  export type UserUpdateToOneWithWhereWithoutUserCreditsInput = {
+    where?: UserWhereInput
+    data: XOR<UserUpdateWithoutUserCreditsInput, UserUncheckedUpdateWithoutUserCreditsInput>
+  }
+
+  export type UserUpdateWithoutUserCreditsInput = {
+    username?: StringFieldUpdateOperationsInput | string
+    password?: StringFieldUpdateOperationsInput | string
+    email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
+    role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
+    active?: BoolFieldUpdateOperationsInput | boolean
+    tokensPerResponse?: IntFieldUpdateOperationsInput | number
+    whatsappNumbers?: WhatsAppNumberUpdateManyWithoutUserNestedInput
+    Payment?: PaymentUpdateManyWithoutUserNestedInput
+    Agent?: AgentUpdateManyWithoutOwnerNestedInput
+  }
+
+  export type UserUncheckedUpdateWithoutUserCreditsInput = {
+    id?: IntFieldUpdateOperationsInput | number
+    username?: StringFieldUpdateOperationsInput | string
+    password?: StringFieldUpdateOperationsInput | string
+    email?: StringFieldUpdateOperationsInput | string
+    phoneNumber?: NullableStringFieldUpdateOperationsInput | string | null
+    countryCode?: NullableStringFieldUpdateOperationsInput | string | null
+    role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
+    active?: BoolFieldUpdateOperationsInput | boolean
+    tokensPerResponse?: IntFieldUpdateOperationsInput | number
+    whatsappNumbers?: WhatsAppNumberUncheckedUpdateManyWithoutUserNestedInput
+    Payment?: PaymentUncheckedUpdateManyWithoutUserNestedInput
+    Agent?: AgentUncheckedUpdateManyWithoutOwnerNestedInput
+  }
+
   export type UserCreateWithoutWhatsappNumbersInput = {
     username: string
     password: string
@@ -8991,11 +10661,10 @@ export namespace Prisma {
     countryCode?: string | null
     role?: $Enums.Role
     active?: boolean
-    AiTokensUse?: number
-    AiTokensLimit?: number
     tokensPerResponse?: number
     Payment?: PaymentCreateNestedManyWithoutUserInput
     Agent?: AgentCreateNestedManyWithoutOwnerInput
+    userCredits?: UserCreditsCreateNestedManyWithoutUserInput
   }
 
   export type UserUncheckedCreateWithoutWhatsappNumbersInput = {
@@ -9007,11 +10676,10 @@ export namespace Prisma {
     countryCode?: string | null
     role?: $Enums.Role
     active?: boolean
-    AiTokensUse?: number
-    AiTokensLimit?: number
     tokensPerResponse?: number
     Payment?: PaymentUncheckedCreateNestedManyWithoutUserInput
     Agent?: AgentUncheckedCreateNestedManyWithoutOwnerInput
+    userCredits?: UserCreditsUncheckedCreateNestedManyWithoutUserInput
   }
 
   export type UserCreateOrConnectWithoutWhatsappNumbersInput = {
@@ -9038,11 +10706,10 @@ export namespace Prisma {
     countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
     active?: BoolFieldUpdateOperationsInput | boolean
-    AiTokensUse?: IntFieldUpdateOperationsInput | number
-    AiTokensLimit?: IntFieldUpdateOperationsInput | number
     tokensPerResponse?: IntFieldUpdateOperationsInput | number
     Payment?: PaymentUpdateManyWithoutUserNestedInput
     Agent?: AgentUpdateManyWithoutOwnerNestedInput
+    userCredits?: UserCreditsUpdateManyWithoutUserNestedInput
   }
 
   export type UserUncheckedUpdateWithoutWhatsappNumbersInput = {
@@ -9054,11 +10721,10 @@ export namespace Prisma {
     countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
     active?: BoolFieldUpdateOperationsInput | boolean
-    AiTokensUse?: IntFieldUpdateOperationsInput | number
-    AiTokensLimit?: IntFieldUpdateOperationsInput | number
     tokensPerResponse?: IntFieldUpdateOperationsInput | number
     Payment?: PaymentUncheckedUpdateManyWithoutUserNestedInput
     Agent?: AgentUncheckedUpdateManyWithoutOwnerNestedInput
+    userCredits?: UserCreditsUncheckedUpdateManyWithoutUserNestedInput
   }
 
   export type UserCreateWithoutPaymentInput = {
@@ -9069,11 +10735,10 @@ export namespace Prisma {
     countryCode?: string | null
     role?: $Enums.Role
     active?: boolean
-    AiTokensUse?: number
-    AiTokensLimit?: number
     tokensPerResponse?: number
     whatsappNumbers?: WhatsAppNumberCreateNestedManyWithoutUserInput
     Agent?: AgentCreateNestedManyWithoutOwnerInput
+    userCredits?: UserCreditsCreateNestedManyWithoutUserInput
   }
 
   export type UserUncheckedCreateWithoutPaymentInput = {
@@ -9085,11 +10750,10 @@ export namespace Prisma {
     countryCode?: string | null
     role?: $Enums.Role
     active?: boolean
-    AiTokensUse?: number
-    AiTokensLimit?: number
     tokensPerResponse?: number
     whatsappNumbers?: WhatsAppNumberUncheckedCreateNestedManyWithoutUserInput
     Agent?: AgentUncheckedCreateNestedManyWithoutOwnerInput
+    userCredits?: UserCreditsUncheckedCreateNestedManyWithoutUserInput
   }
 
   export type UserCreateOrConnectWithoutPaymentInput = {
@@ -9116,11 +10780,10 @@ export namespace Prisma {
     countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
     active?: BoolFieldUpdateOperationsInput | boolean
-    AiTokensUse?: IntFieldUpdateOperationsInput | number
-    AiTokensLimit?: IntFieldUpdateOperationsInput | number
     tokensPerResponse?: IntFieldUpdateOperationsInput | number
     whatsappNumbers?: WhatsAppNumberUpdateManyWithoutUserNestedInput
     Agent?: AgentUpdateManyWithoutOwnerNestedInput
+    userCredits?: UserCreditsUpdateManyWithoutUserNestedInput
   }
 
   export type UserUncheckedUpdateWithoutPaymentInput = {
@@ -9132,11 +10795,10 @@ export namespace Prisma {
     countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
     active?: BoolFieldUpdateOperationsInput | boolean
-    AiTokensUse?: IntFieldUpdateOperationsInput | number
-    AiTokensLimit?: IntFieldUpdateOperationsInput | number
     tokensPerResponse?: IntFieldUpdateOperationsInput | number
     whatsappNumbers?: WhatsAppNumberUncheckedUpdateManyWithoutUserNestedInput
     Agent?: AgentUncheckedUpdateManyWithoutOwnerNestedInput
+    userCredits?: UserCreditsUncheckedUpdateManyWithoutUserNestedInput
   }
 
   export type UserCreateWithoutAgentInput = {
@@ -9147,11 +10809,10 @@ export namespace Prisma {
     countryCode?: string | null
     role?: $Enums.Role
     active?: boolean
-    AiTokensUse?: number
-    AiTokensLimit?: number
     tokensPerResponse?: number
     whatsappNumbers?: WhatsAppNumberCreateNestedManyWithoutUserInput
     Payment?: PaymentCreateNestedManyWithoutUserInput
+    userCredits?: UserCreditsCreateNestedManyWithoutUserInput
   }
 
   export type UserUncheckedCreateWithoutAgentInput = {
@@ -9163,11 +10824,10 @@ export namespace Prisma {
     countryCode?: string | null
     role?: $Enums.Role
     active?: boolean
-    AiTokensUse?: number
-    AiTokensLimit?: number
     tokensPerResponse?: number
     whatsappNumbers?: WhatsAppNumberUncheckedCreateNestedManyWithoutUserInput
     Payment?: PaymentUncheckedCreateNestedManyWithoutUserInput
+    userCredits?: UserCreditsUncheckedCreateNestedManyWithoutUserInput
   }
 
   export type UserCreateOrConnectWithoutAgentInput = {
@@ -9194,11 +10854,10 @@ export namespace Prisma {
     countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
     active?: BoolFieldUpdateOperationsInput | boolean
-    AiTokensUse?: IntFieldUpdateOperationsInput | number
-    AiTokensLimit?: IntFieldUpdateOperationsInput | number
     tokensPerResponse?: IntFieldUpdateOperationsInput | number
     whatsappNumbers?: WhatsAppNumberUpdateManyWithoutUserNestedInput
     Payment?: PaymentUpdateManyWithoutUserNestedInput
+    userCredits?: UserCreditsUpdateManyWithoutUserNestedInput
   }
 
   export type UserUncheckedUpdateWithoutAgentInput = {
@@ -9210,11 +10869,10 @@ export namespace Prisma {
     countryCode?: NullableStringFieldUpdateOperationsInput | string | null
     role?: EnumRoleFieldUpdateOperationsInput | $Enums.Role
     active?: BoolFieldUpdateOperationsInput | boolean
-    AiTokensUse?: IntFieldUpdateOperationsInput | number
-    AiTokensLimit?: IntFieldUpdateOperationsInput | number
     tokensPerResponse?: IntFieldUpdateOperationsInput | number
     whatsappNumbers?: WhatsAppNumberUncheckedUpdateManyWithoutUserNestedInput
     Payment?: PaymentUncheckedUpdateManyWithoutUserNestedInput
+    userCredits?: UserCreditsUncheckedUpdateManyWithoutUserNestedInput
   }
 
   export type WhatsAppNumberCreateManyUserInput = {
@@ -9241,6 +10899,17 @@ export namespace Prisma {
     title: string
     prompt: string
     isGlobal?: boolean
+  }
+
+  export type UserCreditsCreateManyUserInput = {
+    id?: number
+    month: number
+    year: number
+    totalCredits?: number
+    usedCredits?: number
+    creditsLimit?: number
+    createdAt?: Date | string
+    updatedAt?: Date | string
   }
 
   export type WhatsAppNumberUpdateWithoutUserInput = {
@@ -9316,6 +10985,38 @@ export namespace Prisma {
     title?: StringFieldUpdateOperationsInput | string
     prompt?: StringFieldUpdateOperationsInput | string
     isGlobal?: BoolFieldUpdateOperationsInput | boolean
+  }
+
+  export type UserCreditsUpdateWithoutUserInput = {
+    month?: IntFieldUpdateOperationsInput | number
+    year?: IntFieldUpdateOperationsInput | number
+    totalCredits?: IntFieldUpdateOperationsInput | number
+    usedCredits?: IntFieldUpdateOperationsInput | number
+    creditsLimit?: IntFieldUpdateOperationsInput | number
+    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+  }
+
+  export type UserCreditsUncheckedUpdateWithoutUserInput = {
+    id?: IntFieldUpdateOperationsInput | number
+    month?: IntFieldUpdateOperationsInput | number
+    year?: IntFieldUpdateOperationsInput | number
+    totalCredits?: IntFieldUpdateOperationsInput | number
+    usedCredits?: IntFieldUpdateOperationsInput | number
+    creditsLimit?: IntFieldUpdateOperationsInput | number
+    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
+  }
+
+  export type UserCreditsUncheckedUpdateManyWithoutUserInput = {
+    id?: IntFieldUpdateOperationsInput | number
+    month?: IntFieldUpdateOperationsInput | number
+    year?: IntFieldUpdateOperationsInput | number
+    totalCredits?: IntFieldUpdateOperationsInput | number
+    usedCredits?: IntFieldUpdateOperationsInput | number
+    creditsLimit?: IntFieldUpdateOperationsInput | number
+    createdAt?: DateTimeFieldUpdateOperationsInput | Date | string
+    updatedAt?: DateTimeFieldUpdateOperationsInput | Date | string
   }
 
 

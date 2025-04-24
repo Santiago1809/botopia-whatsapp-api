@@ -59,7 +59,7 @@ export const registerUser = async (req: Request, res: Response) => {
       { expiresIn: '5h' }
     )
     transporter.sendMail({
-      from: process.env.SMTP_USER,
+      from: `"Botopia Team" <contacto@botopia.tech>`,
       to: email,
       subject: 'Bienvenido Botopia',
       html: welcomeUserTemplate(user.username)
@@ -316,7 +316,7 @@ export const requestResetPassword = async (req: Request, res: Response) => {
     })
     otpStore[email] = { otp, token }
     transporter.sendMail({
-      from: process.env.SMTP_USER,
+      from: `"Botopia Team" <contacto@botopia.tech>`,
       to: email,
       subject: 'Contraseña actualizada',
       html: resetPasswordTemplate(otp)

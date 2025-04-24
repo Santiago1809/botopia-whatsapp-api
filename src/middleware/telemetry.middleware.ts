@@ -2,6 +2,7 @@
 import axios from 'axios'
 import type { NextFunction, Request, Response } from 'express'
 import { prisma } from '../config/db'
+import { getCurrentUTCDate } from '../lib/dateUtils'
 
 export const telemetryMiddleware = (
   req: Request,
@@ -63,7 +64,7 @@ export const telemetryMiddleware = (
         country = geoRes.data.country || ''
         city = geoRes.data.city || ''
       } catch {
-        console.error() 
+        console.error()
       }
       await prisma.telemetry.create({
         data: {
@@ -72,7 +73,8 @@ export const telemetryMiddleware = (
           ip: ip.split(',')[0],
           cpuUsageMs: +cpuUsedMs,
           networkEgressKB: +networkEgressKB,
-          ramUsageMB: +memoryUsageMB
+          ramUsageMB: +memoryUsageMB,
+          timeStamp: getCurrentUTCDate() // Usar UTC para almacenamiento
         }
       })
     } catch {

@@ -5,8 +5,8 @@
 // Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client-js"
-  output   = "../generated/prisma"
+  provider      = "prisma-client-js"
+  output        = "../generated/prisma"
   binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
@@ -25,16 +25,35 @@ model User {
   username          String           @unique
   password          String
   email             String           @unique
-  phoneNumber       String?          @unique
+  phoneNumber       String? // Sin @unique
   countryCode       String?
   role              Role             @default(user)
   active            Boolean          @default(true)
   whatsappNumbers   WhatsAppNumber[]
-  AiTokensUse       Int              @default(0)
-  AiTokensLimit     Int              @default(100000)
   tokensPerResponse Int              @default(120)
   Payment           Payment[]
   Agent             Agent[]
+  userCredits       UserCredits[]
+
+  @@index([phoneNumber])
+}
+
+// Necesitaremos crear un índice único parcial directamente en PostgreSQL
+// con una migración SQL personalizada
+
+model UserCredits {
+  id           Int      @id @default(autoincrement())
+  month        Int
+  year         Int
+  totalCredits Int      @default(0)
+  usedCredits  Int      @default(0)
+  creditsLimit Int      @default(10000)
+  user         User     @relation(fields: [userId], references: [id])
+  userId       Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([userId, month, year])
 }
 
 model WhatsAppNumber {

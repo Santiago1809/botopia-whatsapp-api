@@ -12,6 +12,8 @@ import type { Server } from 'socket.io'
 import { PhoneNumberUtil } from 'google-libphonenumber'
 import { getAIResponse } from '../services/ai.service'
 import { HttpStatusCode } from 'axios'
+import { registerCreditUsage } from './credits.controller'
+import { convertUTCToLocal, getCurrentUTCDate } from '../lib/dateUtils'
 const phoneUtil = PhoneNumberUtil.getInstance()
 
 export async function startWhatsApp(req: Request, res: Response) {
@@ -227,7 +229,7 @@ export async function startWhatsApp(req: Request, res: Response) {
         const chatHistory = messages.map((m) => ({
           role: m.fromMe ? 'assistant' : 'user',
           content: m.body,
-          timestamp: m.timestamp,
+          timestamp: m.timestamp * 1000, // Convertir timestamp de segundos a milisegundos
           to: chat.id
         }))
         io.to(numberId.toString()).emit('chat-history', {
@@ -253,19 +255,15 @@ export async function startWhatsApp(req: Request, res: Response) {
             chatHistory.push({
               role: 'assistant',
               content: aiResponse as string,
-              timestamp: Date.now(),
+              timestamp: getCurrentUTCDate().getTime(), // Usar UTC para timestamp
               to: chat.id
             })
-            await prisma.user.update({
-              where: {
-                id: number.user.id
-              },
-              data: {
-                AiTokensUse: {
-                  increment: tokens !== undefined ? +tokens : 0
-                }
-              }
-            })
+
+            // Registrar el uso de créditos
+            const creditsUsed = tokens !== undefined ? +tokens : 0
+            await registerCreditUsage(number.user.id, creditsUsed)
+            io.to(numberId.toString()).emit('creditsUpdated', {creditsUsed} )
+
             io.to(numberId.toString()).emit('chat-history', {
               numberId,
               chatHistory,
@@ -392,7 +390,7 @@ export async function stopWhatsApp(req: CustomRequest, res: Response) {
             console.warn('destroy failed', err)
           }
         }
-        
+
         // Execute the cleanup with timeout protection
         try {
           await Promise.race([
@@ -402,7 +400,7 @@ export async function stopWhatsApp(req: CustomRequest, res: Response) {
         } catch (err) {
           console.error('Client cleanup failed:', err)
         }
-        
+
         // Always delete the client reference
         delete clients[number.id]
       }

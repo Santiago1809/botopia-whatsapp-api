@@ -177,6 +177,9 @@ export async function updateUserTokens(req: Request, res: Response) {
     const user = await prisma.user.findUnique({
       where: {
         id: Number(id)
+      },
+      include: {
+        userCredits: true
       }
     })
     if (!user) {
@@ -185,12 +188,13 @@ export async function updateUserTokens(req: Request, res: Response) {
       })
       return
     }
-    await prisma.user.update({
+    await prisma.userCredits.update({
       where: {
         id: Number(id)
       },
       data: {
-        AiTokensLimit: tokens || user.AiTokensLimit
+        creditsLimit:
+          tokens || user.userCredits[user.userCredits.length - 1]?.creditsLimit
       }
     })
     res
@@ -296,7 +300,7 @@ export async function changeUserPassword(req: Request, res: Response) {
       }
     })
     const mailOptions = {
-      from: process.env.SMTP_USER,
+      from: `"Botopia Team" <contacto@botopia.tech>`,
       to: email,
       subject: 'Contraseña actualizada',
       html: notifyNewPassword(password)

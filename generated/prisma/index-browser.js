@@ -126,9 +126,19 @@ exports.Prisma.UserScalarFieldEnum = {
   countryCode: 'countryCode',
   role: 'role',
   active: 'active',
-  AiTokensUse: 'AiTokensUse',
-  AiTokensLimit: 'AiTokensLimit',
   tokensPerResponse: 'tokensPerResponse'
+};
+
+exports.Prisma.UserCreditsScalarFieldEnum = {
+  id: 'id',
+  month: 'month',
+  year: 'year',
+  totalCredits: 'totalCredits',
+  usedCredits: 'usedCredits',
+  creditsLimit: 'creditsLimit',
+  userId: 'userId',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
 };
 
 exports.Prisma.WhatsAppNumberScalarFieldEnum = {
@@ -192,6 +202,7 @@ exports.Role = exports.$Enums.Role = {
 
 exports.Prisma.ModelName = {
   User: 'User',
+  UserCredits: 'UserCredits',
   WhatsAppNumber: 'WhatsAppNumber',
   Telemetry: 'Telemetry',
   Payment: 'Payment',
