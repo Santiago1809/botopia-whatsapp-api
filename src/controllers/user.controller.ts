@@ -12,7 +12,7 @@ export async function toggleAI(req: Request, res: Response) {
   const { number, enabled } = req.body as ToggleAIBody
   try {
     const { data: num } = await supabase
-      .from('WhatsAppNumbers')
+      .from('WhatsAppNumber')
       .select('*')
       .eq('number', number)
       .single()
@@ -23,7 +23,7 @@ export async function toggleAI(req: Request, res: Response) {
       return
     }
     await supabase
-      .from('WhatsAppNumbers')
+      .from('WhatsAppNumber')
       .update({ aiEnabled: enabled })
       .eq('id', num.id)
     res.status(HttpStatusCode.Ok).json({ message: 'Número actualizado' })
@@ -38,7 +38,7 @@ export async function toggleResponseGroups(req: Request, res: Response) {
   const { number, enabled } = req.body as ToggleAIBody
   try {
     const { data: num } = await supabase
-      .from('WhatsAppNumbers')
+      .from('WhatsAppNumber')
       .select('*')
       .eq('number', number)
       .single()
@@ -49,7 +49,7 @@ export async function toggleResponseGroups(req: Request, res: Response) {
       return
     }
     await supabase
-      .from('WhatsAppNumbers')
+      .from('WhatsAppNumber')
       .update({ responseGroups: enabled })
       .eq('id', num.id)
     res.status(HttpStatusCode.Ok).json({ message: 'Número actualizado' })
@@ -75,7 +75,7 @@ export async function addWhatsAppNumber(req: CustomRequest, res: Response) {
       return
     }
     const { data: existingNumber } = await supabase
-      .from('WhatsAppNumbers')
+      .from('WhatsAppNumber')
       .select('*')
       .eq('number', number)
       .single()
@@ -119,7 +119,7 @@ export async function getWhatsAppNumbers(req: CustomRequest, res: Response) {
     }
 
     const { data: whatsappNumbers } = await supabase
-      .from('WhatsAppNumbers')
+      .from('WhatsAppNumber')
       .select('*')
       .eq('userId', user.id)
 
@@ -143,7 +143,7 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
     }
 
     const { data: num, error: findError } = await supabase
-      .from('WhatsAppNumbers')
+      .from('WhatsAppNumber')
       .select('*')
       .eq('id', Number(numberId))
       .single()
@@ -164,7 +164,7 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
     }
 
     const { error: deleteError } = await supabase
-      .from('WhatsAppNumbers')
+      .from('WhatsAppNumber')
       .delete()
       .eq('id', Number(numberId))
 
