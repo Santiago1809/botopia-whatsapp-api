@@ -16,8 +16,7 @@
     "@types/google-libphonenumber": "^7.4.30",
     "@types/jsonwebtoken": "^9.0.9",
     "@types/nodemailer": "^6.4.17",
-    "@types/qrcode": "^1.5.5",
-    "prisma": "^6.6.0"
+    "@types/qrcode": "^1.5.5"
   },
   "peerDependencies": {
     "typescript": "^5"
@@ -25,7 +24,6 @@
   "dependencies": {
     "@eslint/js": "^9.25.0",
     "@google/genai": "^0.9.0",
-    "@prisma/client": "^6.6.0",
     "@supabase/supabase-js": "^2.49.4",
     "axios": "^1.8.4",
     "bcrypt": "^5.1.1",
