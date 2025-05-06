@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express'
-import { prisma } from '../config/db'
+import { supabase } from '../config/db'
 import type {
   AddWhatsAppNumber,
   CustomRequest,
@@ -11,25 +11,21 @@ import { clients } from '../WhatsAppClients'
 export async function toggleAI(req: Request, res: Response) {
   const { number, enabled } = req.body as ToggleAIBody
   try {
-    const num = await prisma.whatsAppNumber.findFirst({
-      where: {
-        number
-      }
-    })
+    const { data: num } = await supabase
+      .from('WhatsAppNumbers')
+      .select('*')
+      .eq('number', number)
+      .single()
     if (!num) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Número no encontrado' })
       return
     }
-    await prisma.whatsAppNumber.update({
-      where: {
-        id: num.id
-      },
-      data: {
-        aiEnabled: enabled
-      }
-    })
+    await supabase
+      .from('WhatsAppNumbers')
+      .update({ aiEnabled: enabled })
+      .eq('id', num.id)
     res.status(HttpStatusCode.Ok).json({ message: 'Número actualizado' })
   } catch {
     res
@@ -41,25 +37,21 @@ export async function toggleAI(req: Request, res: Response) {
 export async function toggleResponseGroups(req: Request, res: Response) {
   const { number, enabled } = req.body as ToggleAIBody
   try {
-    const num = await prisma.whatsAppNumber.findFirst({
-      where: {
-        number
-      }
-    })
+    const { data: num } = await supabase
+      .from('WhatsAppNumbers')
+      .select('*')
+      .eq('number', number)
+      .single()
     if (!num) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Número no encontrado' })
       return
     }
-    await prisma.whatsAppNumber.update({
-      where: {
-        id: num.id
-      },
-      data: {
-        responseGroups: enabled
-      }
-    })
+    await supabase
+      .from('WhatsAppNumbers')
+      .update({ responseGroups: enabled })
+      .eq('id', num.id)
     res.status(HttpStatusCode.Ok).json({ message: 'Número actualizado' })
   } catch {
     res
@@ -71,33 +63,35 @@ export async function toggleResponseGroups(req: Request, res: Response) {
 export async function addWhatsAppNumber(req: CustomRequest, res: Response) {
   try {
     const { number, name } = req.body as AddWhatsAppNumber
-    const user = await prisma.user.findFirst({
-      where: {
-        username: req.user?.username
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('username', req.user?.username)
+      .single()
     if (!user) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Usuario no encontrado' })
       return
     }
-    const existingNumber = await prisma.whatsAppNumber.findFirst({
-      where: {
-        number
-      }
-    })
+    const { data: existingNumber } = await supabase
+      .from('WhatsAppNumbers')
+      .select('*')
+      .eq('number', number)
+      .single()
     if (existingNumber) {
       res.status(HttpStatusCode.Conflict).json({ message: 'Número ya existe' })
       return
     }
-    const newNumber = await prisma.whatsAppNumber.create({
-      data: {
+    const { data: newNumber } = await supabase
+      .from('WhatsAppNumbers')
+      .insert({
         number,
         name,
         userId: user.id
-      }
-    })
+      })
+      .select('*')
+      .single()
     res
       .status(HttpStatusCode.Created)
       .json({ message: 'Número creado', numberId: newNumber.id })
@@ -111,25 +105,25 @@ export async function addWhatsAppNumber(req: CustomRequest, res: Response) {
 
 export async function getWhatsAppNumbers(req: CustomRequest, res: Response) {
   try {
-    const user = await prisma.user.findFirst({
-      where: {
-        username: req.user?.username
-      },
-      include: {
-        whatsappNumbers: {
-          omit: {
-            userId: true
-          }
-        }
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('username', req.user?.username)
+      .single()
+
     if (!user) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Usuario no encontrado' })
       return
     }
-    res.status(HttpStatusCode.Ok).json(user.whatsappNumbers)
+
+    const { data: whatsappNumbers } = await supabase
+      .from('WhatsAppNumbers')
+      .select('*')
+      .eq('userId', user.id)
+
+    res.status(HttpStatusCode.Ok).json(whatsappNumbers)
   } catch (error) {
     console.error('Error getting WhatsApp numbers:', error)
     res
@@ -147,12 +141,14 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
         .json({ message: 'Número no encontrado' })
       return
     }
-    const num = await prisma.whatsAppNumber.findFirst({
-      where: {
-        id: Number(numberId)
-      }
-    })
-    if (!num) {
+
+    const { data: num, error: findError } = await supabase
+      .from('WhatsAppNumbers')
+      .select('*')
+      .eq('id', Number(numberId))
+      .single()
+
+    if (findError || !num) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Número no encontrado' })
@@ -167,11 +163,15 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
       delete clients[numberId]
     }
 
-    await prisma.whatsAppNumber.delete({
-      where: {
-        id: Number(numberId)
-      }
-    })
+    const { error: deleteError } = await supabase
+      .from('WhatsAppNumbers')
+      .delete()
+      .eq('id', Number(numberId))
+
+    if (deleteError) {
+      throw deleteError
+    }
+
     res.status(HttpStatusCode.Ok).json({ message: 'Número eliminado' })
   } catch (error) {
     console.error('Error deleting WhatsApp number:', error)
@@ -183,35 +183,28 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
 
 export async function getAgents(req: CustomRequest, res: Response) {
   try {
-    const user = await prisma.user.findFirst({
-      where: {
-        username: req.user?.username
-      }
-    })
-    if (!user) {
+    const { data: user, error: userError } = await supabase
+      .from('User')
+      .select('*')
+      .eq('username', req.user?.username)
+      .single()
+
+    if (userError || !user) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Usuario no encontrado' })
       return
     }
-    const agents = await prisma.agent.findMany({
-      where: {
-        OR: [
-          {
-            isGlobal: true
-          },
-          {
-            ownerId: user.id
-          }
-        ]
-      }
-    })
-    if (!agents) {
-      res
-        .status(HttpStatusCode.NotFound)
-        .json({ message: 'Agentes no encontrados' })
-      return
+
+    const { data: agents, error: agentsError } = await supabase
+      .from('Agent')
+      .select('*')
+      .or(`isGlobal.eq.true,ownerId.eq.${user.id}`)
+
+    if (agentsError) {
+      throw agentsError
     }
+
     res.status(HttpStatusCode.Ok).json(agents)
   } catch (error) {
     console.error('Error getting agents:', error)
@@ -224,25 +217,30 @@ export async function getAgents(req: CustomRequest, res: Response) {
 export async function addAgent(req: CustomRequest, res: Response) {
   const { title, prompt } = req.body as { title: string; prompt: string }
   try {
-    const user = await prisma.user.findFirst({
-      where: {
-        username: req.user?.username
-      }
-    })
-    if (!user) {
+    const { data: user, error: userError } = await supabase
+      .from('User')
+      .select('*')
+      .eq('username', req.user?.username)
+      .single()
+
+    if (userError || !user) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Usuario no encontrado' })
       return
     }
-    await prisma.agent.create({
-      data: {
-        title,
-        prompt,
-        ownerId: user.id,
-        isGlobal: false
-      }
+
+    const { error: insertError } = await supabase.from('Agent').insert({
+      title,
+      prompt,
+      ownerId: user.id,
+      isGlobal: false
     })
+
+    if (insertError) {
+      throw insertError
+    }
+
     res.status(HttpStatusCode.Created).json({ message: 'Agente creado' })
   } catch (error) {
     console.error('Error adding agent:', error)
@@ -256,43 +254,51 @@ export async function updateAgent(req: CustomRequest, res: Response) {
   const { agentId } = req.params
   const { title, prompt } = req.body as { title: string; prompt: string }
   try {
-    const agent = await prisma.agent.findFirst({
-      where: {
-        id: Number(agentId)
-      }
-    })
-    if (!agent) {
+    const { data: agent, error: agentError } = await supabase
+      .from('Agent')
+      .select('*')
+      .eq('id', Number(agentId))
+      .single()
+
+    if (agentError || !agent) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Agente no encontrado' })
       return
     }
-    const user = await prisma.user.findFirst({
-      where: {
-        username: req.user?.username
-      }
-    })
-    if (!user) {
+
+    const { data: user, error: userError } = await supabase
+      .from('User')
+      .select('*')
+      .eq('username', req.user?.username)
+      .single()
+
+    if (userError || !user) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Usuario no encontrado' })
       return
     }
+
     if (agent.ownerId !== user.id) {
       res.status(HttpStatusCode.Forbidden).json({
         message: 'No tienes permiso para editar este agente'
       })
       return
     }
-    await prisma.agent.update({
-      where: {
-        id: Number(agentId)
-      },
-      data: {
+
+    const { error: updateError } = await supabase
+      .from('Agent')
+      .update({
         title: title ? title : agent.title,
         prompt: prompt ? prompt : agent.prompt
-      }
-    })
+      })
+      .eq('id', Number(agentId))
+
+    if (updateError) {
+      throw updateError
+    }
+
     res.status(HttpStatusCode.Ok).json({ message: 'Agente actualizado' })
   } catch (error) {
     console.error('Error updating agent:', error)
@@ -305,39 +311,48 @@ export async function updateAgent(req: CustomRequest, res: Response) {
 export async function deleteAgent(req: CustomRequest, res: Response) {
   const { agentId } = req.params
   try {
-    const agent = await prisma.agent.findFirst({
-      where: {
-        id: Number(agentId)
-      }
-    })
-    if (!agent) {
+    const { data: agent, error: agentError } = await supabase
+      .from('Agent')
+      .select('*')
+      .eq('id', Number(agentId))
+      .single()
+
+    if (agentError || !agent) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Agente no encontrado' })
       return
     }
-    const user = await prisma.user.findFirst({
-      where: {
-        username: req.user?.username
-      }
-    })
-    if (!user) {
+
+    const { data: user, error: userError } = await supabase
+      .from('User')
+      .select('*')
+      .eq('username', req.user?.username)
+      .single()
+
+    if (userError || !user) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Usuario no encontrado' })
       return
     }
+
     if (agent.ownerId !== user.id) {
       res.status(HttpStatusCode.Forbidden).json({
         message: 'No tienes permiso para eliminar este agente'
       })
       return
     }
-    await prisma.agent.delete({
-      where: {
-        id: Number(agentId)
-      }
-    })
+
+    const { error: deleteError } = await supabase
+      .from('Agent')
+      .delete()
+      .eq('id', Number(agentId))
+
+    if (deleteError) {
+      throw deleteError
+    }
+
     res.status(HttpStatusCode.Ok).json({ message: 'Agente eliminado' })
   } catch (error) {
     console.error('Error deleting agent:', error)
@@ -351,25 +366,28 @@ export async function updateAgentNumber(req: Request, res: Response) {
   const { numberId } = req.params
   const { aiPrompt } = req.body as { aiPrompt: string }
   try {
-    const num = await prisma.whatsAppNumber.findFirst({
-      where: {
-        id: Number(numberId)
-      }
-    })
-    if (!num) {
+    const { data: num, error: findError } = await supabase
+      .from('WhatsAppNumber')
+      .select('*')
+      .eq('id', Number(numberId))
+      .single()
+
+    if (findError || !num) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Número no encontrado' })
       return
     }
-    await prisma.whatsAppNumber.update({
-      where: {
-        id: Number(numberId)
-      },
-      data: {
-        aiPrompt
-      }
-    })
+
+    const { error: updateError } = await supabase
+      .from('WhatsAppNumber')
+      .update({ aiPrompt })
+      .eq('id', Number(numberId))
+
+    if (updateError) {
+      throw updateError
+    }
+
     res.status(HttpStatusCode.Ok).json({ message: 'Número actualizado' })
   } catch (error) {
     console.error('Error adding agent to number:', error)

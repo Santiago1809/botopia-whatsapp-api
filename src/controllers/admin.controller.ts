@@ -1,19 +1,18 @@
-import type { Request, Response } from 'express'
-import { prisma } from '../config/db'
 import { HttpStatusCode } from 'axios'
-import type { AddAgent, CustomRequest } from '../interfaces/global'
-import { generateSecurePassword } from '../lib/utils'
 import bcrypt from 'bcrypt'
+import type { Request, Response } from 'express'
+import { supabase } from '../config/db'
+import type { AddAgent, CustomRequest } from '../interfaces/global'
 import { notifyNewPassword } from '../lib/constants'
+import { generateSecurePassword } from '../lib/utils'
 import { transporter } from '../services/email.service'
 
 export async function getAgents(_req: Request, res: Response) {
   try {
-    const agents = await prisma.agent.findMany({
-      where: {
-        isGlobal: true
-      }
-    })
+    const { data: agents } = await supabase
+      .from('Agents')
+      .select('*')
+      .eq('isGlobal', true)
     res.status(HttpStatusCode.Ok).json(agents)
   } catch (error) {
     console.error('Error fetching agents:', error)
@@ -27,24 +26,22 @@ export async function getAgents(_req: Request, res: Response) {
 export async function addAgent(req: CustomRequest, res: Response) {
   try {
     const { title, prompt } = req.body as AddAgent
-    const user = await prisma.user.findUnique({
-      where: {
-        username: req.user?.username
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('username', req.user?.username)
+      .single()
     if (!user) {
       res.status(HttpStatusCode.Unauthorized).json({
         message: 'User not found'
       })
       return
     }
-    await prisma.agent.create({
-      data: {
-        title,
-        prompt,
-        ownerId: user.id,
-        isGlobal: true
-      }
+    await supabase.from('Agents').insert({
+      title,
+      prompt,
+      ownerId: user.id,
+      isGlobal: true
     })
     res.status(HttpStatusCode.Created).json({ message: 'Agente creado' })
   } catch (error) {
@@ -59,27 +56,19 @@ export async function addAgent(req: CustomRequest, res: Response) {
 export async function editAgent(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const { title, prompt } = req.body as Partial<AddAgent>
-    const agent = await prisma.agent.findUnique({
-      where: {
-        id: Number(id)
-      }
-    })
+    const data = req.body as Partial<AddAgent>
+    const { data: agent } = await supabase
+      .from('Agents')
+      .select('*')
+      .eq('id', id)
+      .single()
     if (!agent) {
       res.status(HttpStatusCode.NotFound).json({
         message: 'Agent not found'
       })
       return
     }
-    await prisma.agent.update({
-      where: {
-        id: Number(id)
-      },
-      data: {
-        title: title || agent.title,
-        prompt: prompt || agent.prompt
-      }
-    })
+    await supabase.from('Agents').update(data).eq('id', id)
     res.status(HttpStatusCode.Ok).json({ message: 'Agente editado' })
   } catch (error) {
     console.error('Error editing agent:', error)
@@ -89,14 +78,10 @@ export async function editAgent(req: Request, res: Response) {
     })
   }
 }
-export function deleteAgent(req: Request, res: Response) {
+export async function deleteAgent(req: Request, res: Response) {
   try {
     const { id } = req.params
-    prisma.agent.delete({
-      where: {
-        id: Number(id)
-      }
-    })
+    await supabase.from('Agents').delete().eq('id', id)
     res.status(HttpStatusCode.Ok).json({ message: 'Agente eliminado' })
   } catch (error) {
     console.error('Error deleting agent:', error)
@@ -110,25 +95,18 @@ export function deleteAgent(req: Request, res: Response) {
 export async function deactivateUser(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const user = await prisma.user.findUnique({
-      where: {
-        id: Number(id)
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('id', id)
+      .single()
     if (!user) {
       res.status(HttpStatusCode.NotFound).json({
         message: 'User not found'
       })
       return
     }
-    await prisma.user.update({
-      where: {
-        id: Number(id)
-      },
-      data: {
-        active: false
-      }
-    })
+    await supabase.from('User').update({ active: false }).eq('id', id)
     res.status(HttpStatusCode.Ok).json({ message: 'Usuario desactivado' })
   } catch (error) {
     console.error('Error deactivating user:', error)
@@ -142,25 +120,18 @@ export async function deactivateUser(req: Request, res: Response) {
 export async function activateUser(req: Request, res: Response) {
   try {
     const { id } = req.params
-    const user = await prisma.user.findUnique({
-      where: {
-        id: Number(id)
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('id', id)
+      .single()
     if (!user) {
       res.status(HttpStatusCode.NotFound).json({
         message: 'User not found'
       })
       return
     }
-    await prisma.user.update({
-      where: {
-        id: Number(id)
-      },
-      data: {
-        active: true
-      }
-    })
+    await supabase.from('User').update({ active: true }).eq('id', id)
     res.status(HttpStatusCode.Ok).json({ message: 'Usuario activado' })
   } catch (error) {
     console.error('Error activating user:', error)
@@ -174,29 +145,21 @@ export async function updateUserTokens(req: Request, res: Response) {
   try {
     const { id } = req.params
     const { tokens } = req.body as { tokens: number }
-    const user = await prisma.user.findUnique({
-      where: {
-        id: Number(id)
-      },
-      include: {
-        userCredits: true
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('id', id)
+      .single()
     if (!user) {
       res.status(HttpStatusCode.NotFound).json({
         message: 'User not found'
       })
       return
     }
-    await prisma.userCredits.update({
-      where: {
-        id: Number(id)
-      },
-      data: {
-        creditsLimit:
-          tokens || user.userCredits[user.userCredits.length - 1]?.creditsLimit
-      }
-    })
+    await supabase
+      .from('UserCredits')
+      .update({ creditsLimit: tokens })
+      .eq('id', id)
     res
       .status(HttpStatusCode.Ok)
       .json({ message: 'Tokens de usuario actualizados' })
@@ -210,14 +173,10 @@ export async function updateUserTokens(req: Request, res: Response) {
 }
 export async function getAllUsers(req: Request, res: Response) {
   try {
-    const users = await prisma.user.findMany({
-      where: {
-        active: true
-      },
-      omit: {
-        password: true
-      }
-    })
+    const { data: users } = await supabase
+      .from('User')
+      .select('*,!password')
+      .eq('active', true)
     res.status(HttpStatusCode.Ok).json(users)
   } catch (error) {
     console.error('Error fetching users:', error)
@@ -244,25 +203,23 @@ export async function setUserTokenLimit(req: Request, res: Response) {
       })
       return
     }
-    const user = await prisma.user.findUnique({
-      where: {
-        id: Number(id)
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('id', id)
+      .single()
     if (!user) {
       res.status(HttpStatusCode.NotFound).json({
         message: 'User not found'
       })
       return
     }
-    await prisma.user.update({
-      where: {
-        id: Number(id)
-      },
-      data: {
+    await supabase
+      .from('User')
+      .update({
         tokensPerResponse: tokensPerResponse || user.tokensPerResponse
-      }
-    })
+      })
+      .eq('id', id)
     res
       .status(HttpStatusCode.Ok)
       .json({ message: 'Límite de tokens actualizado' })
@@ -279,11 +236,11 @@ export async function changeUserPassword(req: Request, res: Response) {
   try {
     const { email } = req.body
     const password = generateSecurePassword()
-    const user = await prisma.user.findUnique({
-      where: {
-        email
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('email', email)
+      .single()
     if (!user) {
       res.status(HttpStatusCode.NotFound).json({
         message: 'User not found'
@@ -291,14 +248,7 @@ export async function changeUserPassword(req: Request, res: Response) {
       return
     }
     const hashedPassword = await bcrypt.hash(password, 10)
-    await prisma.user.update({
-      where: {
-        email
-      },
-      data: {
-        password: hashedPassword
-      }
-    })
+    await supabase.from('User').update({ password: hashedPassword })
     const mailOptions = {
       from: `"Botopia Team" <contacto@botopia.tech>`,
       to: email,

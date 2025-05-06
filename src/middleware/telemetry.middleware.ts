@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import axios from 'axios'
 import type { NextFunction, Request, Response } from 'express'
-import { prisma } from '../config/db'
+import { supabase } from '../config/db'
 import { getCurrentUTCDate } from '../lib/dateUtils'
 
 export const telemetryMiddleware = (
@@ -66,16 +66,14 @@ export const telemetryMiddleware = (
       } catch {
         console.error()
       }
-      await prisma.telemetry.create({
-        data: {
-          city,
-          country,
-          ip: ip.split(',')[0],
-          cpuUsageMs: +cpuUsedMs,
-          networkEgressKB: +networkEgressKB,
-          ramUsageMB: +memoryUsageMB,
-          timeStamp: getCurrentUTCDate() // Usar UTC para almacenamiento
-        }
+      await supabase.from('Telemetry').insert({
+        city,
+        country,
+        ip: ip.split(',')[0],
+        cpuUsageMs: +cpuUsedMs,
+        networkEgressKB: +networkEgressKB,
+        ramUsageMB: +memoryUsageMB,
+        timeStamp: getCurrentUTCDate() // Usar UTC para almacenamiento
       })
     } catch {
       console.error('Error saving telemetry data:')

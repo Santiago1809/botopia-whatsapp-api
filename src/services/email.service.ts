@@ -3,7 +3,6 @@ import { config } from 'dotenv'
 
 config()
 
-// Configuración específica para Zoho Mail
 export const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
   port: Number(process.env.SMTP_PORT),

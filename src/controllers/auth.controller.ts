@@ -1,15 +1,14 @@
+import { HttpStatusCode } from 'axios'
 import * as bcrypt from 'bcrypt'
 import type { Request, Response } from 'express'
 import jwt from 'jsonwebtoken'
-import type { User } from '../../generated/prisma'
-import { Role } from '../../generated/prisma'
-import { prisma } from '../config/db'
-import type { ChangePassword, CustomRequest } from '../interfaces/global'
-import { clients } from '../WhatsAppClients'
-import { HttpStatusCode } from 'axios'
-import { transporter } from '../services/email.service'
-import { resetPasswordTemplate, welcomeUserTemplate } from '../lib/constants'
 import type { Server } from 'socket.io'
+import { supabase } from '../config/db'
+import type { ChangePassword, CustomRequest } from '../interfaces/global'
+import { resetPasswordTemplate, welcomeUserTemplate } from '../lib/constants'
+import { transporter } from '../services/email.service'
+import { Role, type User } from '../types/global'
+import { clients } from '../WhatsAppClients'
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secret_super_seguro'
 const otpStore: Record<string, { otp: string; token: string }> = {}
@@ -31,11 +30,17 @@ export const registerUser = async (req: Request, res: Response) => {
         .json({ message: 'Faltan datos para el registro' })
       return
     }
-    const existingUser = await prisma.user.findFirst({
+    /* const existingUser = await prisma.user.findFirst({
       where: {
         OR: [{ username }, { email }, ...(phoneNumber ? [{ phoneNumber }] : [])]
       }
-    })
+    }) */
+    const { data: existingUser } = await supabase
+      .from('User')
+      .select('*')
+      .or(
+        `username.eq.${username},email.eq.${email},phoneNumber.eq.${phoneNumber}`
+      )
     if (existingUser) {
       res
         .status(409)
@@ -43,16 +48,18 @@ export const registerUser = async (req: Request, res: Response) => {
       return
     }
     const hashedPassword = await bcrypt.hash(password, 10)
-    const user = await prisma.user.create({
-      data: {
+    const { data: user } = await supabase
+      .from('User')
+      .insert({
         username,
         password: hashedPassword,
         email,
         phoneNumber,
         countryCode,
         role: role ?? Role.user
-      }
-    })
+      })
+      .select()
+      .single()
     const token = jwt.sign(
       { username: user.username, role: user.role },
       JWT_SECRET,
@@ -82,17 +89,18 @@ export const loginUser = async (req: Request, res: Response) => {
         .json({ message: 'Faltan datos para el login' })
       return
     }
-
-    // Buscar usuario por username, email o phoneNumber
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { username: identifier },
-          { email: identifier },
-          { phoneNumber: identifier }
-        ]
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .or(
+        'username.eq.' +
+          identifier +
+          ',email.eq.' +
+          identifier +
+          ',phoneNumber.eq.' +
+          identifier
+      )
+      .single()
 
     if (!user) {
       res
@@ -132,15 +140,11 @@ export const loginUser = async (req: Request, res: Response) => {
 
 export const getUserInfo = async (req: CustomRequest, res: Response) => {
   try {
-    const user = await prisma.user.findFirst({
-      where: {
-        username: req?.user?.username
-      },
-      select: {
-        username: true,
-        role: true
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('username, role')
+      .eq('username', req.user?.username)
+      .single()
     if (!user) {
       res
         .status(HttpStatusCode.NotFound)
@@ -160,11 +164,7 @@ export const getUsersList = async (req: CustomRequest, res: Response) => {
   try {
     if (req.user?.role !== Role.admin)
       return res.status(403).json({ message: 'Acceso denegado' })
-    const users = await prisma.user.findMany({
-      omit: {
-        password: true
-      }
-    })
+    const { data: users } = await supabase.from('User').select('*,!password')
     res.json(users)
   } catch (error) {
     console.error('❌ Error obteniendo la lista de usuarios:', error)
@@ -185,15 +185,12 @@ export async function logOut(req: CustomRequest, res: Response) {
     res.status(401).json({ message: 'Acceso denegado' })
     return
   }
-  const user = await prisma.user.findFirst({
-    where: {
-      username: req.user?.username
-    },
-    include: {
-      whatsappNumbers: true
-    }
-  })
 
+  const { data: user } = await supabase
+    .from('User')
+    .select('*')
+    .eq('username', req.user?.username)
+    .single()
   if (!user) {
     res
       .status(HttpStatusCode.NotFound)
@@ -201,8 +198,12 @@ export async function logOut(req: CustomRequest, res: Response) {
     return
   }
 
+  const { data: whatsappNumbers } = await supabase
+    .from('WhatsAppNumber')
+    .select('*')
+    .eq('userId', user.id)
   try {
-    for (const numberData of user?.whatsappNumbers || []) {
+    for (const numberData of whatsappNumbers || []) {
       const numberId = numberData.id
       if (clients[numberId]) {
         try {
@@ -275,11 +276,7 @@ export async function logOut(req: CustomRequest, res: Response) {
     }
     // Attempt to delete WhatsApp numbers without crashing
     try {
-      await prisma.whatsAppNumber.deleteMany({
-        where: {
-          userId: user?.id
-        }
-      })
+      await supabase.from('WhatsAppNumber').delete().eq('userId', user.id)
     } catch (err) {
       console.warn('Error deleting WhatsApp numbers:', err)
     }
@@ -299,11 +296,11 @@ export const requestResetPassword = async (req: Request, res: Response) => {
       res.status(HttpStatusCode.BadRequest).json({ message: 'Falta el email' })
       return
     }
-    const user = await prisma.user.findUnique({
-      where: {
-        email
-      }
-    })
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('email', email)
+      .single()
     if (!user) {
       res
         .status(HttpStatusCode.NotFound)
@@ -370,14 +367,12 @@ export const changePassword = async (req: Request, res: Response) => {
 
   try {
     const hashedPassword = await bcrypt.hash(newPassword, 10)
-    await prisma.user.update({
-      where: {
-        email
-      },
-      data: {
+    await supabase
+      .from('User')
+      .update({
         password: hashedPassword
-      }
-    })
+      })
+      .eq('email', email)
     res.json({ message: 'Contraseña actualizada correctamente' })
   } catch (error) {
     console.log(error)

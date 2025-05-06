@@ -1,5 +1,5 @@
 import type { Request, Response } from 'express'
-import { prisma } from '../config/db'
+import { supabase } from '../config/db'
 import {
   MS_IN_VCPU_MONTH,
   PRICE_PER_GB_RAM,
@@ -33,21 +33,11 @@ export async function getUsageStats(req: Request, res: Response) {
       }
     }
 
-    // Obtener los datos crudos
-    const records = await prisma.telemetry.findMany({
-      where: {
-        timeStamp: {
-          gte: startDate,
-          lte: now
-        }
-      },
-      select: {
-        timeStamp: true,
-        ramUsageMB: true,
-        cpuUsageMs: true,
-        networkEgressKB: true
-      }
-    })
+    const { data: records } = await supabase
+      .from('Telemetry')
+      .select('*')
+      .gte('timeStamp', startDate)
+      .lte('timeStamp', now)
 
     // Agrupar y sumar en JS
     const groupBy = (date: Date) => {
@@ -79,6 +69,17 @@ export async function getUsageStats(req: Request, res: Response) {
         count: number
       }
     > = {}
+
+    if (!records || records.length === 0) {
+      res.json({
+        interval,
+        periodStart: startDate.toISOString(),
+        periodEnd: now.toISOString(),
+        count: 0,
+        intervals: []
+      })
+      return
+    }
 
     for (const rec of records) {
       const key = groupBy(rec.timeStamp)
@@ -123,21 +124,9 @@ export async function calculatePrice(req: Request, res: Response) {
     const now = new Date()
     const startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0)
 
-    const result = await prisma.telemetry.aggregate({
-      _sum: {
-        ramUsageMB: true,
-        cpuUsageMs: true,
-        networkEgressKB: true
-      },
-      _count: {
-        _all: true
-      },
-      where: {
-        timeStamp: {
-          gte: startDate,
-          lte: now
-        }
-      }
+    const { data: result } = await supabase.rpc('telemetry_summary', {
+      start_date: startDate,
+      end_date: now
     })
 
     const totalRamMB = result._sum.ramUsageMB ?? 0

@@ -1,19 +1,19 @@
+import { HttpStatusCode } from 'axios'
 import type { Request, Response } from 'express'
+import { PhoneNumberUtil } from 'google-libphonenumber'
+import QRCode from 'qrcode'
+import type { Server } from 'socket.io'
+import { Client, LocalAuth } from 'whatsapp-web.js'
 import type {
   CustomRequest,
   SendMessageBody,
   StartWhatsApp
 } from '../interfaces/global'
-import { prisma } from '../config/db'
-import { clients } from '../WhatsAppClients'
-import { Client, LocalAuth } from 'whatsapp-web.js'
-import QRCode from 'qrcode'
-import type { Server } from 'socket.io'
-import { PhoneNumberUtil } from 'google-libphonenumber'
+import { getCurrentUTCDate } from '../lib/dateUtils'
 import { getAIResponse } from '../services/ai.service'
-import { HttpStatusCode } from 'axios'
+import { clients } from '../WhatsAppClients'
 import { registerCreditUsage } from './credits.controller'
-import { convertUTCToLocal, getCurrentUTCDate } from '../lib/dateUtils'
+import { supabase } from '../config/db'
 const phoneUtil = PhoneNumberUtil.getInstance()
 
 export async function startWhatsApp(req: Request, res: Response) {
@@ -26,81 +26,26 @@ export async function startWhatsApp(req: Request, res: Response) {
   }
 
   try {
-    const number = await prisma.whatsAppNumber.findFirst({
-      where: {
-        id: numberId
-      }
-    })
+    const { data: number } = await supabase
+      .from('WhatsAppNumber')
+      .select('*')
+      .eq('id', numberId)
+      .single()
     if (!number) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Número no encontrado' })
       return
     }
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('id', number.userId)
+      .single()
     if (clients[numberId]) {
       const client = clients[numberId]
-
-      // Define a safer cleanup function
-      const safeCleanup = async () => {
-        // Remove event listeners first
-        try {
-          client.removeAllListeners()
-        } catch (err) {
-          console.warn('removeAllListeners failed', err)
-        }
-
-        // Attempt logout if possible
-        try {
-          if (client.pupBrowser && client.pupBrowser.isConnected()) {
-            await client.logout()
-          }
-        } catch (err) {
-          console.warn('logout failed', err)
-        }
-
-        // Close browser resources
-        try {
-          // Check if page exists and is not closed before attempting to close
-          if (client.pupPage && !client.pupPage.isClosed?.()) {
-            await client.pupPage.close().catch(() => {})
-          }
-        } catch (err) {
-          console.warn('pupPage close failed', err)
-        }
-
-        // Handle browser disconnection
-        try {
-          if (client.pupBrowser) {
-            if (client.pupBrowser.isConnected?.()) {
-              client.pupBrowser.disconnect()
-            }
-            await client.pupBrowser.close().catch(() => {})
-          }
-        } catch (err) {
-          console.warn('pupBrowser close failed', err)
-        }
-
-        // Final cleanup
-        try {
-          if (typeof client.destroy === 'function') {
-            await client.destroy()
-          }
-        } catch (err) {
-          console.warn('destroy failed', err)
-        }
-      }
-
-      // Execute the cleanup with timeout protection
-      try {
-        await Promise.race([
-          safeCleanup(),
-          new Promise((resolve) => setTimeout(resolve, 5000))
-        ])
-      } catch (err) {
-        console.error('Client cleanup failed:', err)
-      }
-
-      // Always delete the client reference
+      await client.logout()
+      await client.destroy()
       delete clients[numberId]
     }
     const client = new Client({
@@ -130,66 +75,8 @@ export async function startWhatsApp(req: Request, res: Response) {
       try {
         if (clients[numberId]) {
           const client = clients[numberId]
-
-          // Define a safer cleanup function
-          const safeCleanup = async () => {
-            // Remove event listeners first
-            try {
-              client.removeAllListeners()
-            } catch (err) {
-              console.warn('removeAllListeners failed', err)
-            }
-
-            // Attempt logout if possible
-            try {
-              if (client.pupBrowser && client.pupBrowser.isConnected()) {
-                await client.logout()
-              }
-            } catch (err) {
-              console.warn('logout failed', err)
-            }
-
-            // Close browser resources
-            try {
-              // Check if page exists and is not closed before attempting to close
-              if (client.pupPage && !client.pupPage.isClosed?.()) {
-                await client.pupPage.close().catch(() => {})
-              }
-            } catch (err) {
-              console.warn('pupPage close failed', err)
-            }
-
-            // Handle browser disconnection
-            try {
-              if (client.pupBrowser) {
-                if (client.pupBrowser.isConnected?.()) {
-                  client.pupBrowser.disconnect()
-                }
-                await client.pupBrowser.close().catch(() => {})
-              }
-            } catch (err) {
-              console.warn('pupBrowser close failed', err)
-            }
-
-            // Final cleanup
-            try {
-              if (typeof client.destroy === 'function') {
-                await client.destroy()
-              }
-            } catch (err) {
-              console.warn('destroy failed', err)
-            }
-          }
-
-          // Execute the cleanup with timeout protection
-          try {
-            await Promise.race([
-              safeCleanup(),
-              new Promise((resolve) => setTimeout(resolve, 5000))
-            ])
-          } catch (err) {
-            console.error('Client cleanup failed:', err)
-          }
+          await client.logout()
+          await client.destroy()
 
           // Always delete the client reference
           delete clients[numberId]
@@ -209,14 +96,20 @@ export async function startWhatsApp(req: Request, res: Response) {
       try {
         const numberProto = phoneUtil.parseAndKeepRawInput(phoneNumberRaw)
         const clientNumber = phoneUtil.getNationalSignificantNumber(numberProto)
-        const number = await prisma.whatsAppNumber.findFirst({
+        /* const number = await prisma.whatsAppNumber.findFirst({
           where: {
             number: clientNumber
           },
           include: {
             user: true
           }
-        })
+        }) */
+        const { data: number } = await supabase
+          .from('WhatsAppNumber')
+          .select('*')
+          .eq('number', clientNumber)
+          .single()
+
         if (!number) {
           res
             .status(HttpStatusCode.NotFound)
@@ -247,7 +140,7 @@ export async function startWhatsApp(req: Request, res: Response) {
             msg.body,
             number.aiModel,
             chatHistory,
-            number.user
+            user
           )
 
           if (aiResponse) {
@@ -261,8 +154,8 @@ export async function startWhatsApp(req: Request, res: Response) {
 
             // Registrar el uso de créditos
             const creditsUsed = tokens !== undefined ? +tokens : 0
-            await registerCreditUsage(number.user.id, creditsUsed)
-            io.to(numberId.toString()).emit('creditsUpdated', {creditsUsed} )
+            await registerCreditUsage(user.id, creditsUsed)
+            io.to(numberId.toString()).emit('creditsUpdated', { creditsUsed })
 
             io.to(numberId.toString()).emit('chat-history', {
               numberId,
@@ -315,14 +208,19 @@ export async function sendMessage(req: Request, res: Response) {
   }
 }
 export async function stopWhatsApp(req: CustomRequest, res: Response) {
-  const user = await prisma.user.findFirst({
+  /* const user = await prisma.user.findFirst({
     where: {
       username: req.user?.username
     },
     include: {
       whatsappNumbers: true
     }
-  })
+  }) */
+  const { data: user } = await supabase
+    .from('User')
+    .select('*')
+    .eq('username', req.user?.username)
+    .single()
 
   if (!user) {
     res
@@ -330,14 +228,13 @@ export async function stopWhatsApp(req: CustomRequest, res: Response) {
       .json({ message: 'Usuario no encontrado' })
     return
   }
-
+  const { data: whatsappNumbers } = await supabase
+    .from('WhatsAppNumber')
+    .select('*')
+    .eq('userId', user.id)
   try {
-    for (const number of user.whatsappNumbers || []) {
-      await prisma.whatsAppNumber.delete({
-        where: {
-          id: number.id
-        }
-      })
+    for (const number of whatsappNumbers || []) {
+      await supabase.from('WhatsAppNumber').delete().eq('id', number.id)
       if (clients[number.id]) {
         const client = clients[number.id]
 
@@ -427,15 +324,13 @@ export function setupSocketEvents(io: Server) {
       const cpuUsedMs = ((cpuDiff.user + cpuDiff.system) / 1000).toFixed(2)
 
       try {
-        await prisma.telemetry.create({
-          data: {
-            cpuUsageMs: +cpuUsedMs,
-            ramUsageMB: +memUsageMB,
-            networkEgressKB: 0.05,
-            ip: '0.0.0.0.0',
-            city: 'Bogota',
-            country: 'Colombia'
-          }
+        await supabase.from('Telemetry').insert({
+          cpuUsageMs: +cpuUsedMs,
+          ramUsageMB: +memUsageMB,
+          networkEgressKB: 0.05,
+          ip: '0.0.0.0.0',
+          city: 'Bogota',
+          country: 'Colombia'
         })
       } catch (error) {
         console.error('❌ Error guardando datos de telemetría:', error)

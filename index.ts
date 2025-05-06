@@ -6,16 +6,15 @@ import rateLimit from 'express-rate-limit'
 import helmet from 'helmet'
 import http from 'http'
 import { Server } from 'socket.io'
-import { prisma } from './src/config/db'
 import { setupSocketEvents } from './src/controllers/whatsapp.controller'
 import { telemetryMiddleware } from './src/middleware/telemetry.middleware'
 import adminRoutes from './src/routes/admin.route'
 import authRoutes from './src/routes/auth.route'
+import creditsRoutes from './src/routes/credits.route'
+import payuRoutes from './src/routes/payments.route'
 import statsRoutes from './src/routes/stats.route'
 import userRoutes from './src/routes/user.route'
 import whatsAppRoutes from './src/routes/whatsapp.route'
-import payuRoutes from './src/routes/payments.route'
-import creditsRoutes from './src/routes/credits.route'
 
 config()
 
@@ -45,7 +44,7 @@ app.use(express.json())
 const allowedOrigins = [
   'http://localhost:3000',
   'https://botopia-whatsapp.vercel.app',
-  'https://app.botopia.online',
+  'https://app.botopia.online'
 ]
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback) {
@@ -70,6 +69,7 @@ app.use('/api/user', userRoutes)
 app.use('/api/whatsapp', whatsAppRoutes)
 app.use('/api/payments', payuRoutes)
 app.use('/api/credits', creditsRoutes)
+
 const port = process.env.PORT || 3001
 server.keepAliveTimeout = 65000
 server.headersTimeout = 70000
@@ -81,8 +81,6 @@ process.on('unhandledRejection', (res) => {
   console.log(res)
 })
 
-prisma.$connect().then(() => {
-  server.listen(port, () => {
-    console.log(`Server is running on port ${port}`)
-  })
+server.listen(port, () => {
+  console.log(`Server is running on port ${port}`)
 })

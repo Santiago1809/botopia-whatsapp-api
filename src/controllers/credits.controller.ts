@@ -1,17 +1,16 @@
 import { HttpStatusCode } from 'axios'
 import type { Response } from 'express'
-import { prisma } from '../config/db'
+import { supabase } from '../config/db'
 import type { CustomRequest } from '../interfaces/global'
 import { getCurrentMonth, getCurrentYear } from '../lib/dateUtils'
 
 export async function getUserCredits(req: CustomRequest, res: Response) {
   try {
-    const user = await prisma.user.findFirst({
-      where: {
-        username: req.user?.username
-      }
-    })
-
+    const { data: user } = await supabase
+      .from('User')
+      .select('*')
+      .eq('username', req.user?.username)
+      .single()
     if (!user) {
       res
         .status(HttpStatusCode.NotFound)
@@ -23,39 +22,38 @@ export async function getUserCredits(req: CustomRequest, res: Response) {
     const currentMonth = getCurrentMonth()
     const currentYear = getCurrentYear()
 
-    // Buscar créditos del mes actual o crearlos si no existen
-    let userCredits = await prisma.userCredits.findFirst({
-      where: {
-        userId: user.id,
-        month: currentMonth,
-        year: currentYear
-      }
-    })
+    let { data: userCredits } = await supabase
+      .from('UserCredits')
+      .select('*')
+      .eq('userId', user.id)
+      .eq('month', currentMonth)
+      .eq('year', currentYear)
+      .single()
 
     const DEFAULT_CREDIT_LIMIT = 100000 // Definimos un valor predeterminado
 
     if (!userCredits) {
       // Crear registro de créditos para el mes actual
-      userCredits = await prisma.userCredits.create({
-        data: {
+      userCredits = await supabase
+        .from('UserCredits')
+        .insert({
           userId: user.id,
           month: currentMonth,
           year: currentYear,
           totalCredits: 0,
           usedCredits: 0,
-          creditsLimit: DEFAULT_CREDIT_LIMIT // Usamos el valor predeterminado
-        }
-      })
+          creditsLimit: DEFAULT_CREDIT_LIMIT
+        })
+        .select('*')
+        .single()
     }
-
-    // Obtener historial de créditos (últimos 6 meses)
-    const creditHistory = await prisma.userCredits.findMany({
-      where: {
-        userId: user.id
-      },
-      orderBy: [{ year: 'desc' }, { month: 'desc' }],
-      take: 6
-    })
+    const { data: creditHistory } = await supabase
+      .from('UserCredits')
+      .select('*')
+      .eq('userId', user.id)
+      .order('year', { ascending: false })
+      .order('month', { ascending: false })
+      .limit(6)
 
     res.status(HttpStatusCode.Ok).json({
       currentCredits: userCredits,
@@ -77,48 +75,53 @@ export async function registerCreditUsage(userId: number, creditsUsed: number) {
     const currentYear = getCurrentYear()
 
     // Buscar o crear registro de créditos para el mes actual
-    let userCredits = await prisma.userCredits.findFirst({
+    /* let userCredits = await prisma.userCredits.findFirst({
       where: {
         userId,
         month: currentMonth,
         year: currentYear
       }
-    })
+    }) */
+    let { data: userCredits } = await supabase
+      .from('UserCredits')
+      .select('*')
+      .eq('userId', userId)
+      .eq('month', currentMonth)
+      .eq('year', currentYear)
+      .single()
 
     const DEFAULT_CREDIT_LIMIT = 10000 // Definimos un valor predeterminado
 
     if (!userCredits) {
-      const user = await prisma.user.findUnique({
-        where: { id: userId }
-      })
+      const { data: user } = await supabase
+        .from('User')
+        .select('*')
+        .eq('id', userId)
+        .single()
 
       if (!user) {
         throw new Error('Usuario no encontrado')
       }
 
-      userCredits = await prisma.userCredits.create({
-        data: {
-          userId,
+      userCredits = await supabase
+        .from('UserCredits')
+        .insert({
+          userId: user.id,
           month: currentMonth,
           year: currentYear,
           totalCredits: 0,
           usedCredits: 0,
           creditsLimit: DEFAULT_CREDIT_LIMIT // Usamos el valor predeterminado
-        }
-      })
+        })
+        .select('*')
+        .single()
     }
-
-    // Actualizar créditos usados
-    await prisma.userCredits.update({
-      where: {
-        id: userCredits.id
-      },
-      data: {
-        usedCredits: {
-          increment: creditsUsed
-        }
-      }
-    })
+    await supabase
+      .from('UserCredits')
+      .update({
+        usedCredits: userCredits.usedCredits + creditsUsed
+      })
+      .eq('id', userCredits.id)
 
     return true
   } catch (error) {
