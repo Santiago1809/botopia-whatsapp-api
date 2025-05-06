@@ -74,11 +74,11 @@ const port = process.env.PORT || 3001
 server.keepAliveTimeout = 65000
 server.headersTimeout = 70000
 
-process.on('uncaughtException', () => {
-  console.log()
+process.on('uncaughtException', (res) => {
+  console.log(res)
 })
-process.on('unhandledRejection', () => {
-  console.log()
+process.on('unhandledRejection', (res) => {
+  console.log(res)
 })
 
 server.listen(port, () => {
