@@ -123,7 +123,7 @@ export async function getWhatsAppNumbers(req: CustomRequest, res: Response) {
       .select('*')
       .eq('userId', user.id)
 
-    res.status(HttpStatusCode.Ok).json(whatsappNumbers)
+    res.status(HttpStatusCode.Ok).json(whatsappNumbers || [])
   } catch (error) {
     console.error('Error getting WhatsApp numbers:', error)
     res
