@@ -84,7 +84,7 @@ export async function addWhatsAppNumber(req: CustomRequest, res: Response) {
       return
     }
     const { data: newNumber } = await supabase
-      .from('WhatsAppNumbers')
+      .from('WhatsAppNumber')
       .insert({
         number,
         name,

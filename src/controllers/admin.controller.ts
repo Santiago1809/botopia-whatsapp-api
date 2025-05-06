@@ -10,7 +10,7 @@ import { transporter } from '../services/email.service'
 export async function getAgents(_req: Request, res: Response) {
   try {
     const { data: agents } = await supabase
-      .from('Agents')
+      .from('Agent')
       .select('*')
       .eq('isGlobal', true)
     res.status(HttpStatusCode.Ok).json(agents)
@@ -37,7 +37,7 @@ export async function addAgent(req: CustomRequest, res: Response) {
       })
       return
     }
-    await supabase.from('Agents').insert({
+    await supabase.from('Agent').insert({
       title,
       prompt,
       ownerId: user.id,
@@ -58,7 +58,7 @@ export async function editAgent(req: Request, res: Response) {
     const { id } = req.params
     const data = req.body as Partial<AddAgent>
     const { data: agent } = await supabase
-      .from('Agents')
+      .from('Agent')
       .select('*')
       .eq('id', id)
       .single()
@@ -68,7 +68,7 @@ export async function editAgent(req: Request, res: Response) {
       })
       return
     }
-    await supabase.from('Agents').update(data).eq('id', id)
+    await supabase.from('Agent').update(data).eq('id', id)
     res.status(HttpStatusCode.Ok).json({ message: 'Agente editado' })
   } catch (error) {
     console.error('Error editing agent:', error)
@@ -81,7 +81,7 @@ export async function editAgent(req: Request, res: Response) {
 export async function deleteAgent(req: Request, res: Response) {
   try {
     const { id } = req.params
-    await supabase.from('Agents').delete().eq('id', id)
+    await supabase.from('Agent').delete().eq('id', id)
     res.status(HttpStatusCode.Ok).json({ message: 'Agente eliminado' })
   } catch (error) {
     console.error('Error deleting agent:', error)
