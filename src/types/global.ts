@@ -53,3 +53,12 @@ export interface WhatsAppNumber {
   responseGroups: boolean
   userId: number
 }
+
+export interface SyncedContact {
+  id: number;
+  userId: number;
+  numberId: number;
+  contactId: string;
+  type: 'contact' | 'group';
+  createdAt: string;
+}

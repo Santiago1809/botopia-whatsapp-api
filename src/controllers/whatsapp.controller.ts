@@ -16,6 +16,11 @@ import { registerCreditUsage } from './credits.controller'
 import { supabase } from '../config/db'
 const phoneUtil = PhoneNumberUtil.getInstance()
 
+// Estructura en memoria para sincronizados por sesión
+const syncedContactsMemory: {
+  [numberId: string]: { contacts: string[]; groups: string[] }
+} = {}
+
 export async function startWhatsApp(req: Request, res: Response) {
   const { numberId } = req.body as Partial<StartWhatsApp>
   if (!numberId) {
@@ -88,6 +93,15 @@ export async function startWhatsApp(req: Request, res: Response) {
     })
 
     client.on('message', async (msg) => {
+      // Filtrar por sincronizados en memoria
+      const sync = syncedContactsMemory[numberId]
+      const chat = await msg.getChat()
+      const idToCheck = chat.id._serialized
+      const isGroup = chat.id.server === 'g.us'
+      if (!sync) return
+      if (isGroup && !sync.groups.includes(idToCheck)) return
+      if (!isGroup && !sync.contacts.includes(idToCheck)) return
+
       let phoneNumberRaw = msg.to.split('@')[0]
       if (!phoneNumberRaw?.startsWith('+')) {
         phoneNumberRaw = '+' + phoneNumberRaw
@@ -116,7 +130,6 @@ export async function startWhatsApp(req: Request, res: Response) {
             .json({ message: 'Número no encontrado' })
           return
         }
-        const chat = await msg.getChat()
         const messages = await chat.fetchMessages({ limit: 20 })
 
         const chatHistory = messages.map((m) => ({
@@ -130,7 +143,6 @@ export async function startWhatsApp(req: Request, res: Response) {
           chatHistory,
           to: chat.id._serialized
         })
-        const isGroup = chat.id.server === 'g.us'
         const shouldRespond =
           (!isGroup && number.aiEnabled) ||
           (isGroup && number.aiEnabled && number.responseGroups)
@@ -337,4 +349,46 @@ export function setupSocketEvents(io: Server) {
       }
     })
   })
+}
+
+export async function getContacts(req: Request, res: Response) {
+  const { numberId } = req.query;
+  if (!numberId) {
+    res.status(HttpStatusCode.BadRequest).json({ message: 'Missing numberId' });
+    return;
+  }
+  const client = clients[numberId as string];
+  if (!client) {
+    res.status(HttpStatusCode.NotFound).json({ message: 'WhatsApp client not found for this numberId' });
+    return;
+  }
+  try {
+    const contacts = await client.getContacts();
+    // Puedes filtrar o mapear los datos si quieres devolver solo ciertos campos
+    const contactList = contacts.map(contact => ({
+      id: contact.id._serialized,
+      name: contact.name || contact.pushname || contact.number,
+      number: contact.number,
+      isGroup: contact.isGroup,
+      isMyContact: contact.isMyContact
+    }));
+    res.status(HttpStatusCode.Ok).json(contactList);
+  } catch (error) {
+    console.error('Error getting contacts:', error);
+    res.status(HttpStatusCode.InternalServerError).json({ message: 'Error getting contacts' });
+  }
+}
+
+export async function syncContacts(req: Request, res: Response) {
+  const { numberId, contacts, groups } = req.body;
+  if (!numberId) {
+    res.status(HttpStatusCode.BadRequest).json({ message: 'Missing numberId' });
+    return;
+  }
+  // Guardar en memoria
+  syncedContactsMemory[numberId] = {
+    contacts: contacts || [],
+    groups: groups || []
+  };
+  res.status(HttpStatusCode.Ok).json({ message: 'Contacts and groups synced!' });
 }
