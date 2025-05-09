@@ -115,8 +115,9 @@ export async function getUsageStats(req: Request, res: Response) {
       intervals: chartData
     })
   } catch (error) {
-    console.error('Error getting usage stats:', error)
-    res.status(500).json({ error: 'Failed to get usage statistics' })
+    res.status(500).json({
+      error: `Failed to get usage statistics ${(error as Error).message}`
+    })
   }
 }
 export async function calculatePrice(req: Request, res: Response) {
@@ -156,7 +157,10 @@ export async function calculatePrice(req: Request, res: Response) {
       count
     })
   } catch (error) {
-    console.error('Error calculating billing:', error)
-    res.status(500).json({ error: 'Failed to calculate billing' })
+    res
+      .status(500)
+      .json({
+        error: `Failed to calculate billing ${(error as Error).message}`
+      })
   }
 }

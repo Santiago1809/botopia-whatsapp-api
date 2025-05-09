@@ -60,10 +60,11 @@ export async function getUserCredits(req: CustomRequest, res: Response) {
       creditHistory
     })
   } catch (error) {
-    console.error('Error al obtener créditos del usuario:', error)
-    res
-      .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error obteniendo información de créditos' })
+    res.status(HttpStatusCode.InternalServerError).json({
+      message: `Error obteniendo información de créditos ${
+        (error as Error).message
+      }`
+    })
   }
 }
 
@@ -73,15 +74,6 @@ export async function registerCreditUsage(userId: number, creditsUsed: number) {
     // Obtener el mes y año actual en GMT-5
     const currentMonth = getCurrentMonth()
     const currentYear = getCurrentYear()
-
-    // Buscar o crear registro de créditos para el mes actual
-    /* let userCredits = await prisma.userCredits.findFirst({
-      where: {
-        userId,
-        month: currentMonth,
-        year: currentYear
-      }
-    }) */
     let { data: userCredits } = await supabase
       .from('UserCredits')
       .select('*')
