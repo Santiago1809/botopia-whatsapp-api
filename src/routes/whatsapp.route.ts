@@ -5,7 +5,11 @@ import {
   startWhatsApp,
   stopWhatsApp,
   getContacts,
-  syncContacts
+  syncContacts,
+  syncContactsToDB,
+  updateAgenteHabilitado,
+  getSyncedContacts,
+  deleteSynced
 } from '../controllers/whatsapp.controller'
 
 const router = express.Router()
@@ -15,5 +19,9 @@ router.post('/send-message', authenticateToken, sendMessage)
 router.post('/stop-whatsapp', authenticateToken, stopWhatsApp)
 router.get('/contacts', authenticateToken, getContacts)
 router.post('/sync-contacts', authenticateToken, syncContacts)
+router.post('/sync-contacts-db', authenticateToken, syncContactsToDB)
+router.post('/update-agente-habilitado', authenticateToken, updateAgenteHabilitado)
+router.get('/synced-contacts', authenticateToken, getSyncedContacts)
+router.post('/delete-synced', authenticateToken, deleteSynced)
 
 export default router

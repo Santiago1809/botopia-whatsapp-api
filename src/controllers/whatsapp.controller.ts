@@ -93,14 +93,23 @@ export async function startWhatsApp(req: Request, res: Response) {
     })
 
     client.on('message', async (msg) => {
-      // Filtrar por sincronizados en memoria
-      const sync = syncedContactsMemory[numberId]
       const chat = await msg.getChat()
       const idToCheck = chat.id._serialized
       const isGroup = chat.id.server === 'g.us'
-      if (!sync) return
-      if (isGroup && !sync.groups.includes(idToCheck)) return
-      if (!isGroup && !sync.contacts.includes(idToCheck)) return
+
+      // Busca en la base de datos si está sincronizado y habilitado
+      const { data: syncDb, error: syncDbError } = await supabase
+        .from('SyncedContactOrGroup')
+        .select('agenteHabilitado')
+        .eq('numberId', numberId)
+        .eq('wa_id', idToCheck)
+        .eq('type', isGroup ? 'group' : 'contact')
+        .single();
+
+      if (syncDbError || !syncDb || !syncDb.agenteHabilitado) {
+        // No está habilitado el agente para este chat, no responder
+        return;
+      }
 
       let phoneNumberRaw = msg.to.split('@')[0]
       if (!phoneNumberRaw?.startsWith('+')) {
@@ -383,4 +392,102 @@ export async function syncContacts(req: Request, res: Response) {
     groups: groups || []
   };
   res.status(HttpStatusCode.Ok).json({ message: 'Contacts and groups synced!' });
+}
+
+// NUEVO: Guardar sincronización en base de datos
+export async function syncContactsToDB(req: Request, res: Response) {
+  const { numberId, contacts, groups } = req.body;
+  console.log('SYNC REQUEST:', { numberId, contacts, groups }); // LOG para depuración
+  if (!numberId) {
+    res.status(400).json({ message: 'Missing numberId' });
+    return;
+  }
+
+  await supabase.from('SyncedContactOrGroup').delete().eq('numberId', numberId);
+
+  // Limpia los objetos para que solo tengan los campos válidos
+  const toInsert = [
+    ...(contacts || []).map((c: any) => ({
+      numberId: Number(numberId),
+      type: 'contact',
+      wa_id: c.id,
+      name: c.name,
+      agenteHabilitado: true
+    })),
+    ...(groups || []).map((g: any) => ({
+      numberId: Number(numberId),
+      type: 'group',
+      wa_id: g.id,
+      name: g.name,
+      agenteHabilitado: true
+    }))
+  ];
+
+  if (toInsert.length > 0) {
+    const { error } = await supabase.from('SyncedContactOrGroup').insert(toInsert);
+    if (error) {
+      console.error('SUPABASE INSERT ERROR:', error);
+      res.status(500).json({ message: 'Error insertando en la base de datos', error });
+      return;
+    }
+  }
+
+  res.status(200).json({ message: 'Sincronización guardada en base de datos' });
+  return;
+}
+
+export async function updateAgenteHabilitado(req: Request, res: Response) {
+  const { id, agenteHabilitado } = req.body;
+  if (!id) {
+    res.status(400).json({ message: 'Missing id' });
+    return;
+  }
+
+  const { error } = await supabase
+    .from('SyncedContactOrGroup')
+    .update({ agenteHabilitado })
+    .eq('id', id);
+
+  if (error) {
+    res.status(500).json({ message: 'Error actualizando' });
+    return;
+  }
+  res.status(200).json({ message: 'Actualizado correctamente' });
+  return;
+}
+
+export async function getSyncedContacts(req: Request, res: Response) {
+  const { numberId } = req.query;
+  if (!numberId) {
+    res.status(400).json({ message: 'Missing numberId' });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from('SyncedContactOrGroup')
+    .select('*')
+    .eq('numberId', numberId);
+
+  if (error) {
+    res.status(500).json({ message: 'Error obteniendo datos' });
+    return;
+  }
+  // Siempre devuelve un array
+  res.status(200).json(data || []);
+  return;
+}
+
+// NUEVO: Eliminar un sincronizado por id
+export async function deleteSynced(req: Request, res: Response) {
+  const { id } = req.body;
+  if (!id) {
+    res.status(400).json({ message: 'Missing id' });
+    return;
+  }
+  const { error } = await supabase.from('SyncedContactOrGroup').delete().eq('id', id);
+  if (error) {
+    res.status(500).json({ message: 'Error eliminando', error });
+    return;
+  }
+  res.status(200).json({ message: 'Eliminado correctamente' });
 }
