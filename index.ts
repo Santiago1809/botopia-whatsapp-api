@@ -75,10 +75,10 @@ server.keepAliveTimeout = 65000
 server.headersTimeout = 70000
 
 process.on('uncaughtException', (res) => {
-  console.log(res)
+  return res
 })
 process.on('unhandledRejection', (res) => {
-  console.log(res)
+  return res
 })
 
 server.listen(port, () => {

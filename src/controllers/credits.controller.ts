@@ -54,17 +54,17 @@ export async function getUserCredits(req: CustomRequest, res: Response) {
       .order('year', { ascending: false })
       .order('month', { ascending: false })
       .limit(6)
+      .single()
 
     res.status(HttpStatusCode.Ok).json({
       currentCredits: userCredits,
       creditHistory
     })
   } catch (error) {
-    res.status(HttpStatusCode.InternalServerError).json({
-      message: `Error obteniendo información de créditos ${
-        (error as Error).message
-      }`
-    })
+    console.error('Error al obtener créditos del usuario:', error)
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error obteniendo información de créditos' })
   }
 }
 
