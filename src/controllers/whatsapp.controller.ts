@@ -110,14 +110,6 @@ export async function startWhatsApp(req: Request, res: Response) {
       try {
         const numberProto = phoneUtil.parseAndKeepRawInput(phoneNumberRaw)
         const clientNumber = phoneUtil.getNationalSignificantNumber(numberProto)
-        /* const number = await prisma.whatsAppNumber.findFirst({
-          where: {
-            number: clientNumber
-          },
-          include: {
-            user: true
-          }
-        }) */
         const { data: number } = await supabase
           .from('WhatsAppNumber')
           .select('*')
