@@ -157,10 +157,24 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
 
     // Handle WhatsApp client cleanup
     if (clients[numberId]) {
-      const client = clients[numberId]
-      await client.logout()
-      await client.destroy()
-      delete clients[numberId]
+      const client = clients[numberId];
+      try {
+        if (client.removeAllListeners) {
+          try { client.removeAllListeners(); } catch (err) { console.warn('removeAllListeners failed', err); }
+        }
+        if (client.pupPage && typeof client.pupPage.isClosed === 'function' && !client.pupPage.isClosed()) {
+          try { await client.pupPage.close(); } catch (err) { console.warn('pupPage close failed', err); }
+        }
+        if (client.pupBrowser && typeof client.pupBrowser.isConnected === 'function' && client.pupBrowser.isConnected()) {
+          try { await client.pupBrowser.close(); } catch (err) { console.warn('pupBrowser close failed', err); }
+        }
+        if (typeof client.destroy === 'function') {
+          try { await client.destroy(); } catch (err) { console.warn('destroy failed', err); }
+        }
+      } catch (err) {
+        console.warn('Error cleaning up WhatsApp client:', err);
+      }
+      delete clients[numberId];
     }
 
     const { error: deleteError } = await supabase

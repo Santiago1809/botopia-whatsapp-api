@@ -405,7 +405,7 @@ export async function syncContacts(req: Request, res: Response) {
 // NUEVO: Guardar sincronización en base de datos
 export async function syncContactsToDB(req: Request, res: Response) {
   const { numberId, contacts, groups } = req.body;
-  console.log('SYNC REQUEST:', { numberId, contacts, groups }); // LOG para depuración
+  // console.log('SYNC REQUEST:', { numberId, contacts, groups }); // LOG para depuración
   if (!numberId) {
     res.status(400).json({ message: 'Missing numberId' });
     return;
