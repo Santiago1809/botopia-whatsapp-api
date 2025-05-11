@@ -60,7 +60,9 @@ export async function startWhatsApp(req: Request, res: Response) {
         args: ['--no-sandbox', '--disable-setuid-sandbox']
       }
     })
-    clients[numberId] = client
+    if (client) {
+      clients[numberId] = client
+    }
     const io: Server = req.app.get('io')
 
     client.on('qr', async (qr) => {
@@ -139,18 +141,27 @@ export async function startWhatsApp(req: Request, res: Response) {
             .json({ message: 'Número no encontrado' })
           return
         }
-        const messages = await chat.fetchMessages({ limit: 20 })
-
+        const messages = await chat.fetchMessages({ limit: 30 })
+        // Ordenar de más antiguo a más reciente
+        messages.sort((a, b) => a.timestamp - b.timestamp);
+        let lastMessageTimestamp: number | null = null;
+        if (messages && messages.length > 0) {
+          const lastMsg = messages[messages.length - 1];
+          if (lastMsg) {
+            lastMessageTimestamp = lastMsg.timestamp * 1000;
+          }
+        }
         const chatHistory = messages.map((m) => ({
           role: m.fromMe ? 'assistant' : 'user',
           content: m.body,
-          timestamp: m.timestamp * 1000, // Convertir timestamp de segundos a milisegundos
+          timestamp: m.timestamp * 1000,
           to: chat.id
         }))
         io.to(numberId.toString()).emit('chat-history', {
           numberId,
           chatHistory,
-          to: chat.id._serialized
+          to: chat.id._serialized,
+          lastMessageTimestamp
         })
         const shouldRespond =
           (!isGroup && number.aiEnabled) ||
@@ -178,11 +189,30 @@ export async function startWhatsApp(req: Request, res: Response) {
             await registerCreditUsage(user.id, creditsUsed)
             io.to(numberId.toString()).emit('creditsUpdated', { creditsUsed })
 
+            // Espera un pequeño delay para que WhatsApp sincronice el mensaje
+            await new Promise(res => setTimeout(res, 500));
+            // Vuelve a obtener los últimos 30 mensajes
+            const updatedMessages = await chat.fetchMessages({ limit: 30 });
+            updatedMessages.sort((a, b) => a.timestamp - b.timestamp);
+            const updatedChatHistory = updatedMessages.map((m) => ({
+              role: m.fromMe ? 'assistant' : 'user',
+              content: m.body,
+              timestamp: m.timestamp * 1000,
+              to: chat.id
+            }));
+            let lastMessageTimestamp: number | null = null;
+            if (updatedMessages && updatedMessages.length > 0) {
+              const lastMsg = updatedMessages[updatedMessages.length - 1];
+              if (lastMsg) {
+                lastMessageTimestamp = lastMsg.timestamp * 1000;
+              }
+            }
             io.to(numberId.toString()).emit('chat-history', {
               numberId,
-              chatHistory,
-              to: chat.id._serialized
-            })
+              chatHistory: updatedChatHistory,
+              to: chat.id._serialized,
+              lastMessageTimestamp
+            });
           }
         }
       } catch (error) {
@@ -335,6 +365,66 @@ export function setupSocketEvents(io: Server) {
   io.on('connection', (socket) => {
     socket.on('join-room', (roomId) => {
       socket.join(roomId)
+    })
+    socket.on('get-chat-history', async ({ numberId, to }) => {
+      try {
+        let client = clients[numberId];
+        if (!client) {
+          // Intentar inicializar el cliente automáticamente
+          const { data: number } = await supabase
+            .from('WhatsAppNumber')
+            .select('*')
+            .eq('id', numberId)
+            .single();
+          if (number) {
+            const { Client, LocalAuth } = require('whatsapp-web.js');
+            client = new Client({
+              authStrategy: new LocalAuth({ clientId: numberId.toString() }),
+              puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
+            });
+            if (client) {
+              clients[numberId] = client;
+            }
+            await new Promise((resolve, reject) => {
+              if (!client) return reject(new Error('Client is undefined after creation'));
+              client.on('ready', resolve);
+              client.on('auth_failure', reject);
+              client.initialize();
+            });
+          } else {
+            return;
+          }
+        }
+        if (!client) return;
+        const chat = await client.getChatById(to);
+        if (!chat) {
+          return;
+        }
+        const messages = await chat.fetchMessages({ limit: 30 });
+        // Ordenar de más antiguo a más reciente
+        messages.sort((a, b) => a.timestamp - b.timestamp);
+        let lastMessageTimestamp: number | null = null;
+        if (messages && messages.length > 0) {
+          const lastMsg = messages[messages.length - 1];
+          if (lastMsg) {
+            lastMessageTimestamp = lastMsg.timestamp * 1000;
+          }
+        }
+        const chatHistory = messages.map((m) => ({
+          role: m.fromMe ? 'assistant' : 'user',
+          content: m.body,
+          timestamp: m.timestamp * 1000,
+          to: chat.id
+        }));
+        io.to(numberId.toString()).emit('chat-history', {
+          numberId,
+          chatHistory,
+          to: chat.id._serialized,
+          lastMessageTimestamp
+        });
+      } catch (err) {
+        // Error fetching chat history
+      }
     })
     socket.onAny(async () => {
       const startCPU = process.cpuUsage()
