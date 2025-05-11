@@ -39,7 +39,6 @@ export const registerUser = async (req: Request, res: Response) => {
       .select('*')
       .or(orConditions.join(','))
       .single()
-    console.log('existingUser', existingUser)
     if (existingUser) {
       res
         .status(409)
