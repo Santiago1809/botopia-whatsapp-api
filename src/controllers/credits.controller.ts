@@ -103,7 +103,8 @@ export async function registerCreditUsage(userId: number, creditsUsed: number) {
           year: currentYear,
           totalCredits: 0,
           usedCredits: 0,
-          creditsLimit: DEFAULT_CREDIT_LIMIT // Usamos el valor predeterminado
+          creditsLimit: DEFAULT_CREDIT_LIMIT,
+          updatedAt: new Date()
         })
         .select('*')
         .single()
