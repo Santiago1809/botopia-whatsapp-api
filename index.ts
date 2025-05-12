@@ -51,7 +51,7 @@ const corsOptions: CorsOptions = {
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true)
     } else {
-      callback(new Error('🚫 CORS bloqueado para este origen'))
+      callback(null, false)
     }
   },
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
