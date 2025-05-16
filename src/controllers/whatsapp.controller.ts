@@ -99,10 +99,6 @@ export async function startWhatsApp(req: Request, res: Response) {
       const idToCheck = chat.id._serialized
       const isGroup = chat.id.server === 'g.us'
 
-      // LOG: ID y tipo de chat
-      console.log('--- MENSAJE RECIBIDO ---')
-      console.log('ID recibido:', idToCheck, 'isGroup:', isGroup)
-
       // Busca en la base de datos si está sincronizado y habilitado
       const { data: syncDb, error: syncDbError } = await supabase
         .from('SyncedContactOrGroup')
@@ -112,12 +108,8 @@ export async function startWhatsApp(req: Request, res: Response) {
         .eq('type', isGroup ? 'group' : 'contact')
         .single();
 
-      // LOG: Resultado de la consulta a SyncedContactOrGroup
-      console.log('syncDb:', syncDb, 'syncDbError:', syncDbError)
-
       // NUEVO: Si no está sincronizado, NO emitir historial ni responder
       if (syncDbError || !syncDb) {
-        console.log('El chat no está sincronizado, no se emite historial ni se responde.');
         return;
       }
 
@@ -136,11 +128,8 @@ export async function startWhatsApp(req: Request, res: Response) {
           .single()
 
         if (!number) {
-          console.log('No se encontró el número en WhatsAppNumber');
           return;
         }
-        // LOG: Flags de AI
-        console.log('number.aiEnabled:', number.aiEnabled, 'number.responseGroups:', number.responseGroups)
 
         const messages = await chat.fetchMessages({ limit: 30 })
         // Ordenar de más antiguo a más reciente
@@ -153,10 +142,11 @@ export async function startWhatsApp(req: Request, res: Response) {
           }
         }
         const chatHistory = messages.map((m) => ({
-          role: m.fromMe ? 'assistant' : 'user',
+          role: m.fromMe ? 'user' : 'assistant',
           content: m.body,
           timestamp: m.timestamp * 1000,
-          to: chat.id
+          to: chat.id,
+          fromMe: m.fromMe
         }))
         io.to(numberId.toString()).emit('chat-history', {
           numberId,
@@ -167,7 +157,6 @@ export async function startWhatsApp(req: Request, res: Response) {
 
         // Solo responde si está habilitado y debe responder
         if (!syncDb.agenteHabilitado) {
-          console.log('No está habilitado el agente para este chat');
           return;
         }
         // --- NUEVO: Asegúrate de tener el usuario ---
@@ -183,10 +172,7 @@ export async function startWhatsApp(req: Request, res: Response) {
         const shouldRespond =
           (!isGroup && number.aiEnabled) ||
           (isGroup && number.aiEnabled && number.responseGroups)
-        // LOG: ¿Debe responder?
-        console.log('shouldRespond:', shouldRespond)
         if (!shouldRespond) {
-          console.log('No debe responder según configuración AI');
           return;
         }
         if (shouldRespond) {
@@ -204,7 +190,8 @@ export async function startWhatsApp(req: Request, res: Response) {
               role: 'assistant',
               content: aiResponse as string,
               timestamp: getCurrentUTCDate().getTime(), // Usar UTC para timestamp
-              to: chat.id
+              to: chat.id,
+              fromMe: false
             })
 
             // Registrar el uso de créditos
@@ -221,7 +208,8 @@ export async function startWhatsApp(req: Request, res: Response) {
               role: m.fromMe ? 'assistant' : 'user',
               content: m.body,
               timestamp: m.timestamp * 1000,
-              to: chat.id
+              to: chat.id,
+              fromMe: m.fromMe
             }));
             let lastMessageTimestamp: number | null = null;
             if (updatedMessages && updatedMessages.length > 0) {
@@ -465,7 +453,8 @@ export function setupSocketEvents(io: Server) {
           role: m.fromMe ? 'assistant' : 'user',
           content: m.body,
           timestamp: m.timestamp * 1000,
-          to: chat.id
+          to: chat.id,
+          fromMe: m.fromMe
         }));
         io.to(numberId.toString()).emit('chat-history', {
           numberId,
@@ -639,4 +628,30 @@ export async function deleteSynced(req: Request, res: Response) {
     return;
   }
   res.status(200).json({ message: 'Eliminado correctamente' });
+}
+
+// BULK: Actualizar agenteHabilitado para varios contactos/grupos
+export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
+  const { updates } = req.body; // [{id, agenteHabilitado}]
+  if (!Array.isArray(updates) || updates.length === 0) {
+    res.status(400).json({ message: 'Missing or empty updates array' });
+    return;
+  }
+  const results = [];
+  for (const upd of updates) {
+    if (!upd.id) {
+      results.push({ id: upd.id, success: false, error: 'Missing id' });
+      continue;
+    }
+    const { error } = await supabase
+      .from('SyncedContactOrGroup')
+      .update({ agenteHabilitado: upd.agenteHabilitado })
+      .eq('id', upd.id);
+    if (error) {
+      results.push({ id: upd.id, success: false, error });
+    } else {
+      results.push({ id: upd.id, success: true });
+    }
+  }
+  res.status(200).json({ results });
 }
