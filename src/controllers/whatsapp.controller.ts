@@ -108,9 +108,8 @@ export async function startWhatsApp(req: Request, res: Response) {
         .eq('type', isGroup ? 'group' : 'contact')
         .single();
 
-      // NUEVO: Si no está sincronizado, NO emitir historial ni responder
       if (syncDbError || !syncDb || !syncDb.agenteHabilitado) {
-        // No está habilitado el agente para este chat, no responder
+        console.log('NO SYNC O NO HABILITADO', { syncDbError, syncDb, idToCheck, isGroup });
         return;
       }
 
@@ -129,6 +128,7 @@ export async function startWhatsApp(req: Request, res: Response) {
           .single()
 
         if (!number) {
+          console.log('NO NUMBER', { clientNumber });
           return;
         }
 
@@ -158,6 +158,7 @@ export async function startWhatsApp(req: Request, res: Response) {
 
         // Solo responde si está habilitado y debe responder
         if (!syncDb.agenteHabilitado) {
+          console.log('NO AGENTE HABILITADO', { syncDb });
           return;
         }
         // --- NUEVO: Asegúrate de tener el usuario ---
@@ -174,6 +175,7 @@ export async function startWhatsApp(req: Request, res: Response) {
           (!isGroup && number.aiEnabled) ||
           (isGroup && number.aiEnabled && number.responseGroups)
         if (!shouldRespond) {
+          console.log('NO SHOULD RESPOND', { isGroup, aiEnabled: number.aiEnabled, responseGroups: number.responseGroups });
           return;
         }
         if (shouldRespond) {
@@ -184,7 +186,7 @@ export async function startWhatsApp(req: Request, res: Response) {
             chatHistory,
             user
           )
-
+          console.log('AI RESPONSE', aiResponse);
           if (aiResponse) {
             await msg.reply(aiResponse as string)
             chatHistory.push({
@@ -268,14 +270,6 @@ export async function sendMessage(req: Request, res: Response) {
       });
       return;
     }
-    const client = clients[numberId]
-    if (!client) {
-      res.status(HttpStatusCode.NotFound).json({
-        message: 'CNo hay sesión activa para este número'
-      })
-      return
-    }
-    // Validar que el chat esté sincronizado (pero NO exigir agente habilitado)
     const { data: syncDb, error: syncDbError } = await supabase
       .from('SyncedContactOrGroup')
       .select('id')
@@ -288,6 +282,13 @@ export async function sendMessage(req: Request, res: Response) {
         to
       });
       return;
+    }
+    const client = clients[numberId]
+    if (!client) {
+      res.status(HttpStatusCode.NotFound).json({
+        message: 'CNo hay sesión activa para este número'
+      })
+      return
     }
     await client.sendMessage(to, content)
     res.status(HttpStatusCode.Ok).json({ message: 'Mensaje enviado' })
