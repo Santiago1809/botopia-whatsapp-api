@@ -99,6 +99,10 @@ export async function startWhatsApp(req: Request, res: Response) {
       const idToCheck = chat.id._serialized
       const isGroup = chat.id.server === 'g.us'
 
+      // LOG: ID y tipo de chat
+      console.log('--- MENSAJE RECIBIDO ---')
+      console.log('ID recibido:', idToCheck, 'isGroup:', isGroup)
+
       // Busca en la base de datos si está sincronizado y habilitado
       const { data: syncDb, error: syncDbError } = await supabase
         .from('SyncedContactOrGroup')
@@ -108,27 +112,23 @@ export async function startWhatsApp(req: Request, res: Response) {
         .eq('type', isGroup ? 'group' : 'contact')
         .single();
 
-      if (syncDbError || !syncDb || !syncDb.agenteHabilitado) {
-        // No está habilitado el agente para este chat, no responder
+      // LOG: Resultado de la consulta a SyncedContactOrGroup
+      console.log('syncDb:', syncDb, 'syncDbError:', syncDbError)
+
+      // NUEVO: Si no está sincronizado, NO emitir historial ni responder
+      if (syncDbError || !syncDb) {
+        console.log('El chat no está sincronizado, no se emite historial ni se responde.');
         return;
       }
 
+      // SIEMPRE emitir historial aunque no responda (si está sincronizado)
       let phoneNumberRaw = msg.to.split('@')[0]
       if (!phoneNumberRaw?.startsWith('+')) {
         phoneNumberRaw = '+' + phoneNumberRaw
       }
-
       try {
         const numberProto = phoneUtil.parseAndKeepRawInput(phoneNumberRaw)
         const clientNumber = phoneUtil.getNationalSignificantNumber(numberProto)
-        /* const number = await prisma.whatsAppNumber.findFirst({
-          where: {
-            number: clientNumber
-          },
-          include: {
-            user: true
-          }
-        }) */
         const { data: number } = await supabase
           .from('WhatsAppNumber')
           .select('*')
@@ -136,11 +136,12 @@ export async function startWhatsApp(req: Request, res: Response) {
           .single()
 
         if (!number) {
-          res
-            .status(HttpStatusCode.NotFound)
-            .json({ message: 'Número no encontrado' })
-          return
+          console.log('No se encontró el número en WhatsAppNumber');
+          return;
         }
+        // LOG: Flags de AI
+        console.log('number.aiEnabled:', number.aiEnabled, 'number.responseGroups:', number.responseGroups)
+
         const messages = await chat.fetchMessages({ limit: 30 })
         // Ordenar de más antiguo a más reciente
         messages.sort((a, b) => a.timestamp - b.timestamp);
@@ -163,9 +164,31 @@ export async function startWhatsApp(req: Request, res: Response) {
           to: chat.id._serialized,
           lastMessageTimestamp
         })
+
+        // Solo responde si está habilitado y debe responder
+        if (!syncDb.agenteHabilitado) {
+          console.log('No está habilitado el agente para este chat');
+          return;
+        }
+        // --- NUEVO: Asegúrate de tener el usuario ---
+        let user = null;
+        if (number && number.userId) {
+          const { data: userData } = await supabase
+            .from('User')
+            .select('*')
+            .eq('id', number.userId)
+            .single();
+          user = userData;
+        }
         const shouldRespond =
           (!isGroup && number.aiEnabled) ||
           (isGroup && number.aiEnabled && number.responseGroups)
+        // LOG: ¿Debe responder?
+        console.log('shouldRespond:', shouldRespond)
+        if (!shouldRespond) {
+          console.log('No debe responder según configuración AI');
+          return;
+        }
         if (shouldRespond) {
           const [aiResponse, tokens] = await getAIResponse(
             number.aiPrompt,
@@ -242,12 +265,40 @@ export async function sendMessage(req: Request, res: Response) {
         .json({ message: 'Falta el número de destino' })
       return
     }
+    // Validar que 'to' sea un WhatsApp ID válido
+    function isValidWhatsAppId(id: any) {
+      return typeof id === 'string' && (
+        id.match(/^[0-9]+@c\.us$/) || // usuario
+        id.match(/^[0-9]+-[0-9]+@g\.us$/) // grupo
+      );
+    }
+    if (!isValidWhatsAppId(to)) {
+      res.status(HttpStatusCode.BadRequest).json({
+        message: 'El destinatario no es un WhatsApp ID válido',
+        to
+      });
+      return;
+    }
     const client = clients[numberId]
     if (!client) {
       res.status(HttpStatusCode.NotFound).json({
         message: 'CNo hay sesión activa para este número'
       })
       return
+    }
+    // Validar que el chat esté sincronizado (pero NO exigir agente habilitado)
+    const { data: syncDb, error: syncDbError } = await supabase
+      .from('SyncedContactOrGroup')
+      .select('id')
+      .eq('numberId', numberId)
+      .eq('wa_id', to)
+      .single();
+    if (syncDbError || !syncDb) {
+      res.status(HttpStatusCode.BadRequest).json({
+        message: 'El chat no está sincronizado para este número',
+        to
+      });
+      return;
     }
     await client.sendMessage(to, content)
     res.status(HttpStatusCode.Ok).json({ message: 'Mensaje enviado' })
