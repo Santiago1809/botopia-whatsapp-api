@@ -109,7 +109,8 @@ export async function startWhatsApp(req: Request, res: Response) {
         .single();
 
       // NUEVO: Si no está sincronizado, NO emitir historial ni responder
-      if (syncDbError || !syncDb) {
+      if (syncDbError || !syncDb || !syncDb.agenteHabilitado) {
+        // No está habilitado el agente para este chat, no responder
         return;
       }
 
