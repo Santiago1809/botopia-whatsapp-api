@@ -61,7 +61,7 @@ export async function startWhatsApp(req: Request, res: Response) {
       }
     })
     if (client) {
-      clients[numberId] = client
+    clients[numberId] = client
     }
     const io: Server = req.app.get('io')
 
@@ -109,15 +109,15 @@ export async function startWhatsApp(req: Request, res: Response) {
         .single()
 
       if (syncDbError || !syncDb || !syncDb.agenteHabilitado) {
-        // No está habilitado el agente para este chat, no responder
-        return
+        console.log('NO SYNC O NO HABILITADO', { syncDbError, syncDb, idToCheck, isGroup });
+        return;
       }
 
+      // SIEMPRE emitir historial aunque no responda (si está sincronizado)
       let phoneNumberRaw = msg.to.split('@')[0]
       if (!phoneNumberRaw?.startsWith('+')) {
         phoneNumberRaw = '+' + phoneNumberRaw
       }
-
       try {
         const numberProto = phoneUtil.parseAndKeepRawInput(phoneNumberRaw)
         const clientNumber = phoneUtil.getNationalSignificantNumber(numberProto)
@@ -128,11 +128,10 @@ export async function startWhatsApp(req: Request, res: Response) {
           .single()
 
         if (!number) {
-          res
-            .status(HttpStatusCode.NotFound)
-            .json({ message: 'Número no encontrado' })
-          return
+          console.log('NO NUMBER', { clientNumber });
+          return;
         }
+
         const messages = await chat.fetchMessages({ limit: 30 })
         // Ordenar de más antiguo a más reciente
         messages.sort((a, b) => a.timestamp - b.timestamp)
@@ -144,10 +143,11 @@ export async function startWhatsApp(req: Request, res: Response) {
           }
         }
         const chatHistory = messages.map((m) => ({
-          role: m.fromMe ? 'assistant' : 'user',
+          role: m.fromMe ? 'user' : 'assistant',
           content: m.body,
           timestamp: m.timestamp * 1000,
-          to: chat.id
+          to: chat.id,
+          fromMe: m.fromMe
         }))
         io.to(numberId.toString()).emit('chat-history', {
           numberId,
@@ -155,9 +155,29 @@ export async function startWhatsApp(req: Request, res: Response) {
           to: chat.id._serialized,
           lastMessageTimestamp
         })
+
+        // Solo responde si está habilitado y debe responder
+        if (!syncDb.agenteHabilitado) {
+          console.log('NO AGENTE HABILITADO', { syncDb });
+          return;
+        }
+        // --- NUEVO: Asegúrate de tener el usuario ---
+        let user = null;
+        if (number && number.userId) {
+          const { data: userData } = await supabase
+            .from('User')
+            .select('*')
+            .eq('id', number.userId)
+            .single();
+          user = userData;
+        }
         const shouldRespond =
           (!isGroup && number.aiEnabled) ||
           (isGroup && number.aiEnabled && number.responseGroups)
+        if (!shouldRespond) {
+          console.log('NO SHOULD RESPOND', { isGroup, aiEnabled: number.aiEnabled, responseGroups: number.responseGroups });
+          return;
+        }
         if (shouldRespond) {
           const [aiResponse, tokens] = await getAIResponse(
             number.aiPrompt,
@@ -166,14 +186,15 @@ export async function startWhatsApp(req: Request, res: Response) {
             chatHistory,
             user
           )
-
+          console.log('AI RESPONSE', aiResponse);
           if (aiResponse) {
             await msg.reply(aiResponse as string)
             chatHistory.push({
               role: 'assistant',
               content: aiResponse as string,
               timestamp: getCurrentUTCDate().getTime(), // Usar UTC para timestamp
-              to: chat.id
+              to: chat.id,
+              fromMe: false
             })
 
             // Registrar el uso de créditos
@@ -190,7 +211,8 @@ export async function startWhatsApp(req: Request, res: Response) {
               role: m.fromMe ? 'assistant' : 'user',
               content: m.body,
               timestamp: m.timestamp * 1000,
-              to: chat.id
+              to: chat.id,
+              fromMe: m.fromMe
             }))
             let lastMessageTimestamp: number | null = null
             if (updatedMessages && updatedMessages.length > 0) {
@@ -234,11 +256,33 @@ export async function sendMessage(req: Request, res: Response) {
         .json({ message: 'Falta el número de destino' })
       return
     }
-    const { data: contact } = await supabase
+    // Validar que 'to' sea un WhatsApp ID válido
+    function isValidWhatsAppId(id: any) {
+      return typeof id === 'string' && (
+        id.match(/^[0-9]+@c\.us$/) || // usuario
+        id.match(/^[0-9]+-[0-9]+@g\.us$/) // grupo
+      );
+    }
+    if (!isValidWhatsAppId(to)) {
+      res.status(HttpStatusCode.BadRequest).json({
+        message: 'El destinatario no es un WhatsApp ID válido',
+        to
+      });
+      return;
+    }
+    const { data: syncDb, error: syncDbError } = await supabase
       .from('SyncedContactOrGroup')
-      .select('wa_id')
-      .eq('id', to)
-      .single()
+      .select('id')
+      .eq('numberId', numberId)
+      .eq('wa_id', to)
+      .single();
+    if (syncDbError || !syncDb) {
+      res.status(HttpStatusCode.BadRequest).json({
+        message: 'El chat no está sincronizado para este número',
+        to
+      });
+      return;
+    }
     const client = clients[numberId]
     if (!client) {
       res.status(HttpStatusCode.NotFound).json({
@@ -246,7 +290,7 @@ export async function sendMessage(req: Request, res: Response) {
       })
       return
     }
-    await client.sendMessage(contact?.wa_id, content)
+    await client.sendMessage(to, content)
     res.status(HttpStatusCode.Ok).json({ message: 'Mensaje enviado' })
   } catch (error) {
     res.status(HttpStatusCode.InternalServerError).json({
@@ -416,7 +460,8 @@ export function setupSocketEvents(io: Server) {
           role: m.fromMe ? 'assistant' : 'user',
           content: m.body,
           timestamp: m.timestamp * 1000,
-          to: chat.id
+          to: chat.id,
+          fromMe: m.fromMe
         }))
         io.to(numberId.toString()).emit('chat-history', {
           numberId,
@@ -601,4 +646,30 @@ export async function deleteSynced(req: Request, res: Response) {
     return
   }
   res.status(200).json({ message: 'Eliminado correctamente' })
+}
+
+// BULK: Actualizar agenteHabilitado para varios contactos/grupos
+export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
+  const { updates } = req.body; // [{id, agenteHabilitado}]
+  if (!Array.isArray(updates) || updates.length === 0) {
+    res.status(400).json({ message: 'Missing or empty updates array' });
+    return;
+  }
+  const results = [];
+  for (const upd of updates) {
+    if (!upd.id) {
+      results.push({ id: upd.id, success: false, error: 'Missing id' });
+      continue;
+    }
+    const { error } = await supabase
+      .from('SyncedContactOrGroup')
+      .update({ agenteHabilitado: upd.agenteHabilitado })
+      .eq('id', upd.id);
+    if (error) {
+      results.push({ id: upd.id, success: false, error });
+    } else {
+      results.push({ id: upd.id, success: true });
+    }
+  }
+  res.status(200).json({ results });
 }
