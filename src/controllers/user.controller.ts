@@ -125,10 +125,11 @@ export async function getWhatsAppNumbers(req: CustomRequest, res: Response) {
 
     res.status(HttpStatusCode.Ok).json(whatsappNumbers || [])
   } catch (error) {
-    console.error('Error getting WhatsApp numbers:', error)
-    res
-      .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error obteniendo números de WhatsApp' })
+    res.status(HttpStatusCode.InternalServerError).json({
+      message: `Error obteniendo números de WhatsApp: ${
+        (error as Error).message
+      }`
+    })
   }
 }
 
@@ -188,10 +189,9 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
 
     res.status(HttpStatusCode.Ok).json({ message: 'Número eliminado' })
   } catch (error) {
-    console.error('Error deleting WhatsApp number:', error)
-    res
-      .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error eliminando número de WhatsApp' })
+    res.status(HttpStatusCode.InternalServerError).json({
+      message: `Error eliminando número de WhatsApp ${(error as Error).message}`
+    })
   }
 }
 
@@ -221,10 +221,11 @@ export async function getAgents(req: CustomRequest, res: Response) {
 
     res.status(HttpStatusCode.Ok).json(agents)
   } catch (error) {
-    console.error('Error getting agents:', error)
     res
       .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error obteniendo agentes' })
+      .json({
+        message: `Error obteniendo agentes: ${(error as Error).message}`
+      })
   }
 }
 

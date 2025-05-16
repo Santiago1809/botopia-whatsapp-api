@@ -106,7 +106,7 @@ export async function startWhatsApp(req: Request, res: Response) {
         .eq('numberId', numberId)
         .eq('wa_id', idToCheck)
         .eq('type', isGroup ? 'group' : 'contact')
-        .single();
+        .single()
 
       if (syncDbError || !syncDb || !syncDb.agenteHabilitado) {
         console.log('NO SYNC O NO HABILITADO', { syncDbError, syncDb, idToCheck, isGroup });
@@ -134,12 +134,12 @@ export async function startWhatsApp(req: Request, res: Response) {
 
         const messages = await chat.fetchMessages({ limit: 30 })
         // Ordenar de más antiguo a más reciente
-        messages.sort((a, b) => a.timestamp - b.timestamp);
-        let lastMessageTimestamp: number | null = null;
+        messages.sort((a, b) => a.timestamp - b.timestamp)
+        let lastMessageTimestamp: number | null = null
         if (messages && messages.length > 0) {
-          const lastMsg = messages[messages.length - 1];
+          const lastMsg = messages[messages.length - 1]
           if (lastMsg) {
-            lastMessageTimestamp = lastMsg.timestamp * 1000;
+            lastMessageTimestamp = lastMsg.timestamp * 1000
           }
         }
         const chatHistory = messages.map((m) => ({
@@ -203,22 +203,22 @@ export async function startWhatsApp(req: Request, res: Response) {
             io.to(numberId.toString()).emit('creditsUpdated', { creditsUsed })
 
             // Espera un pequeño delay para que WhatsApp sincronice el mensaje
-            await new Promise(res => setTimeout(res, 500));
+            await new Promise((res) => setTimeout(res, 500))
             // Vuelve a obtener los últimos 30 mensajes
-            const updatedMessages = await chat.fetchMessages({ limit: 30 });
-            updatedMessages.sort((a, b) => a.timestamp - b.timestamp);
+            const updatedMessages = await chat.fetchMessages({ limit: 30 })
+            updatedMessages.sort((a, b) => a.timestamp - b.timestamp)
             const updatedChatHistory = updatedMessages.map((m) => ({
               role: m.fromMe ? 'assistant' : 'user',
               content: m.body,
               timestamp: m.timestamp * 1000,
               to: chat.id,
               fromMe: m.fromMe
-            }));
-            let lastMessageTimestamp: number | null = null;
+            }))
+            let lastMessageTimestamp: number | null = null
             if (updatedMessages && updatedMessages.length > 0) {
-              const lastMsg = updatedMessages[updatedMessages.length - 1];
+              const lastMsg = updatedMessages[updatedMessages.length - 1]
               if (lastMsg) {
-                lastMessageTimestamp = lastMsg.timestamp * 1000;
+                lastMessageTimestamp = lastMsg.timestamp * 1000
               }
             }
             io.to(numberId.toString()).emit('chat-history', {
@@ -226,7 +226,7 @@ export async function startWhatsApp(req: Request, res: Response) {
               chatHistory: updatedChatHistory,
               to: chat.id._serialized,
               lastMessageTimestamp
-            });
+            })
           }
         }
       } catch (error) {
@@ -293,9 +293,10 @@ export async function sendMessage(req: Request, res: Response) {
     await client.sendMessage(to, content)
     res.status(HttpStatusCode.Ok).json({ message: 'Mensaje enviado' })
   } catch (error) {
-    console.error('❌ Error al enviar el mensaje:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error interno del servidor al enviar el mensaje'
+      message: `Error interno del servidor al enviar el mensaje: ${
+        (error as Error).message
+      }`
     })
   }
 }
@@ -409,46 +410,50 @@ export function setupSocketEvents(io: Server) {
     })
     socket.on('get-chat-history', async ({ numberId, to }) => {
       try {
-        let client = clients[numberId];
+        let client = clients[numberId]
         if (!client) {
           // Intentar inicializar el cliente automáticamente
           const { data: number } = await supabase
             .from('WhatsAppNumber')
             .select('*')
             .eq('id', numberId)
-            .single();
+            .single()
           if (number) {
-            const { Client, LocalAuth } = require('whatsapp-web.js');
+            const { Client, LocalAuth } = require('whatsapp-web.js')
             client = new Client({
               authStrategy: new LocalAuth({ clientId: numberId.toString() }),
-              puppeteer: { headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] }
-            });
+              puppeteer: {
+                headless: true,
+                args: ['--no-sandbox', '--disable-setuid-sandbox']
+              }
+            })
             if (client) {
-              clients[numberId] = client;
+              clients[numberId] = client
             }
             await new Promise((resolve, reject) => {
-              if (!client) return reject(new Error('Client is undefined after creation'));
-              client.on('ready', resolve);
-              client.on('auth_failure', reject);
-              client.initialize();
-            });
+              if (!client)
+                return reject(new Error('Client is undefined after creation'))
+              client.on('ready', resolve)
+              client.on('auth_failure', reject)
+              client.initialize()
+            })
           } else {
-            return;
+            return
           }
         }
-        if (!client) return;
-        const chat = await client.getChatById(to);
+        if (!client) return
+        const chat = await client.getChatById(to)
         if (!chat) {
-          return;
+          return
         }
-        const messages = await chat.fetchMessages({ limit: 30 });
+        const messages = await chat.fetchMessages({ limit: 30 })
         // Ordenar de más antiguo a más reciente
-        messages.sort((a, b) => a.timestamp - b.timestamp);
-        let lastMessageTimestamp: number | null = null;
+        messages.sort((a, b) => a.timestamp - b.timestamp)
+        let lastMessageTimestamp: number | null = null
         if (messages && messages.length > 0) {
-          const lastMsg = messages[messages.length - 1];
+          const lastMsg = messages[messages.length - 1]
           if (lastMsg) {
-            lastMessageTimestamp = lastMsg.timestamp * 1000;
+            lastMessageTimestamp = lastMsg.timestamp * 1000
           }
         }
         const chatHistory = messages.map((m) => ({
@@ -457,13 +462,13 @@ export function setupSocketEvents(io: Server) {
           timestamp: m.timestamp * 1000,
           to: chat.id,
           fromMe: m.fromMe
-        }));
+        }))
         io.to(numberId.toString()).emit('chat-history', {
           numberId,
           chatHistory,
           to: chat.id._serialized,
           lastMessageTimestamp
-        });
+        })
       } catch (err) {
         // Error fetching chat history
       }
@@ -493,57 +498,61 @@ export function setupSocketEvents(io: Server) {
 }
 
 export async function getContacts(req: Request, res: Response) {
-  const { numberId } = req.query;
+  const { numberId } = req.query
   if (!numberId) {
-    res.status(HttpStatusCode.BadRequest).json({ message: 'Missing numberId' });
-    return;
+    res.status(HttpStatusCode.BadRequest).json({ message: 'Missing numberId' })
+    return
   }
-  const client = clients[numberId as string];
+  const client = clients[numberId as string]
   if (!client) {
-    res.status(HttpStatusCode.NotFound).json({ message: 'WhatsApp client not found for this numberId' });
-    return;
+    res
+      .status(HttpStatusCode.NotFound)
+      .json({ message: 'WhatsApp client not found for this numberId' })
+    return
   }
   try {
-    const contacts = await client.getContacts();
+    const contacts = await client.getContacts()
     // Puedes filtrar o mapear los datos si quieres devolver solo ciertos campos
-    const contactList = contacts.map(contact => ({
+    const contactList = contacts.map((contact) => ({
       id: contact.id._serialized,
       name: contact.name || contact.pushname || contact.number,
       number: contact.number,
       isGroup: contact.isGroup,
       isMyContact: contact.isMyContact
-    }));
-    res.status(HttpStatusCode.Ok).json(contactList);
+    }))
+    res.status(HttpStatusCode.Ok).json(contactList)
   } catch (error) {
-    console.error('Error getting contacts:', error);
-    res.status(HttpStatusCode.InternalServerError).json({ message: 'Error getting contacts' });
+    console.error('Error getting contacts:', error)
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'Error getting contacts' })
   }
 }
 
 export async function syncContacts(req: Request, res: Response) {
-  const { numberId, contacts, groups } = req.body;
+  const { numberId, contacts, groups } = req.body
   if (!numberId) {
-    res.status(HttpStatusCode.BadRequest).json({ message: 'Missing numberId' });
-    return;
+    res.status(HttpStatusCode.BadRequest).json({ message: 'Missing numberId' })
+    return
   }
   // Guardar en memoria
   syncedContactsMemory[numberId] = {
     contacts: contacts || [],
     groups: groups || []
-  };
-  res.status(HttpStatusCode.Ok).json({ message: 'Contacts and groups synced!' });
+  }
+  res.status(HttpStatusCode.Ok).json({ message: 'Contacts and groups synced!' })
 }
 
 // NUEVO: Guardar sincronización en base de datos
 export async function syncContactsToDB(req: Request, res: Response) {
-  const { numberId, contacts, groups } = req.body;
+  const { numberId, contacts, groups } = req.body
   // console.log('SYNC REQUEST:', { numberId, contacts, groups }); // LOG para depuración
   if (!numberId) {
-    res.status(400).json({ message: 'Missing numberId' });
-    return;
+    res.status(400).json({ message: 'Missing numberId' })
+    return
   }
 
-  await supabase.from('SyncedContactOrGroup').delete().eq('numberId', numberId);
+  await supabase.from('SyncedContactOrGroup').delete().eq('numberId', numberId)
 
   // Limpia los objetos para que solo tengan los campos válidos
   const toInsert = [
@@ -561,75 +570,82 @@ export async function syncContactsToDB(req: Request, res: Response) {
       name: g.name,
       agenteHabilitado: true
     }))
-  ];
+  ]
 
   if (toInsert.length > 0) {
-    const { error } = await supabase.from('SyncedContactOrGroup').insert(toInsert);
+    const { error } = await supabase
+      .from('SyncedContactOrGroup')
+      .insert(toInsert)
     if (error) {
-      console.error('SUPABASE INSERT ERROR:', error);
-      res.status(500).json({ message: 'Error insertando en la base de datos', error });
-      return;
+      console.error('SUPABASE INSERT ERROR:', error)
+      res
+        .status(500)
+        .json({ message: 'Error insertando en la base de datos', error })
+      return
     }
   }
 
-  res.status(200).json({ message: 'Sincronización guardada en base de datos' });
-  return;
+  res.status(200).json({ message: 'Sincronización guardada en base de datos' })
+  return
 }
 
 export async function updateAgenteHabilitado(req: Request, res: Response) {
-  const { id, agenteHabilitado } = req.body;
+  const { id, agenteHabilitado } = req.body
   if (!id) {
-    res.status(400).json({ message: 'Missing id' });
-    return;
+    res.status(400).json({ message: 'Missing id' })
+    return
   }
 
   const { error } = await supabase
     .from('SyncedContactOrGroup')
     .update({ agenteHabilitado })
-    .eq('id', id);
+    .eq('id', id)
 
   if (error) {
-    res.status(500).json({ message: 'Error actualizando' });
-    return;
+    res.status(500).json({ message: 'Error actualizando' })
+    return
   }
-  res.status(200).json({ message: 'Actualizado correctamente' });
-  return;
+  res.status(200).json({ message: 'Actualizado correctamente' })
+  return
 }
 
 export async function getSyncedContacts(req: Request, res: Response) {
-  const { numberId } = req.query;
+  const { numberId } = req.query
   if (!numberId) {
-    res.status(400).json({ message: 'Missing numberId' });
-    return;
+    res.status(400).json({ message: 'Missing numberId' })
+    return
   }
 
   const { data, error } = await supabase
     .from('SyncedContactOrGroup')
     .select('*')
-    .eq('numberId', numberId);
+    .eq('numberId', numberId)
 
   if (error) {
-    res.status(500).json({ message: 'Error obteniendo datos' });
-    return;
+    res.status(500).json({ message: 'Error obteniendo datos' })
+    return
   }
   // Siempre devuelve un array
-  res.status(200).json(data || []);
-  return;
+  res.status(200).json(data || [])
+  return
 }
 
 // NUEVO: Eliminar un sincronizado por id
 export async function deleteSynced(req: Request, res: Response) {
-  const { id } = req.body;
+  const { id } = req.body
   if (!id) {
-    res.status(400).json({ message: 'Missing id' });
-    return;
+    res.status(400).json({ message: 'Missing id' })
+    return
   }
-  const { error } = await supabase.from('SyncedContactOrGroup').delete().eq('id', id);
+  const { error } = await supabase
+    .from('SyncedContactOrGroup')
+    .delete()
+    .eq('id', id)
   if (error) {
-    res.status(500).json({ message: 'Error eliminando', error });
-    return;
+    res.status(500).json({ message: 'Error eliminando', error })
+    return
   }
-  res.status(200).json({ message: 'Eliminado correctamente' });
+  res.status(200).json({ message: 'Eliminado correctamente' })
 }
 
 // BULK: Actualizar agenteHabilitado para varios contactos/grupos

@@ -54,6 +54,7 @@ export async function getUserCredits(req: CustomRequest, res: Response) {
       .order('year', { ascending: false })
       .order('month', { ascending: false })
       .limit(6)
+      .single()
 
     res.status(HttpStatusCode.Ok).json({
       currentCredits: userCredits,
@@ -73,15 +74,6 @@ export async function registerCreditUsage(userId: number, creditsUsed: number) {
     // Obtener el mes y año actual en GMT-5
     const currentMonth = getCurrentMonth()
     const currentYear = getCurrentYear()
-
-    // Buscar o crear registro de créditos para el mes actual
-    /* let userCredits = await prisma.userCredits.findFirst({
-      where: {
-        userId,
-        month: currentMonth,
-        year: currentYear
-      }
-    }) */
     let { data: userCredits } = await supabase
       .from('UserCredits')
       .select('*')
@@ -111,7 +103,8 @@ export async function registerCreditUsage(userId: number, creditsUsed: number) {
           year: currentYear,
           totalCredits: 0,
           usedCredits: 0,
-          creditsLimit: DEFAULT_CREDIT_LIMIT // Usamos el valor predeterminado
+          creditsLimit: DEFAULT_CREDIT_LIMIT,
+          updatedAt: new Date()
         })
         .select('*')
         .single()

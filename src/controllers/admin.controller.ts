@@ -15,10 +15,8 @@ export async function getAgents(_req: Request, res: Response) {
       .eq('isGlobal', true)
     res.status(HttpStatusCode.Ok).json(agents)
   } catch (error) {
-    console.error('Error fetching agents:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error fetching agents',
-      error: (error as Error).message
+      message: `Error fetching agents: ${(error as Error).message}`
     })
   }
 }
@@ -47,8 +45,7 @@ export async function addAgent(req: CustomRequest, res: Response) {
   } catch (error) {
     console.error('Error creating agent:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error creating agent',
-      error: (error as Error).message
+      message: `Error creating agent ${(error as Error).message}`
     })
   }
 }
@@ -71,10 +68,8 @@ export async function editAgent(req: Request, res: Response) {
     await supabase.from('Agent').update(data).eq('id', id)
     res.status(HttpStatusCode.Ok).json({ message: 'Agente editado' })
   } catch (error) {
-    console.error('Error editing agent:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error editing agent',
-      error: (error as Error).message
+      message: `Error editing agent ${(error as Error).message}`
     })
   }
 }
@@ -84,10 +79,8 @@ export async function deleteAgent(req: Request, res: Response) {
     await supabase.from('Agent').delete().eq('id', id)
     res.status(HttpStatusCode.Ok).json({ message: 'Agente eliminado' })
   } catch (error) {
-    console.error('Error deleting agent:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error deleting agent',
-      error: (error as Error).message
+      message: `Error deleting agent ${(error as Error).message}`
     })
   }
 }
@@ -109,10 +102,8 @@ export async function deactivateUser(req: Request, res: Response) {
     await supabase.from('User').update({ active: false }).eq('id', id)
     res.status(HttpStatusCode.Ok).json({ message: 'Usuario desactivado' })
   } catch (error) {
-    console.error('Error deactivating user:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error deactivating user',
-      error: (error as Error).message
+      message: `Error deactivating user ${(error as Error).message}`
     })
   }
 }
@@ -134,10 +125,8 @@ export async function activateUser(req: Request, res: Response) {
     await supabase.from('User').update({ active: true }).eq('id', id)
     res.status(HttpStatusCode.Ok).json({ message: 'Usuario activado' })
   } catch (error) {
-    console.error('Error activating user:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error activating user',
-      error: (error as Error).message
+      message: `Error activating user ${(error as Error).message}`
     })
   }
 }
@@ -166,8 +155,7 @@ export async function updateUserTokens(req: Request, res: Response) {
   } catch (error) {
     console.error('Error updating user tokens:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error updating user tokens',
-      error: (error as Error).message
+      message: `Error updating user tokens ${(error as Error).message}`
     })
   }
 }
@@ -181,8 +169,7 @@ export async function getAllUsers(req: Request, res: Response) {
   } catch (error) {
     console.error('Error fetching users:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error fetching users',
-      error: (error as Error).message
+      message: `Error fetching users ${(error as Error).message}`
     })
   }
 }
@@ -224,10 +211,8 @@ export async function setUserTokenLimit(req: Request, res: Response) {
       .status(HttpStatusCode.Ok)
       .json({ message: 'Límite de tokens actualizado' })
   } catch (error) {
-    console.error('Error updating user tokens:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error updating user tokens',
-      error: (error as Error).message
+      message: `Error updating user tokens ${(error as Error).message}`
     })
   }
 }
@@ -260,10 +245,8 @@ export async function changeUserPassword(req: Request, res: Response) {
       message: 'Contraseña actualizada y enviada al correo electrónico'
     })
   } catch (error) {
-    console.error('Error changing user password:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error changing user password',
-      error: (error as Error).message
+      message: `Error changing user password ${(error as Error).message}`
     })
   }
 }

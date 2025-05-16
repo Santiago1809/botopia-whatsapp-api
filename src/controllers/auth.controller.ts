@@ -30,17 +30,15 @@ export const registerUser = async (req: Request, res: Response) => {
         .json({ message: 'Faltan datos para el registro' })
       return
     }
-    /* const existingUser = await prisma.user.findFirst({
-      where: {
-        OR: [{ username }, { email }, ...(phoneNumber ? [{ phoneNumber }] : [])]
-      }
-    }) */
+    const orConditions = [`username.eq.${username},email.eq.${email}`]
+    if (phoneNumber !== '') {
+      orConditions.push(`phoneNumber.eq.${phoneNumber}`)
+    }
     const { data: existingUser } = await supabase
       .from('User')
       .select('*')
-      .or(
-        `username.eq.${username},email.eq.${email},phoneNumber.eq.${phoneNumber}`
-      )
+      .or(orConditions.join(','))
+      .single()
     if (existingUser) {
       res
         .status(409)
@@ -73,10 +71,9 @@ export const registerUser = async (req: Request, res: Response) => {
     })
     res.json({ token, user: { username: user.username, role: user.role } })
   } catch (error) {
-    console.error('❌ Error en el registro:', error)
     res
       .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error en el servidor' })
+      .json({ message: `Error en el servidor ${(error as Error).message}` })
   }
 }
 
@@ -131,10 +128,9 @@ export const loginUser = async (req: Request, res: Response) => {
     )
     res.json({ token, user: { username: user.username, role: role } })
   } catch (error) {
-    console.error('❌ Error en el login:', error)
     res
       .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error en el servidor' })
+      .json({ message: `Error en el servidor: ${(error as Error).message}` })
   }
 }
 
@@ -153,10 +149,9 @@ export const getUserInfo = async (req: CustomRequest, res: Response) => {
     }
     res.json({ ...user })
   } catch (error) {
-    console.error('❌ Error obteniendo usuario:', error)
     res
       .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error en el servidor' })
+      .json({ message: `Error en el servidor: ${(error as Error).message}` })
   }
 }
 
@@ -167,10 +162,9 @@ export const getUsersList = async (req: CustomRequest, res: Response) => {
     const { data: users } = await supabase.from('User').select('*,!password')
     res.json(users)
   } catch (error) {
-    console.error('❌ Error obteniendo la lista de usuarios:', error)
     res
       .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error en el servidor' })
+      .json({ message: `Error en el servidor: ${(error as Error).message}` })
   }
 }
 
@@ -282,10 +276,10 @@ export async function logOut(req: CustomRequest, res: Response) {
     }
     // Respond success
     res.json({ message: 'Sesión cerrada correctamente' })
-  } catch {
+  } catch (error) {
     res
       .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error al cerrar sesión' })
+      .json({ message: `Error al cerrar sesión: ${(error as Error).message}` })
   }
 }
 
@@ -324,13 +318,11 @@ export const requestResetPassword = async (req: Request, res: Response) => {
       message: 'OTP enviado correctamente'
     })
   } catch (error) {
-    console.error(
-      '❌ Error al solicitar el restablecimiento de contraseña:',
-      error
-    )
-    res
-      .status(HttpStatusCode.InternalServerError)
-      .json({ message: 'Error al solicitar el restablecimiento de contraseña' })
+    res.status(HttpStatusCode.InternalServerError).json({
+      message: `Error al solicitar el restablecimiento de contraseña: ${
+        (error as Error).message
+      }`
+    })
   }
 }
 export async function verifyOtp(req: Request, res: Response) {
@@ -349,9 +341,8 @@ export async function verifyOtp(req: Request, res: Response) {
     delete otpStore[email]
     res.status(HttpStatusCode.Ok).json({ message: 'OTP verificado' })
   } catch (error) {
-    console.error('❌ Error al verificar el OTP:', error)
     res.status(HttpStatusCode.InternalServerError).json({
-      message: 'Error al verificar el OTP'
+      message: `Error al verificar el OTP ${(error as Error).message}`
     })
   }
 }
@@ -375,7 +366,8 @@ export const changePassword = async (req: Request, res: Response) => {
       .eq('email', email)
     res.json({ message: 'Contraseña actualizada correctamente' })
   } catch (error) {
-    console.log(error)
-    res.json({ message: 'Error al actualizar la contraseña' })
+    res.json({
+      message: `Error al actualizar la contraseña: ${(error as Error).message}`
+    })
   }
 }
