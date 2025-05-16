@@ -61,7 +61,7 @@ export async function startWhatsApp(req: Request, res: Response) {
       }
     })
     if (client) {
-      clients[numberId] = client
+    clients[numberId] = client
     }
     const io: Server = req.app.get('io')
 
