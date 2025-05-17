@@ -649,23 +649,54 @@ export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
     res.status(400).json({ message: 'Missing or empty updates array' })
     return
   }
-  const results = []
-  for (const upd of updates) {
-    if (!upd.id) {
-      results.push({ id: upd.id, success: false, error: 'Missing id' })
-      continue
-    }
-    const { error } = await supabase
-      .from('SyncedContactOrGroup')
-      .update({ agenteHabilitado: upd.agenteHabilitado })
-      .eq('id', upd.id)
-    if (error) {
-      results.push({ id: upd.id, success: false, error })
+  try {
+    // Verifica si todos los valores son iguales (todo true o todo false)
+    const allSame = updates.every(u => u.agenteHabilitado === updates[0].agenteHabilitado);
+    // NO convertir a número, usar los IDs tal cual
+    const ids = updates.map(u => u.id);
+    const value = updates[0].agenteHabilitado;
+    if (allSame) {
+      // Update en lotes de 100
+      const batchSize = 100;
+      for (let i = 0; i < ids.length; i += batchSize) {
+        const batch = ids.slice(i, i + batchSize);
+        const { error } = await supabase
+          .from('SyncedContactOrGroup')
+          .update({ agenteHabilitado: value })
+          .in('id', batch);
+        if (error) {
+          res.status(500).json({ message: 'Error actualizando', error });
+          return;
+        }
+      }
+      res.status(200).json({ success: true });
+      return;
     } else {
-      results.push({ id: upd.id, success: true })
+      // Mezcla de true/false: actualiza uno por uno
+      const results = [];
+      for (const upd of updates) {
+        if (!upd.id) {
+          results.push({ id: upd.id, success: false, error: 'Missing id' })
+          continue
+        }
+        // NO convertir a número, usar el ID tal cual
+        const { error } = await supabase
+          .from('SyncedContactOrGroup')
+          .update({ agenteHabilitado: upd.agenteHabilitado })
+          .eq('id', upd.id)
+        if (error) {
+          results.push({ id: upd.id, success: false, error })
+        } else {
+          results.push({ id: upd.id, success: true })
+        }
+      }
+      res.status(200).json({ results })
+      return
     }
+  } catch (err) {
+    console.error('Bulk update error:', err)
+    res.status(500).json({ error: 'Error actualizando agentes' })
   }
-  res.status(200).json({ results })
 }
 
 // Sincroniza chats en lotes y emite progreso
