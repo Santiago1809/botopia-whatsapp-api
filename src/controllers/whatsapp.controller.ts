@@ -15,6 +15,7 @@ import { clients } from '../WhatsAppClients'
 import { registerCreditUsage } from './credits.controller'
 import { supabase } from '../config/db'
 import type { Contact, Group } from '../types/global'
+import pLimit from 'p-limit'
 const phoneUtil = PhoneNumberUtil.getInstance()
 
 // Estructura en memoria para sincronizados por sesión
@@ -248,12 +249,11 @@ export async function sendMessage(req: Request, res: Response) {
       return
     }
     // Validar que 'to' sea un WhatsApp ID válido
-    function isValidWhatsAppId(id: string) {
-      return (
-        typeof id === 'string' &&
-        (id.match(/^[0-9]+@c\.us$/) || // usuario
-          id.match(/^[0-9]+-[0-9]+@g\.us$/)) // grupo
-      )
+    function isValidWhatsAppId(id: any) {
+      return typeof id === 'string' && (
+        id.match(/^[0-9]+@c\.us$/) || // usuario
+        id.match(/^[0-9]+(-[0-9]+)?@g\.us$/) // grupo (con o sin guion)
+      );
     }
     if (!isValidWhatsAppId(to)) {
       res.status(HttpStatusCode.BadRequest).json({
@@ -264,7 +264,7 @@ export async function sendMessage(req: Request, res: Response) {
     }
     const { data: syncDb, error: syncDbError } = await supabase
       .from('SyncedContactOrGroup')
-      .select('id')
+      .select('id, wa_id, type')
       .eq('numberId', numberId)
       .eq('wa_id', to)
       .single()
@@ -437,8 +437,8 @@ export function setupSocketEvents(io: Server) {
         if (!chat) {
           return
         }
-        const messages = await chat.fetchMessages({ limit: 30 })
-        // Ordenar de más antiguo a más reciente
+        // Traer solo los últimos 20 mensajes, ordenados de más reciente a más antiguo
+        const messages = await chat.fetchMessages({ limit: 20 })
         messages.sort((a, b) => a.timestamp - b.timestamp)
         let lastMessageTimestamp: number | null = null
         if (messages && messages.length > 0) {
@@ -536,14 +536,16 @@ export async function syncContacts(req: Request, res: Response) {
 
 // NUEVO: Guardar sincronización en base de datos
 export async function syncContactsToDB(req: Request, res: Response) {
-  const { numberId, contacts, groups } = req.body
-  // console.log('SYNC REQUEST:', { numberId, contacts, groups }); // LOG para depuración
+  const { numberId, contacts, groups, clearAll } = req.body
   if (!numberId) {
     res.status(400).json({ message: 'Missing numberId' })
     return
   }
 
-  await supabase.from('SyncedContactOrGroup').delete().eq('numberId', numberId)
+  // Solo borra si clearAll está presente y es true
+  if (clearAll) {
+    await supabase.from('SyncedContactOrGroup').delete().eq('numberId', numberId)
+  }
 
   // Limpia los objetos para que solo tengan los campos válidos
   const toInsert = [
@@ -610,14 +612,15 @@ export async function getSyncedContacts(req: Request, res: Response) {
   const { data, error } = await supabase
     .from('SyncedContactOrGroup')
     .select('*')
-    .eq('numberId', numberId)
+    .eq('numberId', Number(numberId))
 
   if (error) {
     res.status(500).json({ message: 'Error obteniendo datos' })
     return
   }
-  // Siempre devuelve un array
-  res.status(200).json(data || [])
+
+  // RESPONDE INMEDIATAMENTE LOS CONTACTOS Y GRUPOS
+  res.status(200).json(data)
   return
 }
 
@@ -646,21 +649,97 @@ export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
     res.status(400).json({ message: 'Missing or empty updates array' })
     return
   }
-  const results = []
-  for (const upd of updates) {
-    if (!upd.id) {
-      results.push({ id: upd.id, success: false, error: 'Missing id' })
-      continue
-    }
-    const { error } = await supabase
-      .from('SyncedContactOrGroup')
-      .update({ agenteHabilitado: upd.agenteHabilitado })
-      .eq('id', upd.id)
-    if (error) {
-      results.push({ id: upd.id, success: false, error })
+  try {
+    // Verifica si todos los valores son iguales (todo true o todo false)
+    const allSame = updates.every(u => u.agenteHabilitado === updates[0].agenteHabilitado);
+    // NO convertir a número, usar los IDs tal cual
+    const ids = updates.map(u => u.id);
+    const value = updates[0].agenteHabilitado;
+    if (allSame) {
+      // Update en lotes de 100
+      const batchSize = 100;
+      for (let i = 0; i < ids.length; i += batchSize) {
+        const batch = ids.slice(i, i + batchSize);
+        const { error } = await supabase
+          .from('SyncedContactOrGroup')
+          .update({ agenteHabilitado: value })
+          .in('id', batch);
+        if (error) {
+          res.status(500).json({ message: 'Error actualizando', error });
+          return;
+        }
+      }
+      res.status(200).json({ success: true });
+      return;
     } else {
-      results.push({ id: upd.id, success: true })
+      // Mezcla de true/false: actualiza uno por uno
+      const results = [];
+      for (const upd of updates) {
+        if (!upd.id) {
+          results.push({ id: upd.id, success: false, error: 'Missing id' })
+          continue
+        }
+        // NO convertir a número, usar el ID tal cual
+        const { error } = await supabase
+          .from('SyncedContactOrGroup')
+          .update({ agenteHabilitado: upd.agenteHabilitado })
+          .eq('id', upd.id)
+        if (error) {
+          results.push({ id: upd.id, success: false, error })
+        } else {
+          results.push({ id: upd.id, success: true })
+        }
+      }
+      res.status(200).json({ results })
+      return
     }
+  } catch (err) {
+    console.error('Bulk update error:', err)
+    res.status(500).json({ error: 'Error actualizando agentes' })
   }
-  res.status(200).json({ results })
+}
+
+// Sincroniza chats en lotes y emite progreso
+export async function syncAllHistoriesBatch(
+  io: Server,
+  numberId: string | number,
+  chatIds: string[],
+  client: any,
+  batchSize = 20
+) {
+  let completed = 0;
+  for (let i = 0; i < chatIds.length; i += batchSize) {
+    const batch = chatIds.slice(i, i + batchSize);
+    await Promise.all(batch.map(async (chatId) => {
+      try {
+        const chat = await client.getChatById(chatId);
+        if (!chat) return;
+        const messages = await chat.fetchMessages({ limit: 10 });
+        messages.sort((a: any, b: any) => a.timestamp - b.timestamp);
+        const chatHistory = messages.map((m: any) => ({
+          role: m.fromMe ? 'assistant' : 'user',
+          content: m.body,
+          timestamp: m.timestamp * 1000,
+          to: chat.id,
+          fromMe: m.fromMe
+        }));
+        const lastMessageTimestamp = messages.length > 0 ? messages[messages.length - 1].timestamp * 1000 : null;
+        io.to(numberId.toString()).emit('chat-history', {
+          numberId,
+          chatHistory,
+          to: chat.id._serialized,
+          lastMessageTimestamp
+        });
+      } catch (err) {
+        console.error('Error sincronizando chat:', chatId, err);
+      }
+    }));
+    completed += batch.length;
+    // Emitir progreso
+    io.to(numberId.toString()).emit('sync-progress', {
+      numberId,
+      completed,
+      total: chatIds.length
+    });
+  }
 }
