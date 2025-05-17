@@ -44,7 +44,8 @@ app.use(express.json())
 const allowedOrigins = [
   'http://localhost:3000',
   'https://botopia-whatsapp.vercel.app',
-  'https://app.botopia.online'
+  'https://app.botopia.online',
+  'https://www.botopia.online'
 ]
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback) {
