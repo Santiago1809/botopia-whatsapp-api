@@ -15,6 +15,7 @@ import { clients } from '../WhatsAppClients'
 import { registerCreditUsage } from './credits.controller'
 import { supabase } from '../config/db'
 import type { Contact, Group } from '../types/global'
+import pLimit from 'p-limit'
 const phoneUtil = PhoneNumberUtil.getInstance()
 
 // Estructura en memoria para sincronizados por sesión
@@ -535,14 +536,16 @@ export async function syncContacts(req: Request, res: Response) {
 
 // NUEVO: Guardar sincronización en base de datos
 export async function syncContactsToDB(req: Request, res: Response) {
-  const { numberId, contacts, groups } = req.body
-  // console.log('SYNC REQUEST:', { numberId, contacts, groups }); // LOG para depuración
+  const { numberId, contacts, groups, clearAll } = req.body
   if (!numberId) {
     res.status(400).json({ message: 'Missing numberId' })
     return
   }
 
-  await supabase.from('SyncedContactOrGroup').delete().eq('numberId', numberId)
+  // Solo borra si clearAll está presente y es true
+  if (clearAll) {
+    await supabase.from('SyncedContactOrGroup').delete().eq('numberId', numberId)
+  }
 
   // Limpia los objetos para que solo tengan los campos válidos
   const toInsert = [
@@ -609,49 +612,15 @@ export async function getSyncedContacts(req: Request, res: Response) {
   const { data, error } = await supabase
     .from('SyncedContactOrGroup')
     .select('*')
-    .eq('numberId', numberId)
+    .eq('numberId', Number(numberId))
 
   if (error) {
     res.status(500).json({ message: 'Error obteniendo datos' })
     return
   }
 
-  // Si no hay chats sincronizados, responde vacío
-  if (!data || data.length === 0) {
-    res.status(200).json([])
-    return
-  }
-
-  // Obtener el cliente de WhatsApp
-  const client = clients[numberId as string]
-  if (!client) {
-    res.status(200).json(data)
-    return
-  }
-
-  // Para cada chat sincronizado, obtener el último mensaje
-  const withLastMessage = await Promise.all(data.map(async (item) => {
-    try {
-      const chat = await client.getChatById(item.wa_id)
-      if (!chat) return { ...item, lastMessageTimestamp: 0, lastMessagePreview: '' }
-      const messages = await chat.fetchMessages({ limit: 1 })
-      if (messages && messages.length > 0) {
-        const lastMsg = messages[0]
-        if (lastMsg) {
-          return {
-            ...item,
-            lastMessageTimestamp: lastMsg.timestamp * 1000,
-            lastMessagePreview: lastMsg.body || ''
-          }
-        }
-      }
-      return { ...item, lastMessageTimestamp: 0, lastMessagePreview: '' }
-    } catch {
-      return { ...item, lastMessageTimestamp: 0, lastMessagePreview: '' }
-    }
-  }))
-
-  res.status(200).json(withLastMessage)
+  // RESPONDE INMEDIATAMENTE LOS CONTACTOS Y GRUPOS
+  res.status(200).json(data)
   return
 }
 
@@ -697,4 +666,49 @@ export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
     }
   }
   res.status(200).json({ results })
+}
+
+// Sincroniza chats en lotes y emite progreso
+export async function syncAllHistoriesBatch(
+  io: Server,
+  numberId: string | number,
+  chatIds: string[],
+  client: any,
+  batchSize = 20
+) {
+  let completed = 0;
+  for (let i = 0; i < chatIds.length; i += batchSize) {
+    const batch = chatIds.slice(i, i + batchSize);
+    await Promise.all(batch.map(async (chatId) => {
+      try {
+        const chat = await client.getChatById(chatId);
+        if (!chat) return;
+        const messages = await chat.fetchMessages({ limit: 10 });
+        messages.sort((a: any, b: any) => a.timestamp - b.timestamp);
+        const chatHistory = messages.map((m: any) => ({
+          role: m.fromMe ? 'assistant' : 'user',
+          content: m.body,
+          timestamp: m.timestamp * 1000,
+          to: chat.id,
+          fromMe: m.fromMe
+        }));
+        const lastMessageTimestamp = messages.length > 0 ? messages[messages.length - 1].timestamp * 1000 : null;
+        io.to(numberId.toString()).emit('chat-history', {
+          numberId,
+          chatHistory,
+          to: chat.id._serialized,
+          lastMessageTimestamp
+        });
+      } catch (err) {
+        console.error('Error sincronizando chat:', chatId, err);
+      }
+    }));
+    completed += batch.length;
+    // Emitir progreso
+    io.to(numberId.toString()).emit('sync-progress', {
+      numberId,
+      completed,
+      total: chatIds.length
+    });
+  }
 }
