@@ -55,10 +55,23 @@ export interface WhatsAppNumber {
 }
 
 export interface SyncedContact {
-  id: number;
-  userId: number;
-  numberId: number;
-  contactId: string;
-  type: 'contact' | 'group';
-  createdAt: string;
+  id: number
+  userId: number
+  numberId: number
+  contactId: string
+  type: 'contact' | 'group'
+  createdAt: string
+}
+
+export interface Contact {
+  id: string
+  isGroup: boolean
+  isMyContact: boolean
+  name: string
+  number: string | null
+  wa_id: string
+}
+
+export interface Group extends Contact {
+  number: string | null
 }
