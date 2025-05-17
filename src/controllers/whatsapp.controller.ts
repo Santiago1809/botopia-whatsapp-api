@@ -248,12 +248,11 @@ export async function sendMessage(req: Request, res: Response) {
       return
     }
     // Validar que 'to' sea un WhatsApp ID válido
-    function isValidWhatsAppId(id: string) {
-      return (
-        typeof id === 'string' &&
-        (id.match(/^[0-9]+@c\.us$/) || // usuario
-          id.match(/^[0-9]+-[0-9]+@g\.us$/)) // grupo
-      )
+    function isValidWhatsAppId(id: any) {
+      return typeof id === 'string' && (
+        id.match(/^[0-9]+@c\.us$/) || // usuario
+        id.match(/^[0-9]+(-[0-9]+)?@g\.us$/) // grupo (con o sin guion)
+      );
     }
     if (!isValidWhatsAppId(to)) {
       res.status(HttpStatusCode.BadRequest).json({
@@ -264,7 +263,7 @@ export async function sendMessage(req: Request, res: Response) {
     }
     const { data: syncDb, error: syncDbError } = await supabase
       .from('SyncedContactOrGroup')
-      .select('id')
+      .select('id, wa_id, type')
       .eq('numberId', numberId)
       .eq('wa_id', to)
       .single()
@@ -437,8 +436,8 @@ export function setupSocketEvents(io: Server) {
         if (!chat) {
           return
         }
-        const messages = await chat.fetchMessages({ limit: 30 })
-        // Ordenar de más antiguo a más reciente
+        // Traer solo los últimos 20 mensajes, ordenados de más reciente a más antiguo
+        const messages = await chat.fetchMessages({ limit: 20 })
         messages.sort((a, b) => a.timestamp - b.timestamp)
         let lastMessageTimestamp: number | null = null
         if (messages && messages.length > 0) {
@@ -616,8 +615,43 @@ export async function getSyncedContacts(req: Request, res: Response) {
     res.status(500).json({ message: 'Error obteniendo datos' })
     return
   }
-  // Siempre devuelve un array
-  res.status(200).json(data || [])
+
+  // Si no hay chats sincronizados, responde vacío
+  if (!data || data.length === 0) {
+    res.status(200).json([])
+    return
+  }
+
+  // Obtener el cliente de WhatsApp
+  const client = clients[numberId as string]
+  if (!client) {
+    res.status(200).json(data)
+    return
+  }
+
+  // Para cada chat sincronizado, obtener el último mensaje
+  const withLastMessage = await Promise.all(data.map(async (item) => {
+    try {
+      const chat = await client.getChatById(item.wa_id)
+      if (!chat) return { ...item, lastMessageTimestamp: 0, lastMessagePreview: '' }
+      const messages = await chat.fetchMessages({ limit: 1 })
+      if (messages && messages.length > 0) {
+        const lastMsg = messages[0]
+        if (lastMsg) {
+          return {
+            ...item,
+            lastMessageTimestamp: lastMsg.timestamp * 1000,
+            lastMessagePreview: lastMsg.body || ''
+          }
+        }
+      }
+      return { ...item, lastMessageTimestamp: 0, lastMessagePreview: '' }
+    } catch {
+      return { ...item, lastMessageTimestamp: 0, lastMessagePreview: '' }
+    }
+  }))
+
+  res.status(200).json(withLastMessage)
   return
 }
 
