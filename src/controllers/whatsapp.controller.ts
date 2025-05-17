@@ -109,7 +109,6 @@ export async function startWhatsApp(req: Request, res: Response) {
         .single()
 
       if (syncDbError || !syncDb || !syncDb.agenteHabilitado) {
-        console.log('NO SYNC O NO HABILITADO', { syncDbError, syncDb, idToCheck, isGroup });
         return;
       }
 
@@ -128,7 +127,6 @@ export async function startWhatsApp(req: Request, res: Response) {
           .single()
 
         if (!number) {
-          console.log('NO NUMBER', { clientNumber });
           return;
         }
 
@@ -158,7 +156,6 @@ export async function startWhatsApp(req: Request, res: Response) {
 
         // Solo responde si está habilitado y debe responder
         if (!syncDb.agenteHabilitado) {
-          console.log('NO AGENTE HABILITADO', { syncDb });
           return;
         }
         // --- NUEVO: Asegúrate de tener el usuario ---
@@ -175,7 +172,6 @@ export async function startWhatsApp(req: Request, res: Response) {
           (!isGroup && number.aiEnabled) ||
           (isGroup && number.aiEnabled && number.responseGroups)
         if (!shouldRespond) {
-          console.log('NO SHOULD RESPOND', { isGroup, aiEnabled: number.aiEnabled, responseGroups: number.responseGroups });
           return;
         }
         if (shouldRespond) {
@@ -186,7 +182,6 @@ export async function startWhatsApp(req: Request, res: Response) {
             chatHistory,
             user
           )
-          console.log('AI RESPONSE', aiResponse);
           if (aiResponse) {
             await msg.reply(aiResponse as string)
             chatHistory.push({
@@ -546,7 +541,6 @@ export async function syncContacts(req: Request, res: Response) {
 // NUEVO: Guardar sincronización en base de datos
 export async function syncContactsToDB(req: Request, res: Response) {
   const { numberId, contacts, groups } = req.body
-  // console.log('SYNC REQUEST:', { numberId, contacts, groups }); // LOG para depuración
   if (!numberId) {
     res.status(400).json({ message: 'Missing numberId' })
     return
