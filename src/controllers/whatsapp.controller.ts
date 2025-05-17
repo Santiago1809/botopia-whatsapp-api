@@ -14,6 +14,7 @@ import { getAIResponse } from '../services/ai.service'
 import { clients } from '../WhatsAppClients'
 import { registerCreditUsage } from './credits.controller'
 import { supabase } from '../config/db'
+import type { Contact, Group } from '../types/global'
 const phoneUtil = PhoneNumberUtil.getInstance()
 
 // Estructura en memoria para sincronizados por sesión
@@ -42,11 +43,6 @@ export async function startWhatsApp(req: Request, res: Response) {
         .json({ message: 'Número no encontrado' })
       return
     }
-    const { data: user } = await supabase
-      .from('User')
-      .select('*')
-      .eq('id', number.userId)
-      .single()
     if (clients[numberId]) {
       const client = clients[numberId]
       await client.logout()
@@ -61,7 +57,7 @@ export async function startWhatsApp(req: Request, res: Response) {
       }
     })
     if (client) {
-    clients[numberId] = client
+      clients[numberId] = client
     }
     const io: Server = req.app.get('io')
 
@@ -109,7 +105,7 @@ export async function startWhatsApp(req: Request, res: Response) {
         .single()
 
       if (syncDbError || !syncDb || !syncDb.agenteHabilitado) {
-        return;
+        return
       }
 
       // SIEMPRE emitir historial aunque no responda (si está sincronizado)
@@ -127,7 +123,7 @@ export async function startWhatsApp(req: Request, res: Response) {
           .single()
 
         if (!number) {
-          return;
+          return
         }
 
         const messages = await chat.fetchMessages({ limit: 30 })
@@ -156,23 +152,23 @@ export async function startWhatsApp(req: Request, res: Response) {
 
         // Solo responde si está habilitado y debe responder
         if (!syncDb.agenteHabilitado) {
-          return;
+          return
         }
         // --- NUEVO: Asegúrate de tener el usuario ---
-        let user = null;
+        let user = null
         if (number && number.userId) {
           const { data: userData } = await supabase
             .from('User')
             .select('*')
             .eq('id', number.userId)
-            .single();
-          user = userData;
+            .single()
+          user = userData
         }
         const shouldRespond =
           (!isGroup && number.aiEnabled) ||
           (isGroup && number.aiEnabled && number.responseGroups)
         if (!shouldRespond) {
-          return;
+          return
         }
         if (shouldRespond) {
           const [aiResponse, tokens] = await getAIResponse(
@@ -252,31 +248,32 @@ export async function sendMessage(req: Request, res: Response) {
       return
     }
     // Validar que 'to' sea un WhatsApp ID válido
-    function isValidWhatsAppId(id: any) {
-      return typeof id === 'string' && (
-        id.match(/^[0-9]+@c\.us$/) || // usuario
-        id.match(/^[0-9]+-[0-9]+@g\.us$/) // grupo
-      );
+    function isValidWhatsAppId(id: string) {
+      return (
+        typeof id === 'string' &&
+        (id.match(/^[0-9]+@c\.us$/) || // usuario
+          id.match(/^[0-9]+-[0-9]+@g\.us$/)) // grupo
+      )
     }
     if (!isValidWhatsAppId(to)) {
       res.status(HttpStatusCode.BadRequest).json({
         message: 'El destinatario no es un WhatsApp ID válido',
         to
-      });
-      return;
+      })
+      return
     }
     const { data: syncDb, error: syncDbError } = await supabase
       .from('SyncedContactOrGroup')
       .select('id')
       .eq('numberId', numberId)
       .eq('wa_id', to)
-      .single();
+      .single()
     if (syncDbError || !syncDb) {
       res.status(HttpStatusCode.BadRequest).json({
         message: 'El chat no está sincronizado para este número',
         to
-      });
-      return;
+      })
+      return
     }
     const client = clients[numberId]
     if (!client) {
@@ -414,7 +411,6 @@ export function setupSocketEvents(io: Server) {
             .eq('id', numberId)
             .single()
           if (number) {
-            const { Client, LocalAuth } = require('whatsapp-web.js')
             client = new Client({
               authStrategy: new LocalAuth({ clientId: numberId.toString() }),
               puppeteer: {
@@ -465,7 +461,7 @@ export function setupSocketEvents(io: Server) {
           lastMessageTimestamp
         })
       } catch (err) {
-        // Error fetching chat history
+        return err
       }
     })
     socket.onAny(async () => {
@@ -551,14 +547,14 @@ export async function syncContactsToDB(req: Request, res: Response) {
 
   // Limpia los objetos para que solo tengan los campos válidos
   const toInsert = [
-    ...(contacts || []).map((c: any) => ({
+    ...(contacts || []).map((c: Contact) => ({
       numberId: Number(numberId),
       type: 'contact',
       wa_id: c.id,
       name: c.name,
       agenteHabilitado: true
     })),
-    ...(groups || []).map((g: any) => ({
+    ...(groups || []).map((g: Group) => ({
       numberId: Number(numberId),
       type: 'group',
       wa_id: g.id,
@@ -645,26 +641,26 @@ export async function deleteSynced(req: Request, res: Response) {
 
 // BULK: Actualizar agenteHabilitado para varios contactos/grupos
 export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
-  const { updates } = req.body; // [{id, agenteHabilitado}]
+  const { updates } = req.body // [{id, agenteHabilitado}]
   if (!Array.isArray(updates) || updates.length === 0) {
-    res.status(400).json({ message: 'Missing or empty updates array' });
-    return;
+    res.status(400).json({ message: 'Missing or empty updates array' })
+    return
   }
-  const results = [];
+  const results = []
   for (const upd of updates) {
     if (!upd.id) {
-      results.push({ id: upd.id, success: false, error: 'Missing id' });
-      continue;
+      results.push({ id: upd.id, success: false, error: 'Missing id' })
+      continue
     }
     const { error } = await supabase
       .from('SyncedContactOrGroup')
       .update({ agenteHabilitado: upd.agenteHabilitado })
-      .eq('id', upd.id);
+      .eq('id', upd.id)
     if (error) {
-      results.push({ id: upd.id, success: false, error });
+      results.push({ id: upd.id, success: false, error })
     } else {
-      results.push({ id: upd.id, success: true });
+      results.push({ id: upd.id, success: true })
     }
   }
-  res.status(200).json({ results });
+  res.status(200).json({ results })
 }
