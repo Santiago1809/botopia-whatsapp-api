@@ -59,6 +59,11 @@ const corsOptions: CorsOptions = {
   credentials: true
 }
 app.use(cors(corsOptions))
+
+// Ahora sí, middleware con límites ampliados
+app.use(express.json({ limit: '50mb' })) // 👈 aquí el cambio clave
+app.use(express.urlencoded({ limit: '50mb', extended: true })) // 👈 y aquí también
+
 const io = new Server(server, { cors: corsOptions })
 app.set('io', io)
 setupSocketEvents(io)
