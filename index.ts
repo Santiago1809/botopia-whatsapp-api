@@ -15,6 +15,7 @@ import payuRoutes from './src/routes/payments.route'
 import statsRoutes from './src/routes/stats.route'
 import userRoutes from './src/routes/user.route'
 import whatsAppRoutes from './src/routes/whatsapp.route'
+import unsyncedContactRoutes from './src/routes/unsyncedcontact.route'
 
 config()
 
@@ -70,6 +71,7 @@ app.use('/api/user', userRoutes)
 app.use('/api/whatsapp', whatsAppRoutes)
 app.use('/api/payments', payuRoutes)
 app.use('/api/credits', creditsRoutes)
+app.use('/api/unsyncedcontacts', unsyncedContactRoutes)
 
 const port = process.env.PORT || 3001
 server.keepAliveTimeout = 65000

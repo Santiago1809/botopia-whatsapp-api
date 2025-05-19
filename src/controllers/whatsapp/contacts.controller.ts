@@ -65,6 +65,7 @@ export async function syncContactsToDB(req: Request, res: Response) {
   // Solo borra si clearAll está presente y es true
   if (clearAll) {
     await supabase.from('SyncedContactOrGroup').delete().eq('numberId', numberId)
+    await supabase.from('Unsyncedcontact').delete().eq('numberid', numberId)
   }
 
   // Limpia los objetos para que solo tengan los campos válidos
@@ -95,6 +96,14 @@ export async function syncContactsToDB(req: Request, res: Response) {
         .status(500)
         .json({ message: 'Error insertando en la base de datos', error })
       return
+    }
+    // ELIMINAR de Unsyncedcontact los que acaban de sincronizarse
+    for (const item of toInsert) {
+      await supabase
+        .from('Unsyncedcontact')
+        .delete()
+        .eq('numberid', item.numberId)
+        .eq('wa_id', item.wa_id);
     }
   }
 
