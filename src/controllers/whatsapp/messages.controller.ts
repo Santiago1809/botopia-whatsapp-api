@@ -7,7 +7,7 @@ import type { SendMessageBody } from '../../interfaces/global'
 import { getCurrentUTCDate } from '../../lib/dateUtils'
 import { getAIResponse } from '../../services/ai.service'
 import { registerCreditUsage } from '../credits.controller'
-import { transporter } from '../../services/email.service'
+import { transporter, sendEmail } from '../../services/email.service'
 
 export async function sendMessage(req: Request, res: Response) {
   try {
@@ -196,18 +196,7 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
     return;
   }
   if (shouldRespond) {
-    const [aiResponse, tokens] = await getAIResponse(
-      number.aiPrompt,
-      msg.body,
-      number.aiModel,
-      chatHistory,
-      user
-    );
-    // --- Palabras clave para detectar solicitud de asesor ---
-    const fraseAsesor = 'Ya en un momento te ponemos en contacto con uno';
-    let finalResponse = aiResponse;
-    let notificacionEnviada = false;
-    // Solo buscar asesor si hay agente, allowAdvisor y advisorEmail
+    // Solo enviar correo y responder con la frase especial si el usuario realmente pide hablar con un asesor
     let detectedAsesor = false;
     let agent = null;
     const asesorPhrases = [
@@ -226,7 +215,7 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
     const userMsgLower = msg.body.toLowerCase().normalize('NFD').replace(/[^\u0000-\u007F]/g, '');
     const agentResult = await supabase
       .from('Agent')
-      .select('advisorEmail, allowAdvisor, title')
+      .select('advisorEmail, allowAdvisor, title, prompt')
       .eq('ownerId', number.userId)
       .eq('isGlobal', false)
       .order('id', { ascending: false })
@@ -236,33 +225,61 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
     if (
       agent &&
       agent.allowAdvisor &&
-      agent.advisorEmail
+      agent.advisorEmail &&
+      asesorPhrases.some(phrase => userMsgLower.includes(phrase))
     ) {
-      detectedAsesor = asesorPhrases.some(phrase => userMsgLower.includes(phrase));
+      detectedAsesor = true;
+    } else {
+      detectedAsesor = false;
     }
-    // Solo forzar la frase si hay agente y allowAdvisor activo y se detecta la frase
+    // Si el agente tiene allowAdvisor activo, ignorar el contexto y solo responder el último mensaje
+    let aiPrompt = number.aiPrompt;
+    let aiChatHistory = chatHistory;
+    if (agent && agent.allowAdvisor) {
+      aiPrompt = (agent.prompt || number.aiPrompt || '') + '\nIgnora el contexto anterior y responde solo a este mensaje.';
+      aiChatHistory = [];
+    }
+    const fraseAsesor = 'Ya en un momento te ponemos en contacto con uno';
+    const [aiResponse, tokens] = await getAIResponse(
+      aiPrompt,
+      msg.body,
+      number.aiModel,
+      aiChatHistory,
+      user
+    );
+    let finalResponse = aiResponse;
+    let notificacionEnviada = false;
+    // Solo forzar la frase y enviar correo si hay agente, allowAdvisor activo, correo válido y detectedAsesor (frase detectada)
     if (
       detectedAsesor &&
       agent && agent.allowAdvisor && agent.advisorEmail &&
       (typeof aiResponse !== 'string' || !aiResponse.trim().toLowerCase().startsWith(fraseAsesor.toLowerCase()))
     ) {
       finalResponse = fraseAsesor;
-      try {
+      const sendAdvisorEmail = async () => {
         const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
-        await transporter.sendMail({
-          from: process.env.SMTP_USER,
-          to: agent.advisorEmail,
-          subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
-          html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>
-<table style='font-size:15px;'>
-  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>
-  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>
-  <tr><td><b>Número del cliente:</b></td><td>${msg.from}</td></tr>
-  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>
-</table>`
-        });
-        notificacionEnviada = true;
+        // Extraer solo el número antes del @
+        const numeroClienteLimpio = (msg.from || '').split('@')[0];
+        try {
+          const result = await sendEmail({
+            to: agent.advisorEmail,
+            subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
+            html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>\n<table style='font-size:15px;'>\n  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>\n  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>\n  <tr><td><b>Número del cliente:</b></td><td>${numeroClienteLimpio}</td></tr>\n  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>\n</table>`
+          });
+          return result.success;
+        } catch (err) {
+          console.error('❌ Error al enviar correo:', err);
+          return false;
+        }
+      };
+      try {
+        notificacionEnviada = await sendAdvisorEmail();
+        if (!notificacionEnviada) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          notificacionEnviada = await sendAdvisorEmail();
+        }
       } catch (err) {
+        console.error('❌ Error en el proceso de envío de correo:', err);
         notificacionEnviada = false;
       }
     }
