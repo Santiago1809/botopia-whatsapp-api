@@ -230,7 +230,7 @@ export async function getAgents(req: CustomRequest, res: Response) {
 }
 
 export async function addAgent(req: CustomRequest, res: Response) {
-  const { title, prompt } = req.body as { title: string; prompt: string }
+  const { title, prompt, allowAdvisor, advisorEmail } = req.body as { title: string; prompt: string; allowAdvisor?: boolean; advisorEmail?: string | null };
   try {
     const { data: user, error: userError } = await supabase
       .from('User')
@@ -249,7 +249,9 @@ export async function addAgent(req: CustomRequest, res: Response) {
       title,
       prompt,
       ownerId: user.id,
-      isGlobal: false
+      isGlobal: false,
+      allowAdvisor: allowAdvisor ?? false,
+      advisorEmail: allowAdvisor ? advisorEmail : null
     })
 
     if (insertError) {
@@ -267,7 +269,7 @@ export async function addAgent(req: CustomRequest, res: Response) {
 
 export async function updateAgent(req: CustomRequest, res: Response) {
   const { agentId } = req.params
-  const { title, prompt } = req.body as { title: string; prompt: string }
+  const { title, prompt, allowAdvisor, advisorEmail } = req.body as { title: string; prompt: string; allowAdvisor?: boolean; advisorEmail?: string | null };
   try {
     const { data: agent, error: agentError } = await supabase
       .from('Agent')
@@ -306,7 +308,9 @@ export async function updateAgent(req: CustomRequest, res: Response) {
       .from('Agent')
       .update({
         title: title ? title : agent.title,
-        prompt: prompt ? prompt : agent.prompt
+        prompt: prompt ? prompt : agent.prompt,
+        allowAdvisor: typeof allowAdvisor === 'boolean' ? allowAdvisor : false,
+        advisorEmail: allowAdvisor ? advisorEmail : null
       })
       .eq('id', Number(agentId))
 
@@ -409,5 +413,27 @@ export async function updateAgentNumber(req: Request, res: Response) {
     res
       .status(HttpStatusCode.InternalServerError)
       .json({ message: 'Error actualizando número de WhatsApp' })
+  }
+}
+
+export async function toggleUnknownAi(req: Request, res: Response) {
+  const { number, enabled } = req.body as { number: string; enabled: boolean };
+  try {
+    const { data: num } = await supabase
+      .from('WhatsAppNumber')
+      .select('*')
+      .eq('number', number)
+      .single();
+    if (!num) {
+      res.status(HttpStatusCode.NotFound).json({ message: 'Número no encontrado' });
+      return;
+    }
+    await supabase
+      .from('WhatsAppNumber')
+      .update({ aiUnknownEnabled: enabled })
+      .eq('id', num.id);
+    res.status(HttpStatusCode.Ok).json({ message: 'Número actualizado' });
+  } catch {
+    res.status(HttpStatusCode.InternalServerError).json({ message: 'Error actualizando IA para no agregados' });
   }
 }

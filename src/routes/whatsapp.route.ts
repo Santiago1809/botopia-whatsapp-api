@@ -12,6 +12,7 @@ import {
   getSyncedContacts,
   deleteSynced
 } from '../controllers/whatsapp.controller'
+import { toggleUnknownAi } from '../controllers/user.controller'
 
 const router = express.Router()
 
@@ -25,5 +26,6 @@ router.post('/update-agente-habilitado', authenticateToken, updateAgenteHabilita
 router.post('/bulk-update-agente-habilitado', authenticateToken, bulkUpdateAgenteHabilitado)
 router.get('/synced-contacts', authenticateToken, getSyncedContacts)
 router.post('/delete-synced', authenticateToken, deleteSynced)
+router.post('/toggle-unknown-ai', authenticateToken, toggleUnknownAi)
 
 export default router
