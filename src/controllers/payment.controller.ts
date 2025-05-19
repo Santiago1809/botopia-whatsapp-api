@@ -147,9 +147,3 @@ export const confirmPayment = async (req: Request, res: Response) => {
   }
 };
 
-<<<<<<< HEAD
-export async function getPayUInfo(req: Request, res: Response) {
-  res.json('ok')
-}
-=======
->>>>>>> f852c55 (rutas de pago)
