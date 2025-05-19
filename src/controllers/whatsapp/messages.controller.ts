@@ -240,6 +240,7 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
       aiChatHistory = [];
     }
     const fraseAsesor = 'Ya en un momento te ponemos en contacto con uno';
+    const fraseAsesorEspecial = 'Un momento, por favor. Un asesor especializado te atenderá en breve.';
     const [aiResponse, tokens] = await getAIResponse(
       aiPrompt,
       msg.body,
@@ -259,6 +260,39 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
       const sendAdvisorEmail = async () => {
         const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
         // Extraer solo el número antes del @
+        const numeroClienteLimpio = (msg.from || '').split('@')[0];
+        try {
+          const result = await sendEmail({
+            to: agent.advisorEmail,
+            subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
+            html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>\n<table style='font-size:15px;'>\n  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>\n  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>\n  <tr><td><b>Número del cliente:</b></td><td>${numeroClienteLimpio}</td></tr>\n  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>\n</table>`
+          });
+          return result.success;
+        } catch (err) {
+          console.error('❌ Error al enviar correo:', err);
+          return false;
+        }
+      };
+      try {
+        notificacionEnviada = await sendAdvisorEmail();
+        if (!notificacionEnviada) {
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          notificacionEnviada = await sendAdvisorEmail();
+        }
+      } catch (err) {
+        console.error('❌ Error en el proceso de envío de correo:', err);
+        notificacionEnviada = false;
+      }
+    }
+    // NUEVO: Si la respuesta de la IA es la frase especial, enviar correo aunque no se haya detectado la frase en el mensaje del usuario
+    if (
+      typeof aiResponse === 'string' &&
+      aiResponse.trim().toLowerCase() === fraseAsesorEspecial.toLowerCase() &&
+      agent && agent.allowAdvisor && agent.advisorEmail &&
+      !notificacionEnviada
+    ) {
+      const sendAdvisorEmail = async () => {
+        const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
         const numeroClienteLimpio = (msg.from || '').split('@')[0];
         try {
           const result = await sendEmail({
