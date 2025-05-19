@@ -27,7 +27,6 @@ export const createSubscription = async (req: CustomRequest, res: Response) => {
 
         // Validaciones adicionales
         if (!/^[a-zA-Z0-9]+$/.test(planToken)) {
-            console.log('Formato de planToken inválido:', planToken);
              res.status(400).json({
                 success: false,
                 message: "Formato de planToken inválido"
@@ -95,13 +94,6 @@ export const createSubscription = async (req: CustomRequest, res: Response) => {
             return;
         }
 
-        console.log('📝 Nueva suscripción creada:', {
-            id: subscription.id,
-            plan: planName,
-            usuario: req.user.username,
-            checkoutUrl: checkoutUrl.toString()
-        });
-
         res.status(200).json({
             success: true,
             checkoutUrl: checkoutUrl.toString(),
@@ -119,13 +111,6 @@ export const createSubscription = async (req: CustomRequest, res: Response) => {
 
 export const handleNotification = async (req: Request, res: Response) => {
     const { invoiceId, mid, subscriptionId } = req.body;
-
-    console.log('📥 Webhook recibido:', {
-        invoiceId,
-        mid,
-        subscriptionId,
-        rawBody: req.body
-    });
 
     if (!subscriptionId || !invoiceId) {
         console.error('❌ Webhook recibido sin datos necesarios:', req.body);
@@ -154,7 +139,6 @@ export const handleNotification = async (req: Request, res: Response) => {
         }
 
         const dloData = await response.json();
-        console.log('📥 Datos completos de DLO:', dloData);
 
         // 2. Buscar la suscripción más reciente pendiente
         const { data: subscriptions, error: fetchError } = await supabase
@@ -195,13 +179,6 @@ export const handleNotification = async (req: Request, res: Response) => {
 
         // Get the most recent subscription
         const subscription = subscriptions[0];
-
-        console.log('✅ Suscripción encontrada:', {
-            id: subscription.id,
-            created_at: subscription.created_at,
-            planToken: subscription.plan_token,
-            email: subscription.email
-        });
 
         // Validación adicional
         if (subscription.amount !== dloData.subscription.plan.amount) {
@@ -247,13 +224,6 @@ export const handleNotification = async (req: Request, res: Response) => {
         // 4. Si el pago fue completado, activar el plan
         if (dloData.status === 'COMPLETED') {
             await activateUserPlan(subscription.user_id, subscription.plan_name);
-            console.log('✅ Suscripción activada:', {
-                subscriptionId,
-                userId: subscription.user_id,
-                plan: subscription.plan_name,
-                amount: `${dloData.amount_paid} ${dloData.currency}`,
-                nextPayment: dloData.subscription.scheduled_date
-            });
         }
 
         res.status(200).json({ success: true });
@@ -313,12 +283,6 @@ async function activateUserPlan(userId: string, planName: string) {
         console.error('Error activando plan del usuario:', error);
         throw error;
     }
-
-    console.log(`✅ Suscripción actualizada a ${subscription} para usuario ${userId}`, {
-        originalPlan: planName,
-        normalizedPlan: normalizedPlanName,
-        assignedType: subscription
-    });
 }
 
 async function deactivateUserPlan(userId: string) {
@@ -387,12 +351,6 @@ export const getUserSubscription = async (req: CustomRequest, res: Response) => 
                 features: getPlanFeatures('FREE')
             };
 
-            console.log('📊 Usuario con plan gratuito:', {
-                user: req.user.username,
-                plan: subscriptionInfo.currentPlan,
-                since: userData.createdAt
-            });
-
             res.status(200).json({
                 success: true,
                 data: subscriptionInfo
@@ -433,11 +391,6 @@ export const getUserSubscription = async (req: CustomRequest, res: Response) => 
             limits: getPlanLimits(userData.subscription),
             features: getPlanFeatures(userData.subscription)
         };
-
-        console.log('📊 Información de suscripción consultada:', {
-            user: req.user.username,
-            plan: subscriptionInfo.currentPlan
-        });
 
         res.status(200).json({
             success: true,

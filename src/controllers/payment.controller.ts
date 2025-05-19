@@ -10,8 +10,6 @@ export const createPayment = async (req: Request, res: Response): Promise<void> 
   }
 
   const auth = `${process.env.API_KEY}:${process.env.API_SECRET}`
-  console.log('Auth:', auth);
-  console.log('Request body:', req.body);
 
   try {
     const response = await fetch('https://api-sbx.dlocalgo.com/v1/payments', {
@@ -76,8 +74,6 @@ export const handleNotification = async (req: Request, res: Response) => {
 
     const { status, order_id } = data;
 
-    console.log(`Pago recibido: ${payment_id}, estado: ${status}, order_id: ${order_id}`);
-
     if (status === "PAID") {
       // Aquí puedes activar la suscripción en tu base de datos
       // await activateSubscription(order_id, payment_id);
@@ -94,7 +90,6 @@ export const handleNotification = async (req: Request, res: Response) => {
 
 export const confirmPayment = async (req: Request, res: Response) => {
   const payment_id = req.query.payment_id as string;
-  console.log('📥 [confirmPayment] payment_id recibido:', payment_id);
 
   if (!payment_id) {
     console.error('❌ [confirmPayment] payment_id faltante');
@@ -104,9 +99,6 @@ export const confirmPayment = async (req: Request, res: Response) => {
 
   const auth = `${process.env.API_KEY}:${process.env.API_SECRET}`;
   const url = `https://api-sbx.dlocalgo.com/v1/payments/${payment_id}`;
-
-  console.log('🔑 [confirmPayment] Auth (texto plano):', auth);
-  console.log('🌐 [confirmPayment] Consultando endpoint:', url);
 
   try {
     const response = await fetch(url, {
@@ -118,10 +110,6 @@ export const confirmPayment = async (req: Request, res: Response) => {
     });
 
     const data = await response.json();
-    console.log('📤 [confirmPayment] Respuesta de DLocalGo:', {
-      statusCode: response.status,
-      body: data,
-    });
 
     if (!response.ok || !data.status) {
       console.error('❌ [confirmPayment] Fallo al verificar pago:', data.message || data);
@@ -130,7 +118,6 @@ export const confirmPayment = async (req: Request, res: Response) => {
     }
 
     if (data.status === "PAID") {
-      console.log(`✅ [confirmPayment] Pago exitoso. order_id: ${data.order_id}, payment_id: ${data.payment_id}`);
       // await activateSubscription(data.order_id, payment_id); // si quieres activarlo aquí también
       res.status(200).json({ status: "paid" });
       return;

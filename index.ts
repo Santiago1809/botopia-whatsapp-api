@@ -12,6 +12,7 @@ import adminRoutes from './src/routes/admin.route'
 import authRoutes from './src/routes/auth.route'
 import creditsRoutes from './src/routes/credits.route'
 import paymentsRouter from './src/routes/payments.route'
+import subscriptionsRouter from './src/routes/subscriptions.route'
 import statsRoutes from './src/routes/stats.route'
 import userRoutes from './src/routes/user.route'
 import whatsAppRoutes from './src/routes/whatsapp.route'
@@ -74,6 +75,7 @@ app.use('/api/auth', authRoutes)
 app.use('/api/user', userRoutes)
 app.use('/api/whatsapp', whatsAppRoutes)
 app.use('/api/payments', paymentsRouter)
+app.use('/api/subscriptions', subscriptionsRouter)
 app.use('/api/credits', creditsRoutes)
 
 const port = process.env.PORT || 3001
