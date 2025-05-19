@@ -11,7 +11,7 @@ import { telemetryMiddleware } from './src/middleware/telemetry.middleware'
 import adminRoutes from './src/routes/admin.route'
 import authRoutes from './src/routes/auth.route'
 import creditsRoutes from './src/routes/credits.route'
-import payuRoutes from './src/routes/payments.route'
+import paymentsRouter from './src/routes/payments.route'
 import statsRoutes from './src/routes/stats.route'
 import userRoutes from './src/routes/user.route'
 import whatsAppRoutes from './src/routes/whatsapp.route'
@@ -73,7 +73,7 @@ app.use('/api/stats', statsRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/user', userRoutes)
 app.use('/api/whatsapp', whatsAppRoutes)
-app.use('/api/payments', payuRoutes)
+app.use('/api/payments', paymentsRouter)
 app.use('/api/credits', creditsRoutes)
 
 const port = process.env.PORT || 3001
