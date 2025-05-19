@@ -43,11 +43,21 @@ export async function sendMessage(req: Request, res: Response) {
       .eq('wa_id', waIdToCheck)
       .single();
     if (syncDbError || !syncDb) {
-      res.status(HttpStatusCode.BadRequest).json({
-        message: 'El chat no está sincronizado para este número',
-        to
-      })
-      return
+      // Buscar en Unsyncedcontact
+      const { data: unsynced, error: unsyncedError } = await supabase
+        .from('Unsyncedcontact')
+        .select('id')
+        .eq('numberid', numberIdNum)
+        .eq('wa_id', waIdToCheck)
+        .single();
+      if (!unsynced) {
+        res.status(HttpStatusCode.BadRequest).json({
+          message: 'El chat no está sincronizado ni registrado como no sincronizado para este número',
+          to
+        });
+        return;
+      }
+      // Si está en Unsyncedcontact, permite el envío (sin importar agentehabilitado)
     }
     const client = clients[numberid]
     if (!client) {
@@ -167,6 +177,10 @@ export async function handleIncomingMessage(msg: any, chat: any, numberId: strin
       const { data: inserted, error: insertError } = await supabase
         .from('Unsyncedcontact')
         .insert([insertObj]);
+      // EMITIR EVENTO SOCKET para refrescar lista en frontend
+      if (io && typeof io.to === 'function') {
+        io.to(numberId.toString()).emit('unsynced-contacts-updated', { numberid: numberId });
+      }
       // Vuelve a consultar
       const resync = await supabase
         .from('Unsyncedcontact')

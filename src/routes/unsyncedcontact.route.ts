@@ -31,11 +31,30 @@ router.patch('/:id', async (req: Request, res: Response) => {
     res.status(500).json({ error: error.message });
     return;
   }
+  // EMITIR EVENTO SOCKET para refrescar lista en frontend
+  const io = req.app.get('io');
+  if (io && typeof io.to === 'function') {
+    // Busca el contacto actualizado para obtener el numberid
+    const { data: updated } = await supabase
+      .from('Unsyncedcontact')
+      .select('numberid')
+      .eq('id', id)
+      .single();
+    if (updated && updated.numberid) {
+      io.to(updated.numberid.toString()).emit('unsynced-contacts-updated', { numberid: updated.numberid });
+    }
+  }
   res.json({ success: true });
 });
 
 router.delete('/:id', async (req: Request, res: Response) => {
   const { id } = req.params;
+  // Obtener el numberid antes de borrar
+  const { data: toDelete } = await supabase
+    .from('Unsyncedcontact')
+    .select('numberid')
+    .eq('id', id)
+    .single();
   const { error } = await supabase
     .from('Unsyncedcontact')
     .delete()
@@ -43,6 +62,11 @@ router.delete('/:id', async (req: Request, res: Response) => {
   if (error) {
     res.status(500).json({ error: error.message });
     return;
+  }
+  // EMITIR EVENTO SOCKET para refrescar lista en frontend
+  const io = req.app.get('io');
+  if (io && typeof io.to === 'function' && toDelete && toDelete.numberid) {
+    io.to(toDelete.numberid.toString()).emit('unsynced-contacts-updated', { numberid: toDelete.numberid });
   }
   res.json({ success: true });
 });
