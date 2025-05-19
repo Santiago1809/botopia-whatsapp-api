@@ -38,7 +38,7 @@ export const createPayment = async (req: Request, res: Response): Promise<void> 
     }
 
     res.status(200).json(data); // Incluye redirect_url y demás
-  } catch (error: any) {
+  } catch (error) {
     console.error('Error creando pago:', error);
     res.status(500).json({ message: 'Error interno al crear el pago' });
   }

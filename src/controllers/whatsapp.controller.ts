@@ -1,4 +1,3 @@
-import type { Server } from 'socket.io'
 import * as contactsController from './whatsapp/contacts.controller'
 import * as messagesController from './whatsapp/messages.controller'
 import * as sessionController from './whatsapp/session.controller'
