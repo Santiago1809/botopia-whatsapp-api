@@ -7,11 +7,12 @@ import type { SendMessageBody } from '../../interfaces/global'
 import { getCurrentUTCDate } from '../../lib/dateUtils'
 import { getAIResponse } from '../../services/ai.service'
 import { registerCreditUsage } from '../credits.controller'
-import { transporter } from '../../services/email.service'
+import { transporter, sendEmail } from '../../services/email.service'
 
 export async function sendMessage(req: Request, res: Response) {
   try {
-    const { content, to, numberId } = req.body as SendMessageBody
+    const { content, to, numberId } = req.body as SendMessageBody;
+    const numberid = numberId; // Usar numberid solo para la base de datos
     if (!to) {
       res
         .status(HttpStatusCode.BadRequest)
@@ -32,20 +33,33 @@ export async function sendMessage(req: Request, res: Response) {
       })
       return
     }
+    // Normalizar wa_id y numberId para la consulta
+    const waIdToCheck = (to || '').trim().toLowerCase();
+    const numberIdNum = Number(numberid);
     const { data: syncDb, error: syncDbError } = await supabase
       .from('SyncedContactOrGroup')
       .select('id, wa_id, type')
-      .eq('numberId', numberId)
-      .eq('wa_id', to)
-      .single()
+      .eq('numberId', numberIdNum)
+      .eq('wa_id', waIdToCheck)
+      .single();
     if (syncDbError || !syncDb) {
-      res.status(HttpStatusCode.BadRequest).json({
-        message: 'El chat no está sincronizado para este número',
-        to
-      })
-      return
+      // Buscar en Unsyncedcontact
+      const { data: unsynced, error: unsyncedError } = await supabase
+        .from('Unsyncedcontact')
+        .select('id')
+        .eq('numberid', numberIdNum)
+        .eq('wa_id', waIdToCheck)
+        .single();
+      if (!unsynced) {
+        res.status(HttpStatusCode.BadRequest).json({
+          message: 'El chat no está sincronizado ni registrado como no sincronizado para este número',
+          to
+        });
+        return;
+      }
+      // Si está en Unsyncedcontact, permite el envío (sin importar agentehabilitado)
     }
-    const client = clients[numberId]
+    const client = clients[numberid]
     if (!client) {
       res.status(HttpStatusCode.NotFound).json({
         message: 'No hay sesión activa para este número'
@@ -66,7 +80,7 @@ export async function sendMessage(req: Request, res: Response) {
 // Función para sincronizar historiales de chat en lotes
 export async function syncAllHistoriesBatch(
   io: any,
-  numberId: string | number,
+  numberid: string | number,
   chatIds: string[],
   client: any,
   batchSize = 20
@@ -88,8 +102,8 @@ export async function syncAllHistoriesBatch(
           fromMe: m.fromMe
         }));
         const lastMessageTimestamp = messages.length > 0 ? messages[messages.length - 1].timestamp * 1000 : null;
-        io.to(numberId.toString()).emit('chat-history', {
-          numberId,
+        io.to(numberid.toString()).emit('chat-history', {
+          numberid,
           chatHistory,
           to: chat.id._serialized,
           lastMessageTimestamp
@@ -100,8 +114,8 @@ export async function syncAllHistoriesBatch(
     }));
     completed += batch.length;
     // Emitir progreso
-    io.to(numberId.toString()).emit('sync-progress', {
-      numberId,
+    io.to(numberid.toString()).emit('sync-progress', {
+      numberid,
       completed,
       total: chatIds.length
     });
@@ -130,22 +144,76 @@ export async function handleIncomingMessage(msg: any, chat: any, numberId: strin
   const phoneUtil = require('google-libphonenumber').PhoneNumberUtil.getInstance();
   const numberProto = phoneUtil.parseAndKeepRawInput(phoneNumberRaw);
   const clientNumber = phoneUtil.getNationalSignificantNumber(numberProto);
-  const { data: number } = await supabase
+  const { data: number, error: numberError } = await supabase
     .from('WhatsAppNumber')
     .select('*')
     .eq('number', clientNumber)
     .single();
 
-  if (!number) return;
+  if (!number) {
+    return;
+  }
 
-  // Si está sincronizado y la IA está activa para sincronizados
-  if (syncDb && syncDb.agenteHabilitado && number.aiEnabled) {
+  const waIdToCheck = (msg.from || '').trim().toLowerCase();
+
+  // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
+  if (!syncDb) {
+    let { data: unsyncedContact, error: unsyncedError } = await supabase
+      .from('Unsyncedcontact')
+      .select('agentehabilitado')
+      .eq('numberid', numberId)
+    .eq('wa_id', waIdToCheck)
+    .single();
+    // Si no existe, lo inserta automáticamente
+    if (!unsyncedContact) {
+      const insertObj = {
+        numberid: numberId,
+        wa_id: waIdToCheck,
+        number: waIdToCheck.split('@')[0],
+        agentehabilitado: true,
+        lastmessagetimestamp: Date.now(),
+        lastmessagepreview: msg.body || ''
+      };
+      const { data: inserted, error: insertError } = await supabase
+        .from('Unsyncedcontact')
+        .insert([insertObj]);
+      // EMITIR EVENTO SOCKET para refrescar lista en frontend
+      if (io && typeof io.to === 'function') {
+        io.to(numberId.toString()).emit('unsynced-contacts-updated', { numberid: numberId });
+      }
+      // Vuelve a consultar
+      const resync = await supabase
+        .from('Unsyncedcontact')
+        .select('agentehabilitado')
+        .eq('numberid', numberId)
+        .eq('wa_id', waIdToCheck)
+        .single();
+      unsyncedContact = resync.data;
+      unsyncedError = resync.error;
+    }
+    if (number.aiUnknownEnabled === true && unsyncedContact && unsyncedContact.agentehabilitado === true) {
+      return handleIncomingMessageSynced(msg, chat, numberId, io, number, false);
+    }
+    return;
+  }
+
+  // --- GRUPO SINCRONIZADO ---
+  if (
+    isGroup &&
+    number.aiEnabled === true &&
+    number.responseGroups === true &&
+    syncDb.agenteHabilitado === true
+  ) {
     return handleIncomingMessageSynced(msg, chat, numberId, io, number, true);
   }
 
-  // Si NO está sincronizado y la IA está activa para no agregados
-  if (!syncDb && number.aiUnknownEnabled) {
-    return handleIncomingMessageSynced(msg, chat, numberId, io, number, false);
+  // --- CONTACTO SINCRONIZADO ---
+  if (
+    !isGroup &&
+    number.aiEnabled === true &&
+    syncDb.agenteHabilitado === true
+  ) {
+    return handleIncomingMessageSynced(msg, chat, numberId, io, number, true);
   }
 
   // Si no, no responde
@@ -153,7 +221,7 @@ export async function handleIncomingMessage(msg: any, chat: any, numberId: strin
 }
 
 // Nueva función para manejar la lógica de respuesta (sincronizado o no)
-async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string | number, io: any, number: any, isSynced: boolean) {
+async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string | number, io: any, number: any, isSynced: boolean, agentId?: number) {
   const isGroup = chat.id.server === 'g.us';
   const messages = await chat.fetchMessages({ limit: 30 });
   messages.sort((a: any, b: any) => a.timestamp - b.timestamp);
@@ -178,7 +246,6 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
     lastMessageTimestamp
   });
 
-  // --- NUEVO: Solo responde si debe hacerlo (igual que antes) ---
   let user = null;
   if (number && number.userId) {
     const { data: userData } = await supabase
@@ -203,65 +270,79 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
       chatHistory,
       user
     );
-    // --- Palabras clave para detectar solicitud de asesor ---
-    const fraseAsesor = 'Ya en un momento te ponemos en contacto con uno';
+    const fraseAsesorEspecial = 'Un momento, por favor. Un asesor especializado te atenderá en breve.';
     let finalResponse = aiResponse;
     let notificacionEnviada = false;
-    // Solo buscar asesor si hay agente, allowAdvisor y advisorEmail
-    let detectedAsesor = false;
     let agent = null;
-    const asesorPhrases = [
-      'quiero hablar con un asesor',
-      'puedo hablar con un asesor',
-      'necesito un asesor',
-      'quiero un asesor',
-      'asesor humano',
-      'quiero atención humana',
-      'puedo hablar con una persona',
-      'necesito hablar con un humano',
-      'quiero hablar con una persona',
-      'quiero hablar con un humano',
-      'necesito hablar con un asesor'
-    ];
-    const userMsgLower = msg.body.toLowerCase().normalize('NFD').replace(/[^\u0000-\u007F]/g, '');
-    const agentResult = await supabase
-      .from('Agent')
-      .select('advisorEmail, allowAdvisor, title')
-      .eq('ownerId', number.userId)
-      .eq('isGlobal', false)
-      .order('id', { ascending: false })
-      .limit(1)
-      .single();
-    agent = agentResult.data;
-    if (
-      agent &&
-      agent.allowAdvisor &&
-      agent.advisorEmail
-    ) {
-      detectedAsesor = asesorPhrases.some(phrase => userMsgLower.includes(phrase));
+    if (agentId) {
+      const agentResult = await supabase
+        .from('Agent')
+        .select('id, title, advisorEmail, allowAdvisor, ownerId')
+        .eq('id', agentId)
+        .single();
+      agent = agentResult.data;
+    } else {
+      const agentResult = await supabase
+        .from('Agent')
+        .select('id, title, advisorEmail, allowAdvisor, ownerId')
+        .eq('ownerId', number.userId)
+        .eq('isGlobal', false)
+        .order('id', { ascending: false })
+        .limit(1)
+        .single();
+      agent = agentResult.data;
     }
-    // Solo forzar la frase si hay agente y allowAdvisor activo y se detecta la frase
     if (
-      detectedAsesor &&
-      agent && agent.allowAdvisor && agent.advisorEmail &&
-      (typeof aiResponse !== 'string' || !aiResponse.trim().toLowerCase().startsWith(fraseAsesor.toLowerCase()))
+      typeof aiResponse === 'string' &&
+      aiResponse.trim().toLowerCase() === fraseAsesorEspecial.toLowerCase() &&
+      agent && agent.allowAdvisor && agent.advisorEmail
     ) {
-      finalResponse = fraseAsesor;
       try {
         const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
         await transporter.sendMail({
           from: process.env.SMTP_USER,
           to: agent.advisorEmail,
           subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
-          html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>
-<table style='font-size:15px;'>
-  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>
-  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>
-  <tr><td><b>Número del cliente:</b></td><td>${msg.from}</td></tr>
-  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>
-</table>`
+          html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>\n<table style='font-size:15px;'>\n  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>\n  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>\n  <tr><td><b>Número del cliente:</b></td><td>${msg.from}</td></tr>\n  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>\n</table>`
         });
         notificacionEnviada = true;
+        // DESACTIVAR IA para este contacto (sincronizado o no)
+        // Primero intenta en SyncedContactOrGroup
+        const { data: syncedContact } = await supabase
+          .from('SyncedContactOrGroup')
+          .select('id')
+          .eq('numberId', numberId)
+          .eq('wa_id', chat.id._serialized)
+          .eq('type', isGroup ? 'group' : 'contact')
+          .single();
+        if (syncedContact && syncedContact.id) {
+          await supabase
+            .from('SyncedContactOrGroup')
+            .update({ agenteHabilitado: false })
+            .eq('id', syncedContact.id);
+          // Emitir evento socket para refrescar sincronizados
+          if (io && typeof io.to === 'function') {
+            io.to(numberId.toString()).emit('synced-contacts-updated', { numberid: numberId });
+          }
+        } else {
+          // Si no está sincronizado, busca en Unsyncedcontact
+          const { data: unsyncedContact } = await supabase
+            .from('Unsyncedcontact')
+            .select('id')
+            .eq('numberid', numberId)
+            .eq('wa_id', chat.id._serialized)
+            .single();
+          if (unsyncedContact && unsyncedContact.id) {
+            await supabase
+              .from('Unsyncedcontact')
+              .update({ agentehabilitado: false })
+              .eq('id', unsyncedContact.id);
+            // Emitir evento socket para refrescar no sincronizados
+            if (io && typeof io.to === 'function') {
+              io.to(numberId.toString()).emit('unsynced-contacts-updated', { numberid: numberId });
+            }
+          }
+        }
       } catch (err) {
         notificacionEnviada = false;
       }
@@ -275,37 +356,10 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
         to: chat.id,
         fromMe: false
       });
-
-      // Notificación normal si la IA responde bien y no fue forzado arriba
-      if (
-        typeof finalResponse === 'string' &&
-        finalResponse.trim().toLowerCase().startsWith(fraseAsesor.toLowerCase()) &&
-        !notificacionEnviada &&
-        agent && agent.allowAdvisor && agent.advisorEmail
-      ) {
-        try {
-          const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
-          await transporter.sendMail({
-            from: process.env.SMTP_USER,
-            to: agent.advisorEmail,
-            subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
-            html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>
-<table style='font-size:15px;'>
-  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>
-  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>
-  <tr><td><b>Número del cliente:</b></td><td>${msg.from}</td></tr>
-  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>
-</table>`
-          });
-        } catch (err) {
-          // Si falla el correo, igual responde la frase especial
-        }
-      }
       // Registrar el uso de créditos
       const creditsUsed = tokens !== undefined ? +tokens : 0;
       await registerCreditUsage(user.id, creditsUsed);
       io.to(numberId.toString()).emit('creditsUpdated', { creditsUsed });
-
       // Espera un pequeño delay para que WhatsApp sincronice el mensaje
       await new Promise((res) => setTimeout(res, 500));
       // Vuelve a obtener los últimos 30 mensajes
