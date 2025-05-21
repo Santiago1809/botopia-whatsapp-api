@@ -301,11 +301,48 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
         const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
         await transporter.sendMail({
           from: process.env.SMTP_USER,
-            to: agent.advisorEmail,
-            subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
+          to: agent.advisorEmail,
+          subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
           html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>\n<table style='font-size:15px;'>\n  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>\n  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>\n  <tr><td><b>Número del cliente:</b></td><td>${msg.from}</td></tr>\n  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>\n</table>`
-          });
+        });
         notificacionEnviada = true;
+        // DESACTIVAR IA para este contacto (sincronizado o no)
+        // Primero intenta en SyncedContactOrGroup
+        const { data: syncedContact } = await supabase
+          .from('SyncedContactOrGroup')
+          .select('id')
+          .eq('numberId', numberId)
+          .eq('wa_id', chat.id._serialized)
+          .eq('type', isGroup ? 'group' : 'contact')
+          .single();
+        if (syncedContact && syncedContact.id) {
+          await supabase
+            .from('SyncedContactOrGroup')
+            .update({ agenteHabilitado: false })
+            .eq('id', syncedContact.id);
+          // Emitir evento socket para refrescar sincronizados
+          if (io && typeof io.to === 'function') {
+            io.to(numberId.toString()).emit('synced-contacts-updated', { numberid: numberId });
+          }
+        } else {
+          // Si no está sincronizado, busca en Unsyncedcontact
+          const { data: unsyncedContact } = await supabase
+            .from('Unsyncedcontact')
+            .select('id')
+            .eq('numberid', numberId)
+            .eq('wa_id', chat.id._serialized)
+            .single();
+          if (unsyncedContact && unsyncedContact.id) {
+            await supabase
+              .from('Unsyncedcontact')
+              .update({ agentehabilitado: false })
+              .eq('id', unsyncedContact.id);
+            // Emitir evento socket para refrescar no sincronizados
+            if (io && typeof io.to === 'function') {
+              io.to(numberId.toString()).emit('unsynced-contacts-updated', { numberid: numberId });
+            }
+          }
+        }
       } catch (err) {
         notificacionEnviada = false;
       }
