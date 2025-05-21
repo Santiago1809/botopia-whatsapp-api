@@ -303,7 +303,14 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
           from: process.env.SMTP_USER,
           to: agent.advisorEmail,
           subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
-          html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>\n<table style='font-size:15px;'>\n  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>\n  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>\n  <tr><td><b>Número del cliente:</b></td><td>${msg.from}</td></tr>\n  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>\n</table>`
+          html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>\
+<table style='font-size:15px;'>\
+  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>\
+  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>\
+  <tr><td><b>Número del cliente:</b></td><td>${msg.from}</td></tr>\
+  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>\
+</table>\
+<br><div style='color:#b91c1c;font-size:15px;'><b>⚠️ La IA ha sido desactivada para este contacto. Recuerda volver a activarla manualmente si deseas que la IA siga respondiendo a este cliente.</b></div>`
         });
         notificacionEnviada = true;
         // DESACTIVAR IA para este contacto (sincronizado o no)
