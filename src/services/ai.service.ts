@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai'
-import type { User } from '../../generated/prisma'
+/* import type { User } from '../types/global' */
 import type { Message } from '../interfaces/global'
 import { config } from 'dotenv'
 
@@ -11,10 +11,9 @@ export async function getAIResponse(
   userMsg: string,
   model = 'gemini-2.0-flash',
   chatHistory: Message[] = [],
-  user: User | null = null
 ) {
   try {
-    const maxTokens = user?.tokensPerResponse || 120
+    // const maxTokens = user?.tokensPerResponse || 120
     // Formatea el historial (sin el prompt todavía)
     let messages = chatHistory.map((msg) => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
@@ -36,7 +35,6 @@ export async function getAIResponse(
       model,
       history: messages,
       config: {
-        maxOutputTokens: maxTokens,
         temperature: 0.1,
         systemInstruction: prompt // Aquí va el "prompt" como instrucción del sistema
       }
