@@ -218,6 +218,63 @@ export async function handleIncomingMessage(
       }
       return
     }
+  // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
+  if (!syncDb) {
+    try {
+      // Extraer el número del wa_id (sin el @c.us)
+      const numberFromWaId = waIdToCheck.split('@')[0];
+      
+      // Preparar el objeto para insertar/actualizar
+      const contactData = {
+        numberid: numberId,
+        wa_id: waIdToCheck,
+        number: numberFromWaId,
+        name: numberFromWaId, // Usar el número como nombre por defecto
+        agentehabilitado: true,
+        lastmessagetimestamp: Date.now(),
+        lastmessagepreview: msg.body || ''
+      };
+
+      // Intentar insertar o actualizar
+      const { data: unsyncedContact, error: upsertError } = await supabase
+        .from('Unsyncedcontact')
+        .upsert([contactData], {
+          onConflict: 'numberid,wa_id',
+          ignoreDuplicates: false
+        });
+
+      if (upsertError) {
+        console.error('Error al guardar contacto no sincronizado:', upsertError);
+        return;
+      }
+
+      // EMITIR EVENTO SOCKET para refrescar lista en frontend SIEMPRE
+      if (io && typeof io.to === 'function') {
+        io.to(numberId.toString()).emit('unsynced-contacts-updated', { numberid: numberId });
+      }
+
+      // Consultar el contacto actualizado
+      const { data: updatedContact, error: queryError } = await supabase
+        .from('Unsyncedcontact')
+        .select('id, agentehabilitado')
+        .eq('numberid', numberId)
+        .eq('wa_id', waIdToCheck)
+        .single();
+
+      if (queryError) {
+        console.error('Error al consultar contacto no sincronizado:', queryError);
+        return;
+      }
+
+      // Si está habilitado y la IA está activada para desconocidos, responder SOLO si NO es grupo
+      if (!isGroup && number.aiUnknownEnabled === true && updatedContact && (updatedContact as any).agentehabilitado === true) {
+        return handleIncomingMessageSynced(msg, chat, numberId, io, number, false);
+      }
+    } catch (error) {
+      console.error('Error en manejo de contacto no sincronizado:', error);
+    }
+    return;
+  }
 
     // --- GRUPO SINCRONIZADO ---
     if (
@@ -332,11 +389,28 @@ export async function handleIncomingMessage(
           const fecha = new Date().toLocaleString('es-CO', {
             timeZone: 'America/Bogota'
           })
-          await transporter.sendMail({
+          // Obtener los últimos 5 mensajes del historial
+        const ultimosMensajes = messages.slice(-5).map((m: any, idx: number) => {
+          const quien = m.fromMe ? 'Bot' : 'Cliente';
+          return `<tr><td style='vertical-align:top;'><b>${quien}:</b></td><td>${m.body}</td></tr>`;
+        }).join('');
+        await transporter.sendMail({
             from: process.env.SMTP_USER,
             to: agent.advisorEmail,
             subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
-            html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>\n<table style='font-size:15px;'>\n  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>\n  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>\n  <tr><td><b>Número del cliente:</b></td><td>${msg.from}</td></tr>\n  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>\n</table>`
+            html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>
+<table style='font-size:15px;'>
+  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>
+  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>
+  <tr><td><b>Número del cliente:</b></td><td>${msg.from.split('@')[0]}</td></tr>
+  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>
+</table>
+<br>
+<b>Historial reciente de la conversación:</b>
+<table style='font-size:15px; margin-top:6px; margin-bottom:6px;'>
+${ultimosMensajes}
+</table>
+<br><div style='color:#b91c1c;font-size:15px;'><b>⚠️ La IA ha sido desactivada para este contacto. Recuerda volver a activarla manualmente si deseas que la IA siga respondiendo a este cliente.</b></div>`
           })
           // DESACTIVAR IA para este contacto (sincronizado o no)
           // Primero intenta en SyncedContactOrGroup

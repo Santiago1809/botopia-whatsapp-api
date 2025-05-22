@@ -31,7 +31,7 @@ transporter.verify(function(error, success) {
   if (error) {
     console.error('❌ Error en la configuración del servicio de correo:', error)
   } else {
-    console.log('✅ Servicio de correo configurado correctamente')
+    //console.log('✅ Servicio de correo configurado correctamente')
   }
 })
 
