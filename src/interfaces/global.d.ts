@@ -49,3 +49,14 @@ export interface AddAgent {
   title: string
   prompt: string
 }
+export interface Number {
+  id: number
+  number: string
+  name: string
+  aiEnabled: boolean
+  aiPrompt: string
+  aiModel: string
+  responseGroups: boolean
+  userId: number
+  aiUnknownEnabled: boolean
+}

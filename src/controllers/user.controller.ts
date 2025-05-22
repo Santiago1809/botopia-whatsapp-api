@@ -200,7 +200,7 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
     }
 
     res.status(HttpStatusCode.Ok).json({ message: 'Número eliminado' })
-  } catch (error) {
+  } catch {
     res.status(HttpStatusCode.InternalServerError).json({ message: 'Error eliminando número de WhatsApp' })
   }
 }

@@ -72,7 +72,7 @@ export const handleNotification = async (req: Request, res: Response) => {
        return
     }
 
-    const { status, order_id } = data;
+    const { status } = data;
 
     if (status === "PAID") {
       // Aquí puedes activar la suscripción en tu base de datos
