@@ -156,6 +156,18 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
       return
     }
 
+    // Eliminar todos los sincronizados (contactos y grupos)
+    await supabase
+      .from('SyncedContactOrGroup')
+      .delete()
+      .eq('numberId', Number(numberId));
+
+    // Eliminar todos los no sincronizados
+    await supabase
+      .from('Unsyncedcontact')
+      .delete()
+      .eq('numberid', Number(numberId));
+
     // Handle WhatsApp client cleanup
     if (clients[numberId]) {
       const client = clients[numberId];
@@ -189,9 +201,7 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
 
     res.status(HttpStatusCode.Ok).json({ message: 'Número eliminado' })
   } catch (error) {
-    res.status(HttpStatusCode.InternalServerError).json({
-      message: `Error eliminando número de WhatsApp ${(error as Error).message}`
-    })
+    res.status(HttpStatusCode.InternalServerError).json({ message: 'Error eliminando número de WhatsApp' })
   }
 }
 

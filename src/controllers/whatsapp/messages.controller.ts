@@ -13,6 +13,8 @@ export async function sendMessage(req: Request, res: Response) {
   try {
     const { content, to, numberId } = req.body as SendMessageBody;
     const numberid = numberId; // Usar numberid solo para la base de datos
+    // LOG de depuración
+    //console.log('Intentando enviar mensaje:', { to, numberid });
     if (!to) {
       res
         .status(HttpStatusCode.BadRequest)
@@ -36,6 +38,8 @@ export async function sendMessage(req: Request, res: Response) {
     // Normalizar wa_id y numberId para la consulta
     const waIdToCheck = (to || '').trim().toLowerCase();
     const numberIdNum = Number(numberid);
+    // LOG de depuración
+      //console.log('Buscando en SyncedContactOrGroup y Unsyncedcontact:', { waIdToCheck, numberIdNum });
     const { data: syncDb, error: syncDbError } = await supabase
       .from('SyncedContactOrGroup')
       .select('id, wa_id, type')
@@ -50,6 +54,8 @@ export async function sendMessage(req: Request, res: Response) {
         .eq('numberid', numberIdNum)
         .eq('wa_id', waIdToCheck)
         .single();
+      // LOG de depuración
+      //console.log('Resultado búsqueda Unsyncedcontact:', { unsynced, unsyncedError });
       if (!unsynced) {
         res.status(HttpStatusCode.BadRequest).json({
           message: 'El chat no está sincronizado ni registrado como no sincronizado para este número',
@@ -158,41 +164,58 @@ export async function handleIncomingMessage(msg: any, chat: any, numberId: strin
 
   // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
   if (!syncDb) {
-    let { data: unsyncedContact, error: unsyncedError } = await supabase
-      .from('Unsyncedcontact')
-      .select('agentehabilitado')
-      .eq('numberid', numberId)
-    .eq('wa_id', waIdToCheck)
-    .single();
-    // Si no existe, lo inserta automáticamente
-    if (!unsyncedContact) {
-      const insertObj = {
+    try {
+      // Extraer el número del wa_id (sin el @c.us)
+      const numberFromWaId = waIdToCheck.split('@')[0];
+      
+      // Preparar el objeto para insertar/actualizar
+      const contactData = {
         numberid: numberId,
         wa_id: waIdToCheck,
-        number: waIdToCheck.split('@')[0],
+        number: numberFromWaId,
+        name: numberFromWaId, // Usar el número como nombre por defecto
         agentehabilitado: true,
         lastmessagetimestamp: Date.now(),
         lastmessagepreview: msg.body || ''
       };
-      const { data: inserted, error: insertError } = await supabase
+
+      // Intentar insertar o actualizar
+      const { data: unsyncedContact, error: upsertError } = await supabase
         .from('Unsyncedcontact')
-        .insert([insertObj]);
-      // EMITIR EVENTO SOCKET para refrescar lista en frontend
+        .upsert([contactData], {
+          onConflict: 'numberid,wa_id',
+          ignoreDuplicates: false
+        });
+
+      if (upsertError) {
+        console.error('Error al guardar contacto no sincronizado:', upsertError);
+        return;
+      }
+
+      // EMITIR EVENTO SOCKET para refrescar lista en frontend SIEMPRE
       if (io && typeof io.to === 'function') {
         io.to(numberId.toString()).emit('unsynced-contacts-updated', { numberid: numberId });
       }
-      // Vuelve a consultar
-      const resync = await supabase
+
+      // Consultar el contacto actualizado
+      const { data: updatedContact, error: queryError } = await supabase
         .from('Unsyncedcontact')
-        .select('agentehabilitado')
+        .select('id, agentehabilitado')
         .eq('numberid', numberId)
         .eq('wa_id', waIdToCheck)
         .single();
-      unsyncedContact = resync.data;
-      unsyncedError = resync.error;
-    }
-    if (number.aiUnknownEnabled === true && unsyncedContact && unsyncedContact.agentehabilitado === true) {
-      return handleIncomingMessageSynced(msg, chat, numberId, io, number, false);
+
+      if (queryError) {
+        console.error('Error al consultar contacto no sincronizado:', queryError);
+        return;
+      }
+
+      // Si está habilitado y la IA está activada para desconocidos, responder SOLO si NO es grupo
+      if (!isGroup && number.aiUnknownEnabled === true && updatedContact && (updatedContact as any).agentehabilitado === true) {
+        return handleIncomingMessageSynced(msg, chat, numberId, io, number, false);
+      }
+    } catch (error) {
+      console.error('Error en manejo de contacto no sincronizado:', error);
     }
     return;
   }
@@ -299,17 +322,27 @@ async function handleIncomingMessageSynced(msg: any, chat: any, numberId: string
     ) {
       try {
         const fecha = new Date().toLocaleString('es-CO', { timeZone: 'America/Bogota' });
+        // Obtener los últimos 5 mensajes del historial
+        const ultimosMensajes = messages.slice(-5).map((m: any, idx: number) => {
+          const quien = m.fromMe ? 'Bot' : 'Cliente';
+          return `<tr><td style='vertical-align:top;'><b>${quien}:</b></td><td>${m.body}</td></tr>`;
+        }).join('');
         await transporter.sendMail({
           from: process.env.SMTP_USER,
           to: agent.advisorEmail,
           subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
-          html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>\
-<table style='font-size:15px;'>\
-  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>\
-  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>\
-  <tr><td><b>Número del cliente:</b></td><td>${msg.from}</td></tr>\
-  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>\
-</table>\
+          html: `<p style='font-size:16px;'><b>Un cliente ha solicitado hablar con un asesor en WhatsApp.</b></p>
+<table style='font-size:15px;'>
+  <tr><td><b>Mensaje del cliente:</b></td><td>${msg.body}</td></tr>
+  <tr><td><b>Fecha y hora:</b></td><td>${fecha}</td></tr>
+  <tr><td><b>Número del cliente:</b></td><td>${msg.from.split('@')[0]}</td></tr>
+  <tr><td><b>Número destino (bot):</b></td><td>${number.number}</td></tr>
+</table>
+<br>
+<b>Historial reciente de la conversación:</b>
+<table style='font-size:15px; margin-top:6px; margin-bottom:6px;'>
+${ultimosMensajes}
+</table>
 <br><div style='color:#b91c1c;font-size:15px;'><b>⚠️ La IA ha sido desactivada para este contacto. Recuerda volver a activarla manualmente si deseas que la IA siga respondiendo a este cliente.</b></div>`
         });
         notificacionEnviada = true;
