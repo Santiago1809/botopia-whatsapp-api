@@ -218,63 +218,83 @@ export async function handleIncomingMessage(
       }
       return
     }
-  // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
-  if (!syncDb) {
-    try {
-      // Extraer el número del wa_id (sin el @c.us)
-      const numberFromWaId = waIdToCheck.split('@')[0];
-      
-      // Preparar el objeto para insertar/actualizar
-      const contactData = {
-        numberid: numberId,
-        wa_id: waIdToCheck,
-        number: numberFromWaId,
-        name: numberFromWaId, // Usar el número como nombre por defecto
-        agentehabilitado: true,
-        lastmessagetimestamp: Date.now(),
-        lastmessagepreview: msg.body || ''
-      };
+    // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
+    if (!syncDb) {
+      try {
+        // Extraer el número del wa_id (sin el @c.us)
+        const numberFromWaId = waIdToCheck.split('@')[0]
 
-      // Intentar insertar o actualizar
-      const { data: unsyncedContact, error: upsertError } = await supabase
-        .from('Unsyncedcontact')
-        .upsert([contactData], {
-          onConflict: 'numberid,wa_id',
-          ignoreDuplicates: false
-        });
+        // Preparar el objeto para insertar/actualizar
+        const contactData = {
+          numberid: numberId,
+          wa_id: waIdToCheck,
+          number: numberFromWaId,
+          name: numberFromWaId, // Usar el número como nombre por defecto
+          agentehabilitado: true,
+          lastmessagetimestamp: Date.now(),
+          lastmessagepreview: msg.body || ''
+        }
 
-      if (upsertError) {
-        console.error('Error al guardar contacto no sincronizado:', upsertError);
-        return;
+        // Intentar insertar o actualizar
+        const { error: upsertError } = await supabase
+          .from('Unsyncedcontact')
+          .upsert([contactData], {
+            onConflict: 'numberid,wa_id',
+            ignoreDuplicates: false
+          })
+
+        if (upsertError) {
+          console.error(
+            'Error al guardar contacto no sincronizado:',
+            upsertError
+          )
+          return
+        }
+
+        // EMITIR EVENTO SOCKET para refrescar lista en frontend SIEMPRE
+        if (io && typeof io.to === 'function') {
+          io.to(numberId.toString()).emit('unsynced-contacts-updated', {
+            numberid: numberId
+          })
+        }
+
+        // Consultar el contacto actualizado
+        const { data: updatedContact, error: queryError } = await supabase
+          .from('Unsyncedcontact')
+          .select('id, agentehabilitado')
+          .eq('numberid', numberId)
+          .eq('wa_id', waIdToCheck)
+          .single()
+
+        if (queryError) {
+          console.error(
+            'Error al consultar contacto no sincronizado:',
+            queryError
+          )
+          return
+        }
+
+        // Si está habilitado y la IA está activada para desconocidos, responder SOLO si NO es grupo
+        if (
+          !isGroup &&
+          number.aiUnknownEnabled === true &&
+          updatedContact &&
+          updatedContact.agentehabilitado === true
+        ) {
+          return handleIncomingMessageSynced(
+            msg,
+            chat,
+            numberId,
+            io,
+            number,
+            false
+          )
+        }
+      } catch (error) {
+        console.error('Error en manejo de contacto no sincronizado:', error)
       }
-
-      // EMITIR EVENTO SOCKET para refrescar lista en frontend SIEMPRE
-      if (io && typeof io.to === 'function') {
-        io.to(numberId.toString()).emit('unsynced-contacts-updated', { numberid: numberId });
-      }
-
-      // Consultar el contacto actualizado
-      const { data: updatedContact, error: queryError } = await supabase
-        .from('Unsyncedcontact')
-        .select('id, agentehabilitado')
-        .eq('numberid', numberId)
-        .eq('wa_id', waIdToCheck)
-        .single();
-
-      if (queryError) {
-        console.error('Error al consultar contacto no sincronizado:', queryError);
-        return;
-      }
-
-      // Si está habilitado y la IA está activada para desconocidos, responder SOLO si NO es grupo
-      if (!isGroup && number.aiUnknownEnabled === true && updatedContact && (updatedContact as any).agentehabilitado === true) {
-        return handleIncomingMessageSynced(msg, chat, numberId, io, number, false);
-      }
-    } catch (error) {
-      console.error('Error en manejo de contacto no sincronizado:', error);
+      return
     }
-    return;
-  }
 
     // --- GRUPO SINCRONIZADO ---
     if (
@@ -390,11 +410,14 @@ export async function handleIncomingMessage(
             timeZone: 'America/Bogota'
           })
           // Obtener los últimos 5 mensajes del historial
-        const ultimosMensajes = messages.slice(-5).map((m: any, idx: number) => {
-          const quien = m.fromMe ? 'Bot' : 'Cliente';
-          return `<tr><td style='vertical-align:top;'><b>${quien}:</b></td><td>${m.body}</td></tr>`;
-        }).join('');
-        await transporter.sendMail({
+          const ultimosMensajes = messages
+            .slice(-5)
+            .map((m: Message) => {
+              const quien = m.fromMe ? 'Bot' : 'Cliente'
+              return `<tr><td style='vertical-align:top;'><b>${quien}:</b></td><td>${m.body}</td></tr>`
+            })
+            .join('')
+          await transporter.sendMail({
             from: process.env.SMTP_USER,
             to: agent.advisorEmail,
             subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
