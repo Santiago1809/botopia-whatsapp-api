@@ -46,7 +46,7 @@ export async function sendMessage(req: Request, res: Response) {
       .eq('numberId', numberIdNum)
       .eq('wa_id', waIdToCheck)
       .single()
-    if (syncDbError || !syncDb) {
+    if (syncDbError && syncDbError.code !== 'PGRST116') {
       // Buscar en Unsyncedcontact
       const { data: unsynced, error: unsyncedError } = await supabase
         .from('Unsyncedcontact')
@@ -142,6 +142,14 @@ export async function handleIncomingMessage(
   numberId: string | number,
   io: Server
 ) {
+  // Log SIEMPRE que se reciba un mensaje
+  //console.log('[WHATSAPP][MSG RECIBIDO]',
+   {
+    from: msg.from,
+    numberId,
+    chatName: chat.name || chat.id._serialized,
+    message: msg.body
+  });
   const idToCheck = chat.id._serialized
   const isGroup = chat.id.server === 'g.us'
 
@@ -154,8 +162,10 @@ export async function handleIncomingMessage(
     .eq('type', isGroup ? 'group' : 'contact')
     .single()
 
-  if (syncDbError) {
-    return
+  // Solo hago return si el error es diferente a PGRST116 (no hay filas)
+  if (syncDbError && syncDbError.code !== 'PGRST116') {
+    console.error('Error buscando en SyncedContactOrGroup:', syncDbError);
+    return;
   }
   // Obtener el número completo
   let phoneNumberRaw = msg.to.split('@')[0]
@@ -171,41 +181,73 @@ export async function handleIncomingMessage(
       .single()
 
     if (!number || numberError) {
+      console.error('Error buscando en WhatsAppNumber:', numberError);
       return
     }
 
     const waIdToCheck = (msg.from || '').trim().toLowerCase()
+    //console.log('Datos para inserción:', { waIdToCheck, numberId, msgFrom: msg.from, msgBody: msg.body });
 
     // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
     if (!syncDb) {
+      // Buscar en Unsyncedcontact
       let { data: unsyncedContact, error: unsyncedError } = await supabase
         .from('Unsyncedcontact')
         .select('agentehabilitado')
         .eq('numberid', numberId)
         .eq('wa_id', waIdToCheck)
-        .single()
+        .single();
+      if (unsyncedError) {
+        console.error('Error buscando en Unsyncedcontact:', unsyncedError);
+      }
       // Si no existe, lo inserta automáticamente
       if (!unsyncedContact || unsyncedError) {
-        // EMITIR EVENTO SOCKET para refrescar lista en frontend
+        //console.log('Insertando nuevo no sincronizado:', waIdToCheck, numberId);
+        const numberFromWaId = waIdToCheck.split('@')[0];
+        const contactData = {
+          numberid: numberId,
+          wa_id: waIdToCheck,
+          number: numberFromWaId,
+          name: numberFromWaId, // Usar el número como nombre por defecto
+          agentehabilitado: true,
+          lastmessagetimestamp: Date.now(),
+          lastmessagepreview: msg.body || ''
+        };
+        const { error: upsertError } = await supabase
+          .from('Unsyncedcontact')
+          .upsert([contactData], {
+            onConflict: 'numberid,wa_id',
+            ignoreDuplicates: false
+          });
+        if (upsertError) {
+          console.error('Error al guardar contacto no sincronizado:', upsertError);
+          return;
+        }
         if (io && typeof io.to === 'function') {
           io.to(numberId.toString()).emit('unsynced-contacts-updated', {
             numberid: numberId
-          })
+          });
         }
-        // Vuelve a consultar
-        const resync = await supabase
-          .from('Unsyncedcontact')
-          .select('agentehabilitado')
-          .eq('numberid', numberId)
-          .eq('wa_id', waIdToCheck)
-          .single()
-        unsyncedContact = resync.data
-        unsyncedError = resync.error
       }
+      // Consultar el contacto actualizado
+      const { data: updatedContact, error: queryError } = await supabase
+        .from('Unsyncedcontact')
+        .select('id, agentehabilitado')
+        .eq('numberid', numberId)
+        .eq('wa_id', waIdToCheck)
+        .single();
+
+      if (queryError) {
+        console.error('Error al consultar contacto no sincronizado:', queryError);
+        return;
+      }
+
+      // Si está habilitado y la IA está activada para desconocidos, responder SOLO si NO es grupo
       if (
+        !isGroup &&
         number.aiUnknownEnabled === true &&
-        unsyncedContact &&
-        unsyncedContact.agentehabilitado === true
+        updatedContact &&
+        updatedContact.agentehabilitado === true
       ) {
         return handleIncomingMessageSynced(
           msg,
@@ -214,9 +256,9 @@ export async function handleIncomingMessage(
           io,
           number,
           false
-        )
+        );
       }
-      return
+      return;
     }
     // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
     if (!syncDb) {
