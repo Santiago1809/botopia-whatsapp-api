@@ -143,13 +143,12 @@ export async function handleIncomingMessage(
   io: Server
 ) {
   // Log SIEMPRE que se reciba un mensaje
-  //console.log('[WHATSAPP][MSG RECIBIDO]',
-   {
-    from: msg.from,
-    numberId,
-    chatName: chat.name || chat.id._serialized,
-    message: msg.body
-  });
+  // console.log('[WHATSAPP][MSG RECIBIDO]', {
+  //   from: msg.from,
+  //   numberId,
+  //   chatName: chat.name || chat.id._serialized,
+  //   message: msg.body
+  // });
   const idToCheck = chat.id._serialized
   const isGroup = chat.id.server === 'g.us'
 
