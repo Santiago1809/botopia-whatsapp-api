@@ -10,7 +10,7 @@ client.on('message', async (msg) => {
 export async function syncContactsToDB(req: Request, res: Response) {
   const { numberId, contacts, groups, clearAll } = req.body
   if (!numberId) {
-    res.status(400).json({ message: 'Missing numberId' })
+    res.status(400).json({ message: 'Missing numberId' }) 
     return
   }
 
