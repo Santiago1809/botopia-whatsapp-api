@@ -486,9 +486,8 @@ ${ultimosMensajes}
       if (finalResponse) {
         chat.sendStateTyping()
         const messageLength = (finalResponse as string).length
-        // Calculate delay between 10-25 seconds based on message length
-        const baseDelay = 10000
-        const additionalDelay = Math.min(15000, messageLength * 50)
+        const baseDelay = 2000
+        const additionalDelay = Math.min(2000, messageLength * 50)
         const totalDelay = baseDelay + additionalDelay
 
         setTimeout(async () => {
