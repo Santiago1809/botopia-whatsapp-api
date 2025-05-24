@@ -1,5 +1,4 @@
 import { GoogleGenAI } from '@google/genai'
-/* import type { User } from '../types/global' */
 import type { Message } from '../interfaces/global'
 import { config } from 'dotenv'
 
@@ -13,8 +12,6 @@ export async function getAIResponse(
   chatHistory: Message[] = [],
 ) {
   try {
-    // const maxTokens = user?.tokensPerResponse || 120
-    // Formatea el historial (sin el prompt todavía)
     let messages = chatHistory.map((msg) => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: msg.content }]
@@ -35,7 +32,7 @@ export async function getAIResponse(
       model,
       history: messages,
       config: {
-        temperature: 0.1,
+        temperature: 0,
         systemInstruction: prompt // Aquí va el "prompt" como instrucción del sistema
       }
     })
