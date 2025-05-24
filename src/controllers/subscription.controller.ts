@@ -63,7 +63,7 @@ export const createSubscription = async (req: CustomRequest, res: Response) => {
         // 2. Construir URL de checkout de DLO
         const baseUrl = process.env.NODE_ENV === 'production'
             ? 'https://checkout.dlocalgo.com'
-            : 'https://checkout-sbx.dlocalgo.com';
+            : 'https://checkout-sbx.dlocalgo.com'; 
 
         const checkoutUrl = new URL(`${baseUrl}/validate/subscription/${planToken}`);
         checkoutUrl.searchParams.append('email', user_id.email);
@@ -121,9 +121,13 @@ export const handleNotification = async (req: Request, res: Response) => {
     try {
         // 1. Consultar DLO para obtener los detalles completos
         const auth = `${process.env.API_KEY}:${process.env.API_SECRET}`;
+        // 2. Construir URL de checkout de DLO
+        const baseUrl = process.env.NODE_ENV === 'production'
+            ? 'https://api.dlocalgo.com'
+            : 'https://api-sbx.dlocalgo.com';
         
         const response = await fetch(
-            `https://api-sbx.dlocalgo.com/v1/subscription/${subscriptionId}/execution/${invoiceId}`,
+            `${baseUrl}/v1/subscription/${subscriptionId}/execution/${invoiceId}`,
             {
                 headers: {
                     Authorization: `Bearer ${auth}`,
@@ -138,7 +142,21 @@ export const handleNotification = async (req: Request, res: Response) => {
             return;
         }
 
-        const dloData = await response.json();
+        let dloData;
+        const responseText = await response.text();
+        if (!responseText) {
+            console.error("❌ Respuesta vacía de DLO");
+            res.status(500).json({ success: false, message: "Respuesta vacía de DLO" });
+            return;
+        }
+
+        try {
+            dloData = JSON.parse(responseText);
+        } catch (jsonError) {
+            console.error("❌ Error al parsear JSON de DLO:", responseText);
+            res.status(500).json({ success: false, message: "Error al procesar respuesta de DLO" });
+            return;
+        }
 
         // 2. Buscar la suscripción más reciente pendiente
         const { data: subscriptions, error: fetchError } = await supabase
@@ -233,8 +251,7 @@ export const handleNotification = async (req: Request, res: Response) => {
     }
 };
 
-// Funciones auxiliares
-type SubscriptionType = 'FREE' | 'BASIC' | 'PRO' | 'ENTERPRISE' | 'EXPIRED';
+type SubscriptionType = 'FREE' | 'BASIC' | 'PRO' | 'INDUSTRIAL' | 'EXPIRED';
 
 async function activateUserPlan(userId: string, planName: string) {
     // Normalize plan name: remove special chars, convert to uppercase, and trim
@@ -257,9 +274,9 @@ async function activateUserPlan(userId: string, planName: string) {
         case /PRO/.test(normalizedPlanName):
             subscription = 'PRO';
             break;
-        case /PLAN\s*ENTERPRISE/.test(normalizedPlanName):
-        case /ENTERPRISE/.test(normalizedPlanName):
-            subscription = 'ENTERPRISE';
+        case /PLAN\s*INDUSTRIAL/.test(normalizedPlanName):
+        case /INDUSTRIAL/.test(normalizedPlanName):
+            subscription = 'INDUSTRIAL';
             break;
         default:
             console.error('Plan no reconocido:', {
@@ -318,7 +335,7 @@ export const getUserSubscription = async (req: CustomRequest, res: Response) => 
         // 1. Obtener ID del usuario usando los nombres correctos de las columnas
         const { data: userData, error: userError } = await supabase
             .from('User')
-            .select('id, email, subscription, updatedAt, createdAt') // Cambiado a camelCase
+            .select('id, email, subscription, updatedAt, createdAt, subscription_updated_at') // Cambiado a camelCase
             .eq('username', req.user.username)
             .single();
 
@@ -340,6 +357,9 @@ export const getUserSubscription = async (req: CustomRequest, res: Response) => 
             .order('created_at', { ascending: false })
             .limit(1)
             .single();
+
+        console.log('Subscription data:', subscription);
+        console.log('Subscription error:', subError);
 
         // Si no hay error pero tampoco hay suscripción, significa que el usuario es FREE
         if (subError?.code === 'PGRST116') {
@@ -371,7 +391,7 @@ export const getUserSubscription = async (req: CustomRequest, res: Response) => 
         // 3. Estructurar la respuesta para usuarios con suscripción pagada
         const subscriptionInfo = {
             currentPlan: userData.subscription || 'FREE' as SubscriptionType,
-            lastUpdated: userData.updatedAt || userData.createdAt,
+            lastUpdated: userData.subscription_updated_at || userData.updatedAt,
             subscription: subscription ? {
                 planName: subscription.plan_name,
                 amount: subscription.amount_paid,
@@ -421,7 +441,7 @@ function getPlanLimits(plan: SubscriptionType | null): Record<string, number | b
                 maxMessages: 5000,
                 aiEnabled: true
             };
-        case 'ENTERPRISE':
+        case 'INDUSTRIAL':
             return {
                 maxWhatsappNumbers: 10,
                 maxMessages: 50000,
@@ -447,7 +467,13 @@ function getPlanFeatures(plan: SubscriptionType | null): Record<string, boolean>
                 canCreateTemplates: true
             };
         case 'PRO':
-        case 'ENTERPRISE':
+            return {
+                canAddWhatsapp: true,
+                canSendMessages: true,
+                canUseAI: false,
+                canCreateTemplates: true
+            };
+        case 'INDUSTRIAL':
             return {
                 canAddWhatsapp: true,
                 canSendMessages: true,

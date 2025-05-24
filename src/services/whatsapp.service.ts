@@ -1,6 +1,7 @@
 import { handleIncomingMessage } from '../controllers/whatsapp/messages.controller';
-import { Request, Response } from 'express';
-import { supabase } from '../lib/supabase';
+import type { Request, Response } from 'express';
+import { supabase } from '../config/db';
+// Import or initialize your WhatsApp client here
 
 client.on('message', async (msg) => {
   const chat = await msg.getChat();
