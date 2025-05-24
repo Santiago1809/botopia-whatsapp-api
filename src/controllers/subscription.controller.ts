@@ -358,9 +358,6 @@ export const getUserSubscription = async (req: CustomRequest, res: Response) => 
             .limit(1)
             .single();
 
-        console.log('Subscription data:', subscription);
-        console.log('Subscription error:', subError);
-
         // Si no hay error pero tampoco hay suscripción, significa que el usuario es FREE
         if (subError?.code === 'PGRST116') {
             const subscriptionInfo = {
