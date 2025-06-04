@@ -40,7 +40,7 @@ export async function sendMessage(req: Request, res: Response) {
     // Normalizar wa_id y numberId para la consulta
     const waIdToCheck = (to || '').trim().toLowerCase()
     const numberIdNum = Number(numberid)
-    const { data: syncDb, error: syncDbError } = await supabase
+    const { error: syncDbError } = await supabase
       .from('SyncedContactOrGroup')
       .select('id, wa_id, type')
       .eq('numberId', numberIdNum)
@@ -142,13 +142,6 @@ export async function handleIncomingMessage(
   numberId: string | number,
   io: Server
 ) {
-  // Log SIEMPRE que se reciba un mensaje
-  // console.log('[WHATSAPP][MSG RECIBIDO]', {
-  //   from: msg.from,
-  //   numberId,
-  //   chatName: chat.name || chat.id._serialized,
-  //   message: msg.body
-  // });
   const idToCheck = chat.id._serialized
   const isGroup = chat.id.server === 'g.us'
 
@@ -190,7 +183,7 @@ export async function handleIncomingMessage(
     // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
     if (!syncDb) {
       // Buscar en Unsyncedcontact
-      let { data: unsyncedContact, error: unsyncedError } = await supabase
+      const { data: unsyncedContact, error: unsyncedError } = await supabase
         .from('Unsyncedcontact')
         .select('agentehabilitado')
         .eq('numberid', numberId)
@@ -525,16 +518,18 @@ ${ultimosMensajes}
         }
       }
       if (finalResponse) {
-        chat.sendStateTyping()
-        const messageLength = (finalResponse as string).length
-        const baseDelay = 2000
-        const additionalDelay = Math.min(2000, messageLength * 50)
-        const totalDelay = baseDelay + additionalDelay
-
         setTimeout(async () => {
-          chat.clearState()
-          await msg.reply(finalResponse as string)
-        }, totalDelay)
+          chat.sendStateTyping()
+          const messageLength = (finalResponse as string).length
+          const baseDelay = 2000
+          const additionalDelay = Math.min(2000, messageLength * 50)
+          const totalDelay = baseDelay + additionalDelay
+
+          setTimeout(async () => {
+            chat.clearState()
+            await msg.reply(finalResponse as string)
+          }, totalDelay)
+        }, 2500)
 
         chatHistory.push({
           role: 'assistant',
