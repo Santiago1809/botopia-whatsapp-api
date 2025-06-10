@@ -12,6 +12,7 @@ import { transporter } from '../../services/email.service'
 import { clients } from '../../WhatsAppClients'
 import { registerCreditUsage } from '../credits.controller'
 
+
 export async function sendMessage(req: Request, res: Response) {
   try {
     const { content, to, numberId } = req.body as SendMessageBody
@@ -54,8 +55,8 @@ export async function sendMessage(req: Request, res: Response) {
         .eq('numberid', numberIdNum)
         .eq('wa_id', waIdToCheck)
         .single()
-      if (unsyncedError) {
-        return
+      if (unsyncedError && unsyncedError.code !== 'PGRST116') {
+        console.error('Error buscando en Unsyncedcontact:', unsyncedError);
       }
       if (!unsynced) {
         res.status(HttpStatusCode.BadRequest).json({
@@ -135,6 +136,9 @@ export async function syncAllHistoriesBatch(
   }
 }
 
+// --- CONTROL DE DUPLICADOS EN MEMORIA ---
+const respondedMessages = new Set<string>();
+
 // Función para manejar mensajes entrantes
 export async function handleIncomingMessage(
   msg: Message,
@@ -142,6 +146,11 @@ export async function handleIncomingMessage(
   numberId: string | number,
   io: Server
 ) {
+  // --- CONTROL DE DUPLICADOS EN MEMORIA ---
+  if (respondedMessages.has(msg.id._serialized)) {
+    return;
+  }
+  respondedMessages.add(msg.id._serialized);
   // Log SIEMPRE que se reciba un mensaje
   // console.log('[WHATSAPP][MSG RECIBIDO]', {
   //   from: msg.from,
@@ -196,7 +205,7 @@ export async function handleIncomingMessage(
         .eq('numberid', numberId)
         .eq('wa_id', waIdToCheck)
         .single();
-      if (unsyncedError) {
+      if (unsyncedError && unsyncedError.code !== 'PGRST116') {
         console.error('Error buscando en Unsyncedcontact:', unsyncedError);
       }
       // Si no existe, lo inserta automáticamente
