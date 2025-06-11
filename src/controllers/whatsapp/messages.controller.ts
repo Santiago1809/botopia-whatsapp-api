@@ -10,7 +10,6 @@ import { getCurrentUTCDate } from '../../lib/dateUtils'
 import { getAIResponse } from '../../services/ai.service'
 import { transporter } from '../../services/email.service'
 import { clients } from '../../WhatsAppClients'
-import { registerCreditUsage } from '../credits.controller'
 
 export async function sendMessage(req: Request, res: Response) {
   try {
@@ -55,7 +54,7 @@ export async function sendMessage(req: Request, res: Response) {
         .eq('wa_id', waIdToCheck)
         .single()
       if (unsyncedError && unsyncedError.code !== 'PGRST116') {
-        console.error('Error buscando en Unsyncedcontact:', unsyncedError);
+        console.error('Error buscando en Unsyncedcontact:', unsyncedError)
       }
       if (!unsynced) {
         res.status(HttpStatusCode.BadRequest).json({
@@ -197,7 +196,7 @@ export async function syncAllHistoriesBatch(
 }
 
 // --- CONTROL DE DUPLICADOS EN MEMORIA ---
-const respondedMessages = new Set<string>();
+const respondedMessages = new Set<string>()
 
 // Función para manejar mensajes entrantes
 export async function handleIncomingMessage(
@@ -208,9 +207,9 @@ export async function handleIncomingMessage(
 ) {
   // --- CONTROL DE DUPLICADOS EN MEMORIA ---
   if (respondedMessages.has(msg.id._serialized)) {
-    return;
+    return
   }
-  respondedMessages.add(msg.id._serialized);
+  respondedMessages.add(msg.id._serialized)
   // Log SIEMPRE que se reciba un mensaje
   // console.log('[WHATSAPP][MSG RECIBIDO]', {
   //   from: msg.from,
@@ -353,9 +352,9 @@ export async function handleIncomingMessage(
         .select('agentehabilitado')
         .eq('numberid', numberId)
         .eq('wa_id', waIdToCheck)
-        .single();
+        .single()
       if (unsyncedError) {
-        console.error('Error buscando en Unsyncedcontact:', unsyncedError);
+        console.error('Error buscando en Unsyncedcontact:', unsyncedError)
       }
       // Si no existe, lo inserta automáticamente
       if (!unsyncedContact || unsyncedError) {
@@ -557,16 +556,6 @@ export async function handleIncomingMessage(
       to: chat.id._serialized,
       lastMessageTimestamp
     })
-
-    let user = null
-    if (number && number.userId) {
-      const { data: userData } = await supabase
-        .from('User')
-        .select('*')
-        .eq('id', number.userId)
-        .single()
-      user = userData
-    }
     const shouldRespond =
       (!isGroup && number.aiEnabled) ||
       (isGroup && number.aiEnabled && number.responseGroups) ||
