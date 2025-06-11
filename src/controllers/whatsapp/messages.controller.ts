@@ -54,8 +54,8 @@ export async function sendMessage(req: Request, res: Response) {
         .eq('numberid', numberIdNum)
         .eq('wa_id', waIdToCheck)
         .single()
-      if (unsyncedError) {
-        return
+      if (unsyncedError && unsyncedError.code !== 'PGRST116') {
+        console.error('Error buscando en Unsyncedcontact:', unsyncedError);
       }
       if (!unsynced) {
         res.status(HttpStatusCode.BadRequest).json({
@@ -74,7 +74,68 @@ export async function sendMessage(req: Request, res: Response) {
       })
       return
     }
+    await client.sendSeen(to)
     await client.sendMessage(to, content)
+    const { data: number } = await supabase
+      .from('WhatsAppNumber')
+      .select('userId')
+      .eq('id', numberId)
+      .single()
+    const { data: user } = await supabase
+      .from('User')
+      .select('id, subscription')
+      .eq('id', number?.userId)
+      .single()
+    const { data: plan, error: planError } = await supabase
+      .from('PlanLimit')
+      .select('monthly_message_limit')
+      .eq('plan_name', user?.subscription)
+      .single()
+    if (planError || !plan) {
+      console.error('Error buscando en PlanLimit:', planError)
+      return
+    }
+    const { monthly_message_limit } = plan
+
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + 1
+
+    const { data: usage, error } = await supabase
+      .from('UserMessageUsage')
+      .select('*')
+      .eq('userid', user?.id)
+      .eq('year', year)
+      .eq('month', month)
+      .single()
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('Error buscando en UserMessageUsage:', error)
+    }
+    if (!usage) {
+      const { error: insertError } = await supabase
+        .from('UserMessageUsage')
+        .insert({
+          userid: user?.id,
+          year,
+          month,
+          usedmessages: 1
+        })
+      if (insertError) throw new Error('No se pudo registrar el primer mensaje')
+    } else {
+      if (usage.usedmessages >= monthly_message_limit) {
+        return { success: false, message: 'Límite mensual alcanzado' }
+      }
+      const { error: updateError } = await supabase
+        .from('UserMessageUsage')
+        .update({
+          usedmessages: usage.usedmessages + 1,
+          updatedAt: new Date().toISOString()
+        })
+        .eq('id', usage.id)
+      if (updateError) throw new Error('No se pudo actualizar el contador')
+    }
+
     res.status(HttpStatusCode.Ok).json({ message: 'Mensaje enviado' })
   } catch (error) {
     res.status(HttpStatusCode.InternalServerError).json({
@@ -107,7 +168,7 @@ export async function syncAllHistoriesBatch(
             role: m.fromMe ? 'assistant' : 'user',
             content: m.body,
             timestamp: m.timestamp * 1000,
-            to: chat.id,
+            to: chat.id._serialized,
             fromMe: m.fromMe
           }))
           const lastMessage = messages[messages.length - 1]
@@ -135,6 +196,9 @@ export async function syncAllHistoriesBatch(
   }
 }
 
+// --- CONTROL DE DUPLICADOS EN MEMORIA ---
+const respondedMessages = new Set<string>();
+
 // Función para manejar mensajes entrantes
 export async function handleIncomingMessage(
   msg: Message,
@@ -142,9 +206,52 @@ export async function handleIncomingMessage(
   numberId: string | number,
   io: Server
 ) {
+  // --- CONTROL DE DUPLICADOS EN MEMORIA ---
+  if (respondedMessages.has(msg.id._serialized)) {
+    return;
+  }
+  respondedMessages.add(msg.id._serialized);
+  // Log SIEMPRE que se reciba un mensaje
+  // console.log('[WHATSAPP][MSG RECIBIDO]', {
+  //   from: msg.from,
+  //   numberId,
+  //   chatName: chat.name || chat.id._serialized,
+  //   message: msg.body
+  // });
   const idToCheck = chat.id._serialized
   const isGroup = chat.id.server === 'g.us'
+  if (msg.isStatus) {
+    return
+  }
+  if (isGroup) {
+    const { data: number, error: numberError } = await supabase
+      .from('WhatsAppNumber')
+      .select('userId')
+      .eq('id', numberId)
+      .single()
 
+    if (numberError || !number) {
+      console.error('Error getting WhatsAppNumber:', numberError)
+      return
+    }
+
+    const { data: user, error: userError } = await supabase
+      .from('User')
+      .select('subscription')
+      .eq('id', number.userId)
+      .single()
+
+    if (userError || !user) {
+      console.error('Error getting user:', userError)
+      return
+    }
+
+    // Only allow group messages for PRO or INDUSTRIAL plans
+    if (user.subscription !== 'PRO' && user.subscription !== 'INDUSTRIAL') {
+      console.log('Group messages only allowed for PRO or INDUSTRIAL plans')
+      return
+    }
+  }
   // Busca en la base de datos si está sincronizado y habilitado
   const { data: syncDb, error: syncDbError } = await supabase
     .from('SyncedContactOrGroup')
@@ -156,8 +263,8 @@ export async function handleIncomingMessage(
 
   // Solo hago return si el error es diferente a PGRST116 (no hay filas)
   if (syncDbError && syncDbError.code !== 'PGRST116') {
-    console.error('Error buscando en SyncedContactOrGroup:', syncDbError);
-    return;
+    console.error('Error buscando en SyncedContactOrGroup:', syncDbError)
+    return
   }
   // Obtener el número completo
   let phoneNumberRaw = msg.to.split('@')[0]
@@ -173,9 +280,67 @@ export async function handleIncomingMessage(
       .single()
 
     if (!number || numberError) {
-      console.error('Error buscando en WhatsAppNumber:', numberError);
+      console.error('Error buscando en WhatsAppNumber:', numberError)
       return
     }
+
+    const { data: user, error: userError } = await supabase
+      .from('User')
+      .select('id, subscription')
+      .eq('id', number.userId)
+      .single()
+    if (userError || !user) {
+      console.error('Error buscando en User:', userError)
+      return
+    }
+    const { data: plan, error: planError } = await supabase
+      .from('PlanLimit')
+      .select('monthly_message_limit')
+      .eq('plan_name', user.subscription)
+      .single()
+    if (planError || !plan) {
+      console.error('Error buscando en PlanLimit:', planError)
+      return
+    }
+    const { monthly_message_limit } = plan
+
+    const now = new Date()
+    const year = now.getFullYear()
+    const month = now.getMonth() + 1
+
+    const { data: usage, error } = await supabase
+      .from('UserMessageUsage')
+      .select('*')
+      .eq('userid', user.id)
+      .eq('year', year)
+      .eq('month', month)
+      .single()
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('Error buscando en UserMessageUsage:', error)
+    }
+    if (!usage) {
+      const { error: insertError } = await supabase
+        .from('UserMessageUsage')
+        .insert({
+          userId: user.id,
+          year,
+          month,
+          usedmessages: 1
+        })
+      if (insertError) throw new Error('No se pudo registrar el primer mensaje')
+    }
+    if (usage.usedmessages >= monthly_message_limit) {
+      return { success: false, message: 'Límite mensual alcanzado' }
+    }
+    const { error: updateError } = await supabase
+      .from('UserMessageUsage')
+      .update({
+        usedmessages: usage.usedmessages + 1,
+        updatedAt: new Date().toISOString()
+      })
+      .eq('id', usage.id)
+    if (updateError) throw new Error('No se pudo actualizar el contador')
 
     const waIdToCheck = (msg.from || '').trim().toLowerCase()
     //console.log('Datos para inserción:', { waIdToCheck, numberId, msgFrom: msg.from, msgBody: msg.body });
@@ -195,7 +360,7 @@ export async function handleIncomingMessage(
       // Si no existe, lo inserta automáticamente
       if (!unsyncedContact || unsyncedError) {
         //console.log('Insertando nuevo no sincronizado:', waIdToCheck, numberId);
-        const numberFromWaId = waIdToCheck.split('@')[0];
+        const numberFromWaId = waIdToCheck.split('@')[0]
         const contactData = {
           numberid: numberId,
           wa_id: waIdToCheck,
@@ -204,21 +369,24 @@ export async function handleIncomingMessage(
           agentehabilitado: true,
           lastmessagetimestamp: Date.now(),
           lastmessagepreview: msg.body || ''
-        };
+        }
         const { error: upsertError } = await supabase
           .from('Unsyncedcontact')
           .upsert([contactData], {
             onConflict: 'numberid,wa_id',
             ignoreDuplicates: false
-          });
+          })
         if (upsertError) {
-          console.error('Error al guardar contacto no sincronizado:', upsertError);
-          return;
+          console.error(
+            'Error al guardar contacto no sincronizado:',
+            upsertError
+          )
+          return
         }
         if (io && typeof io.to === 'function') {
           io.to(numberId.toString()).emit('unsynced-contacts-updated', {
             numberid: numberId
-          });
+          })
         }
       }
       // Consultar el contacto actualizado
@@ -227,11 +395,14 @@ export async function handleIncomingMessage(
         .select('id, agentehabilitado')
         .eq('numberid', numberId)
         .eq('wa_id', waIdToCheck)
-        .single();
+        .single()
 
       if (queryError) {
-        console.error('Error al consultar contacto no sincronizado:', queryError);
-        return;
+        console.error(
+          'Error al consultar contacto no sincronizado:',
+          queryError
+        )
+        return
       }
 
       // Si está habilitado y la IA está activada para desconocidos, responder SOLO si NO es grupo
@@ -248,9 +419,9 @@ export async function handleIncomingMessage(
           io,
           number,
           false
-        );
+        )
       }
-      return;
+      return
     }
     // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
     if (!syncDb) {
@@ -404,7 +575,7 @@ export async function handleIncomingMessage(
       return
     }
     if (shouldRespond) {
-      const [aiResponse, tokens] = await getAIResponse(
+      const [aiResponse] = await getAIResponse(
         number.aiPrompt,
         msg.body,
         number.aiModel,
@@ -518,18 +689,16 @@ ${ultimosMensajes}
         }
       }
       if (finalResponse) {
-        setTimeout(async () => {
-          chat.sendStateTyping()
-          const messageLength = (finalResponse as string).length
-          const baseDelay = 2000
-          const additionalDelay = Math.min(2000, messageLength * 50)
-          const totalDelay = baseDelay + additionalDelay
+        chat.sendStateTyping()
+        const messageLength = (finalResponse as string).length
+        const baseDelay = 2000
+        const additionalDelay = Math.min(2000, messageLength * 50)
+        const totalDelay = baseDelay + additionalDelay
 
-          setTimeout(async () => {
-            chat.clearState()
-            await msg.reply(finalResponse as string)
-          }, totalDelay)
-        }, 2500)
+        setTimeout(async () => {
+          chat.clearState()
+          await msg.reply(finalResponse as string)
+        }, totalDelay)
 
         chatHistory.push({
           role: 'assistant',
@@ -538,10 +707,7 @@ ${ultimosMensajes}
           to: chat.id,
           fromMe: false
         })
-        // Registrar el uso de créditos
-        const creditsUsed = tokens !== undefined ? +tokens : 0
-        await registerCreditUsage(user.id, creditsUsed)
-        io.to(numberId.toString()).emit('creditsUpdated', { creditsUsed })
+
         // Espera un pequeño delay para que WhatsApp sincronice el mensaje
         await new Promise((res) => setTimeout(res, 500))
         // Vuelve a obtener los últimos 30 mensajes
