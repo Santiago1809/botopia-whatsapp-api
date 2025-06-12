@@ -402,6 +402,12 @@ setInterval(() => {
 // Control for limit reached messages (one per day per user)
 const limitMessagesSent = new Map<number, string>() // userId -> date
 
+// Control de último mensaje respondido a usuarios no sincronizados
+const lastUnsyncedReplies = new Map<string, string>() // wa_id -> last reply
+
+// Control de última respuesta ENVIADA por la IA a usuarios no sincronizados
+const lastUnsyncedAIResponse = new Map<string, string>() // wa_id -> last AI response
+
 // Función para manejar mensajes entrantes
 export async function handleIncomingMessage(
   msg: Message,
@@ -515,84 +521,6 @@ export async function handleIncomingMessage(
 
     // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
     if (!syncDb) {
-      // Buscar en Unsyncedcontact
-      const { data: unsyncedContact, error: unsyncedError } = await supabase
-        .from('Unsyncedcontact')
-        .select('agentehabilitado')
-        .eq('numberid', numberId)
-        .eq('wa_id', waIdToCheck)
-        .single()
-      if (unsyncedError) {
-        console.error('Error buscando en Unsyncedcontact:', unsyncedError)
-      }
-      // Si no existe, lo inserta automáticamente
-      if (!unsyncedContact || unsyncedError) {
-        //console.log('Insertando nuevo no sincronizado:', waIdToCheck, numberId);
-        const numberFromWaId = waIdToCheck.split('@')[0]
-        const contactData = {
-          numberid: numberId,
-          wa_id: waIdToCheck,
-          number: numberFromWaId,
-          name: numberFromWaId, // Usar el número como nombre por defecto
-          agentehabilitado: true,
-          lastmessagetimestamp: Date.now(),
-          lastmessagepreview: msg.body || ''
-        }
-        const { error: upsertError } = await supabase
-          .from('Unsyncedcontact')
-          .upsert([contactData], {
-            onConflict: 'numberid,wa_id',
-            ignoreDuplicates: false
-          })
-        if (upsertError) {
-          console.error(
-            'Error al guardar contacto no sincronizado:',
-            upsertError
-          )
-          return
-        }
-        if (io && typeof io.to === 'function') {
-          io.to(numberId.toString()).emit('unsynced-contacts-updated', {
-            numberid: numberId
-          })
-        }
-      }
-      // Consultar el contacto actualizado
-      const { data: updatedContact, error: queryError } = await supabase
-        .from('Unsyncedcontact')
-        .select('id, agentehabilitado')
-        .eq('numberid', numberId)
-        .eq('wa_id', waIdToCheck)
-        .single()
-
-      if (queryError) {
-        console.error(
-          'Error al consultar contacto no sincronizado:',
-          queryError
-        )
-        return
-      }
-
-      // Si está habilitado y la IA está activada para desconocidos, responder SOLO si NO es grupo
-      if (
-        !isGroup &&
-        number.aiUnknownEnabled === true &&
-        updatedContact &&
-        updatedContact.agentehabilitado === true
-      ) {
-        return handleIncomingMessageSynced(
-          msg,
-          chat,
-          numberId,
-          io,
-          number,
-          false
-        )
-      }
-      return
-    }
-    // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
-    if (!syncDb) {
       try {
         // Extraer el número del wa_id (sin el @c.us)
         const numberFromWaId = waIdToCheck.split('@')[0]
@@ -654,14 +582,33 @@ export async function handleIncomingMessage(
           updatedContact &&
           updatedContact.agentehabilitado === true
         ) {
-          return handleIncomingMessageSynced(
-            msg,
-            chat,
-            numberId,
-            io,
-            number,
-            false
-          )
+          // Lógica para evitar dos respuestas IA iguales seguidas
+          const aiResponse = await getAIResponse(
+            number.aiPrompt,
+            msg.body,
+            number.aiModel,
+            [] // Puedes pasar el historial si lo necesitas
+          );
+          if (!aiResponse[0] || typeof aiResponse[0] !== 'string') {
+            return;
+          }
+          const lastReply = lastUnsyncedReplies.get(waIdToCheck);
+          const lastAIResponse = lastUnsyncedAIResponse.get(waIdToCheck);
+          // Lógica: solo bloquear si el mensaje recibido es igual al anterior Y la respuesta IA también es igual a la anterior
+          if (lastReply && lastReply === msg.body && lastAIResponse && aiResponse[0] === lastAIResponse) {
+            // Es el mismo mensaje recibido y la misma respuesta IA, no respondas
+            return;
+          }
+          // Si vas a responder, guarda el mensaje recibido y la respuesta IA
+          lastUnsyncedReplies.set(waIdToCheck, msg.body);
+          lastUnsyncedAIResponse.set(waIdToCheck, aiResponse[0]);
+          // Mostrar 'escribiendo...' antes de responder
+          await chat.sendStateTyping();
+          await new Promise(res => setTimeout(res, 1200)); // Simula que está escribiendo ~1.2s
+          await chat.clearState();
+          // Responde manualmente aquí (ya que no llamamos a handleIncomingMessageSynced para evitar doble IA)
+          await msg.reply(aiResponse[0]);
+          return;
         }
       } catch (error) {
         console.error('Error en manejo de contacto no sincronizado:', error)
