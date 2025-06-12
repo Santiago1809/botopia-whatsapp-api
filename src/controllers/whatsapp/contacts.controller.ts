@@ -62,10 +62,8 @@ export async function syncContactsToDB(req: Request, res: Response) {
     return
   }
 
-  // Solo borra si clearAll está presente y es true
   if (clearAll) {
-    await supabase.from('SyncedContactOrGroup').delete().eq('numberId', numberId)
-    await supabase.from('Unsyncedcontact').delete().eq('numberid', numberId)
+    await supabase.rpc('delete_contacts_by_numberid', { p_numberid: numberId })
   }
 
   // Limpia los objetos para que solo tengan los campos válidos
@@ -103,7 +101,7 @@ export async function syncContactsToDB(req: Request, res: Response) {
         .from('Unsyncedcontact')
         .delete()
         .eq('numberid', item.numberId)
-        .eq('wa_id', item.wa_id);
+        .eq('wa_id', item.wa_id)
     }
   }
 
@@ -177,28 +175,30 @@ export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
   }
   try {
     // Verifica si todos los valores son iguales (todo true o todo false)
-    const allSame = updates.every(u => u.agenteHabilitado === updates[0].agenteHabilitado);
-    const ids = updates.map(u => u.id);
-    const value = updates[0].agenteHabilitado;
+    const allSame = updates.every(
+      (u) => u.agenteHabilitado === updates[0].agenteHabilitado
+    )
+    const ids = updates.map((u) => u.id)
+    const value = updates[0].agenteHabilitado
     if (allSame) {
       // Update en lotes de 100
-      const batchSize = 100;
+      const batchSize = 100
       for (let i = 0; i < ids.length; i += batchSize) {
-        const batch = ids.slice(i, i + batchSize);
+        const batch = ids.slice(i, i + batchSize)
         const { error } = await supabase
           .from('SyncedContactOrGroup')
           .update({ agenteHabilitado: value })
-          .in('id', batch);
+          .in('id', batch)
         if (error) {
-          res.status(500).json({ message: 'Error actualizando', error });
-          return;
+          res.status(500).json({ message: 'Error actualizando', error })
+          return
         }
       }
-      res.status(200).json({ success: true });
-      return;
+      res.status(200).json({ success: true })
+      return
     } else {
       // Mezcla de true/false: actualiza uno por uno
-      const results = [];
+      const results = []
       for (const upd of updates) {
         if (!upd.id) {
           results.push({ id: upd.id, success: false, error: 'Missing id' })
@@ -221,4 +221,4 @@ export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
     console.error('Bulk update error:', err)
     res.status(500).json({ error: 'Error actualizando agentes' })
   }
-} 
+}
