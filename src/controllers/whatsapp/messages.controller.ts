@@ -687,7 +687,7 @@ export async function handleIncomingMessage(
         updatedContact &&
         updatedContact.agentehabilitado === true
       ) {
-        return handleIncomingMessageSynced(
+        await handleIncomingMessageSynced(
           msg,
           chat,
           numberId,
@@ -695,13 +695,14 @@ export async function handleIncomingMessage(
           numberData,
           false
         )
+        return // <-- AGREGADO: evita doble respuesta
       }
     } else if (
       !isGroup &&
       numberData.aiUnknownEnabled === true &&
       unsyncedContact.agentehabilitado === true
     ) {
-      return handleIncomingMessageSynced(
+      await handleIncomingMessageSynced(
         msg,
         chat,
         numberId,
