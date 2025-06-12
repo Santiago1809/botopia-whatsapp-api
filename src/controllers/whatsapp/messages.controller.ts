@@ -710,6 +710,7 @@ export async function handleIncomingMessage(
         numberData,
         false
       )
+      return // <-- AGREGADO: evita doble respuesta en else if
     }
     return
   }
