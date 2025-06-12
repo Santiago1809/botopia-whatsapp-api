@@ -32,17 +32,6 @@ export interface Payment {
   status: string
   userId: number | null
 }
-export interface UserCredits {
-  createdAt: string
-  creditsLimit: number
-  id: number
-  month: number
-  totalCredits: number
-  updatedAt: string
-  usedCredits: number
-  userId: number
-  year: number
-}
 export interface WhatsAppNumber {
   aiEnabled: boolean
   aiModel: string

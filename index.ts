@@ -10,7 +10,7 @@ import { setupSocketEvents } from './src/controllers/whatsapp.controller'
 import { telemetryMiddleware } from './src/middleware/telemetry.middleware'
 import adminRoutes from './src/routes/admin.route'
 import authRoutes from './src/routes/auth.route'
-import creditsRoutes from './src/routes/credits.route'
+
 import paymentsRouter from './src/routes/payments.route'
 import subscriptionsRouter from './src/routes/subscriptions.route'
 import statsRoutes from './src/routes/stats.route'
@@ -77,7 +77,7 @@ app.use('/api/user', userRoutes)
 app.use('/api/whatsapp', whatsAppRoutes)
 app.use('/api/payments', paymentsRouter)
 app.use('/api/subscriptions', subscriptionsRouter)
-app.use('/api/credits', creditsRoutes)
+
 app.use('/api/unsyncedcontacts', unsyncedContactRoutes)
 
 const port = process.env.PORT || 3001

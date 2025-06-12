@@ -130,35 +130,6 @@ export async function activateUser(req: Request, res: Response) {
     })
   }
 }
-export async function updateUserTokens(req: Request, res: Response) {
-  try {
-    const { id } = req.params
-    const { tokens } = req.body as { tokens: number }
-    const { data: user } = await supabase
-      .from('User')
-      .select('*')
-      .eq('id', id)
-      .single()
-    if (!user) {
-      res.status(HttpStatusCode.NotFound).json({
-        message: 'User not found'
-      })
-      return
-    }
-    await supabase
-      .from('UserCredits')
-      .update({ creditsLimit: tokens })
-      .eq('id', id)
-    res
-      .status(HttpStatusCode.Ok)
-      .json({ message: 'Tokens de usuario actualizados' })
-  } catch (error) {
-    console.error('Error updating user tokens:', error)
-    res.status(HttpStatusCode.InternalServerError).json({
-      message: `Error updating user tokens ${(error as Error).message}`
-    })
-  }
-}
 export async function getAllUsers(req: Request, res: Response) {
   try {
     const { data: users } = await supabase
