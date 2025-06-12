@@ -122,62 +122,6 @@ async function incrementMessageUsage(userId: number): Promise<{
     return { success: false, message: 'Error interno del servidor' }
   }
 }
-
-// Helper function to get current usage statistics for a user
-async function getUserMessageUsage(
-  userId: number
-): Promise<{ currentUsage: number; limit: number; plan: string } | null> {
-  try {
-    const { data: user, error: userError } = await supabase
-      .from('User')
-      .select('id, subscription')
-      .eq('id', userId)
-      .single()
-
-    if (userError || !user) {
-      console.error('Error buscando en User:', userError)
-      return null
-    }
-
-    const { data: plan, error: planError } = await supabase
-      .from('PlanLimit')
-      .select('monthly_message_limit')
-      .eq('plan_name', user.subscription)
-      .single()
-
-    if (planError || !plan) {
-      console.error('Error buscando en PlanLimit:', planError)
-      return null
-    }
-
-    const now = new Date()
-    const year = now.getFullYear()
-    const month = now.getMonth() + 1
-
-    const { data: usage, error } = await supabase
-      .from('UserMessageUsage')
-      .select('*')
-      .eq('userid', userId)
-      .eq('year', year)
-      .eq('month', month)
-      .single()
-
-    if (error && error.code !== 'PGRST116') {
-      console.error('Error buscando en UserMessageUsage:', error)
-      return null
-    }
-
-    return {
-      currentUsage: usage ? usage.usedmessages : 0,
-      limit: plan.monthly_message_limit,
-      plan: user.subscription
-    }
-  } catch (error) {
-    console.error('Error en getUserMessageUsage:', error)
-    return null
-  }
-}
-
 // Helper function to send upgrade email when limit is reached
 async function sendLimitReachedMessage(
   msg: Message,
@@ -185,7 +129,6 @@ async function sendLimitReachedMessage(
   number: { userId: number }
 ) {
   try {
-    // Check if we already sent a limit email today for this user
     const today = new Date().toDateString()
     const lastSent = limitMessagesSent.get(number.userId)
 
@@ -193,10 +136,10 @@ async function sendLimitReachedMessage(
       console.log(
         `Email de límite ya enviado hoy para usuario ${number.userId}`
       )
-      return // Don't send again today
+      return
     }
 
-    // Get user information including email
+    // Obtener user: email, username, subscription
     const { data: user, error: userError } = await supabase
       .from('User')
       .select('id, username, email, subscription')
@@ -204,7 +147,7 @@ async function sendLimitReachedMessage(
       .single()
 
     if (userError || !user) {
-      console.error('Error getting user for limit email:', userError)
+      console.error('Error obteniendo datos del usuario:', userError)
       return
     }
 
@@ -213,33 +156,19 @@ async function sendLimitReachedMessage(
       return
     }
 
-    // Get current usage statistics
-    const { data: plan, error: planError } = await supabase
-      .from('PlanLimit')
-      .select('monthly_message_limit')
-      .eq('plan_name', user.subscription)
-      .single()
+    // Obtener usage y limit en una sola llamada
+    const { data: usageData, error: usageError } = await supabase.rpc(
+      'get_user_message_usage',
+      { p_user_id: number.userId }
+    )
 
-    if (planError || !plan) {
-      console.error('Error obteniendo límites del plan:', planError)
+    if (usageError || !usageData || usageData.length === 0) {
+      console.error('Error obteniendo uso del usuario:', usageError)
       return
     }
-    const now = new Date()
-    const year = now.getFullYear()
-    const month = now.getMonth() + 1
 
-    const { data: usage } = await supabase
-      .from('UserMessageUsage')
-      .select('usedmessages')
-      .eq('userid', user.id)
-      .eq('year', year)
-      .eq('month', month)
-      .single()
+    const { current_usage, message_limit } = usageData[0]
 
-    const currentUsage = usage ? usage.usedmessages : 0
-    const limit = plan.monthly_message_limit
-
-    // Prepare email subject
     let subject = ''
     switch (user.subscription) {
       case 'FREE':
@@ -258,22 +187,19 @@ async function sendLimitReachedMessage(
         subject = '📋 Límite mensual de mensajes alcanzado'
     }
 
-    // Generate email content
     const emailContent = limitReachedEmailTemplate(
       user.subscription,
-      currentUsage,
-      limit
+      current_usage,
+      message_limit
     )
 
-    // Send the email
     await transporter.sendMail({
       from: process.env.SMTP_USER,
       to: user.email,
-      subject: subject,
+      subject,
       html: emailContent
     })
 
-    // Mark that we sent the email today
     limitMessagesSent.set(number.userId, today)
 
     console.log(
@@ -362,58 +288,25 @@ export async function sendMessage(req: Request, res: Response) {
     }
 
     // Check if user has reached message limit
-    const { data: user, error: userError } = await supabase
-      .from('User')
-      .select('id, subscription')
-      .eq('id', number.userId)
-      .single()
+    const { data: usageData, error: usageError } = await supabase.rpc(
+      'get_user_message_usage',
+      { p_user_id: number.userId }
+    )
 
-    if (userError || !user) {
+    if (usageError || !usageData || usageData.length === 0) {
       res.status(HttpStatusCode.InternalServerError).json({
-        message: 'Error obteniendo información del usuario'
+        message: 'Error consultando uso de mensajes del usuario'
       })
       return
     }
 
-    const { data: plan, error: planError } = await supabase
-      .from('PlanLimit')
-      .select('monthly_message_limit')
-      .eq('plan_name', user.subscription)
-      .single()
+    const { current_usage: currentUsage, message_limit: limit } = usageData[0]
 
-    if (planError || !plan) {
-      res.status(HttpStatusCode.InternalServerError).json({
-        message: 'Error obteniendo límites del plan'
-      })
-      return
-    }
-
-    const { monthly_message_limit } = plan
-    const now = new Date()
-    const year = now.getFullYear()
-    const month = now.getMonth() + 1
-
-    const { data: usage, error } = await supabase
-      .from('UserMessageUsage')
-      .select('*')
-      .eq('userid', user.id)
-      .eq('year', year)
-      .eq('month', month)
-      .single()
-
-    if (error && error.code !== 'PGRST116') {
-      res.status(HttpStatusCode.InternalServerError).json({
-        message: 'Error consultando uso de mensajes'
-      })
-      return
-    }
-
-    const currentUsage = usage ? usage.usedmessages : 0
-    if (currentUsage >= monthly_message_limit) {
+    if (currentUsage >= limit) {
       res.status(HttpStatusCode.BadRequest).json({
         message: 'Límite mensual de mensajes alcanzado',
         currentUsage,
-        limit: monthly_message_limit
+        limit
       })
       return
     }
@@ -499,7 +392,8 @@ const respondedMessages = new Map<string, number>() // msg.id._serialized -> tim
 setInterval(() => {
   const now = Date.now()
   for (const [id, timestamp] of respondedMessages.entries()) {
-    if (now - timestamp > 5 * 60 * 1000) { // 5 minutos
+    if (now - timestamp > 5 * 60 * 1000) {
+      // 5 minutos
       respondedMessages.delete(id)
     }
   }
@@ -676,7 +570,10 @@ export async function handleIncomingMessage(
         .single()
 
       if (queryError) {
-        console.error('Error al consultar contacto no sincronizado:', queryError)
+        console.error(
+          'Error al consultar contacto no sincronizado:',
+          queryError
+        )
         return
       }
 
@@ -722,7 +619,14 @@ export async function handleIncomingMessage(
     numberData.responseGroups === true &&
     syncDb.agenteHabilitado === true
   ) {
-    return handleIncomingMessageSynced(msg, chat, numberId, io, numberData, true)
+    return handleIncomingMessageSynced(
+      msg,
+      chat,
+      numberId,
+      io,
+      numberData,
+      true
+    )
   }
 
   // --- CONTACTO SINCRONIZADO ---
@@ -731,7 +635,14 @@ export async function handleIncomingMessage(
     numberData.aiEnabled === true &&
     syncDb.agenteHabilitado === true
   ) {
-    return handleIncomingMessageSynced(msg, chat, numberId, io, numberData, true)
+    return handleIncomingMessageSynced(
+      msg,
+      chat,
+      numberId,
+      io,
+      numberData,
+      true
+    )
   }
 
   return
@@ -901,9 +812,7 @@ async function handleIncomingMessageSynced(
 
         // Send upgrade email when limit is reached
         if (
-          usageResult.message?.includes(
-            'Límite mensual de mensajes alcanzado'
-          )
+          usageResult.message?.includes('Límite mensual de mensajes alcanzado')
         ) {
           await sendLimitReachedMessage(msg, chat, number)
         }
@@ -971,7 +880,7 @@ export async function getMessageUsage(req: CustomRequest, res: Response) {
       return
     }
 
-    // Get user info from authenticated user
+    // Obtener información del usuario autenticado
     const { data: user, error: userError } = await supabase
       .from('User')
       .select('id, subscription')
@@ -985,15 +894,21 @@ export async function getMessageUsage(req: CustomRequest, res: Response) {
       return
     }
 
-    const usageStats = await getUserMessageUsage(user.id)
-    if (!usageStats) {
+    // Llamar función RPC directamente desde aquí
+    const { data: usageStats, error: usageError } = await supabase.rpc(
+      'get_user_message_usage',
+      { p_user_id: user.id }
+    )
+
+    if (usageError || !usageStats) {
+      console.error('Error obteniendo estadísticas de uso:', usageError)
       res.status(HttpStatusCode.InternalServerError).json({
         message: 'Error obteniendo estadísticas de uso'
       })
       return
     }
 
-    // Get total WhatsApp numbers for this user
+    // Obtener números de WhatsApp
     const { data: numbers, error: numbersError } = await supabase
       .from('WhatsAppNumber')
       .select('id, number, name')
@@ -1008,9 +923,10 @@ export async function getMessageUsage(req: CustomRequest, res: Response) {
       limit: usageStats.limit,
       plan: usageStats.plan,
       remaining: usageStats.limit - usageStats.currentUsage,
-      percentage: Math.round(
-        (usageStats.currentUsage / usageStats.limit) * 100
-      ),
+      percentage:
+        usageStats.limit > 0
+          ? Math.round((usageStats.currentUsage / usageStats.limit) * 100)
+          : 0,
       totalNumbers: numbers?.length || 0,
       numbers: numbers || []
     })

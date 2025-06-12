@@ -40,7 +40,26 @@ export async function startWhatsApp(req: Request, res: Response) {
       authStrategy: new LocalAuth({ clientId: numberId.toString() }),
       puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--disable-gpu',
+          '--disable-background-timer-throttling',
+          '--disable-backgrounding-occluded-windows',
+          '--disable-renderer-backgrounding',
+          '--disable-features=TranslateUI',
+          '--disable-default-apps',
+          '--disable-extensions',
+          '--no-first-run',
+          '--disable-plugins',
+          '--disable-sync',
+          '--disable-background-networking',
+          '--disable-software-rasterizer',
+          '--memory-pressure-off',
+          '--max_old_space_size=512'
+        ]
       }
     })
     if (client) {
@@ -205,7 +224,26 @@ export function setupSocketEvents(io: Server) {
               authStrategy: new LocalAuth({ clientId: numberId.toString() }),
               puppeteer: {
                 headless: true,
-                args: ['--no-sandbox', '--disable-setuid-sandbox']
+                args: [
+                  '--no-sandbox',
+                  '--disable-setuid-sandbox',
+                  '--disable-dev-shm-usage',
+                  '--disable-accelerated-2d-canvas',
+                  '--disable-gpu',
+                  '--disable-background-timer-throttling',
+                  '--disable-backgrounding-occluded-windows',
+                  '--disable-renderer-backgrounding',
+                  '--disable-features=TranslateUI',
+                  '--disable-default-apps',
+                  '--disable-extensions',
+                  '--no-first-run',
+                  '--disable-plugins',
+                  '--disable-sync',
+                  '--disable-background-networking',
+                  '--disable-software-rasterizer',
+                  '--memory-pressure-off',
+                  '--max_old_space_size=512'
+                ]
               }
             })
             if (client) {
@@ -276,4 +314,4 @@ export function setupSocketEvents(io: Server) {
       }
     })
   })
-} 
+}
