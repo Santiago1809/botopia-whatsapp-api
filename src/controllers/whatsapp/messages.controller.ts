@@ -441,11 +441,6 @@ export async function handleIncomingMessage(
   if (!numberError && number) {
     const usageResult = await incrementMessageUsage(number.userId)
     if (!usageResult.success) {
-      console.log(
-        'Mensaje entrante recibido pero límite alcanzado:',
-        usageResult.message
-      )
-
       // Send upgrade email when limit is reached
       if (
         usageResult.message?.includes('Límite mensual de mensajes alcanzado')
@@ -481,7 +476,6 @@ export async function handleIncomingMessage(
 
     // Only allow group messages for PRO or INDUSTRIAL plans
     if (user.subscription !== 'PRO' && user.subscription !== 'INDUSTRIAL') {
-      console.log('Group messages only allowed for PRO or INDUSTRIAL plans')
       return
     }
   }
@@ -623,14 +617,7 @@ export async function handleIncomingMessage(
       number.responseGroups === true &&
       syncDb.agenteHabilitado === true
     ) {
-      return handleIncomingMessageSynced(
-      msg,
-      chat,
-      numberId,
-      io,
-      number,
-      true
-    )
+      return handleIncomingMessageSynced(msg, chat, numberId, io, number, true)
     }
 
     // --- CONTACTO SINCRONIZADO ---
@@ -639,14 +626,7 @@ export async function handleIncomingMessage(
       number.aiEnabled === true &&
       syncDb.agenteHabilitado === true
     ) {
-      return handleIncomingMessageSynced(
-      msg,
-      chat,
-      numberId,
-      io,
-      number,
-      true
-    )
+      return handleIncomingMessageSynced(msg, chat, numberId, io, number, true)
     }
 
     // Si no, no responde
@@ -900,21 +880,22 @@ export async function getMessageUsage(req: CustomRequest, res: Response) {
         message: 'Usuario no encontrado'
       })
       return
-    }
-
-    // Llamar función RPC directamente desde aquí
+    } // Llamar función RPC directamente desde aquí
     const { data: usageStats, error: usageError } = await supabase.rpc(
       'get_user_message_usage',
       { p_user_id: user.id }
     )
 
-    if (usageError || !usageStats) {
+    if (usageError || !usageStats || usageStats.length === 0) {
       console.error('Error obteniendo estadísticas de uso:', usageError)
       res.status(HttpStatusCode.InternalServerError).json({
         message: 'Error obteniendo estadísticas de uso'
       })
       return
     }
+
+    // La función RPC devuelve un array, tomamos el primer elemento
+    const stats = usageStats[0]
 
     // Obtener números de WhatsApp
     const { data: numbers, error: numbersError } = await supabase
@@ -927,13 +908,13 @@ export async function getMessageUsage(req: CustomRequest, res: Response) {
     }
 
     res.status(HttpStatusCode.Ok).json({
-      usage: usageStats.currentUsage,
-      limit: usageStats.limit,
-      plan: usageStats.plan,
-      remaining: usageStats.limit - usageStats.currentUsage,
+      usage: stats.current_usage,
+      limit: stats.msg_limit,
+      plan: stats.plan,
+      remaining: stats.msg_limit - stats.current_usage,
       percentage:
-        usageStats.limit > 0
-          ? Math.round((usageStats.currentUsage / usageStats.limit) * 100)
+        stats.msg_limit > 0
+          ? Math.round((stats.current_usage / stats.msg_limit) * 100)
           : 0,
       totalNumbers: numbers?.length || 0,
       numbers: numbers || []
