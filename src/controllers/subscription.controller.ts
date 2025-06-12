@@ -3,14 +3,6 @@ import fetch from 'node-fetch';
 import { supabase } from '../config/db';
 import type { CustomRequest } from '../interfaces/global';
 
-//Preguntas a Santigo si hay una mejor forma de hacer esto
-interface CreateSubscriptionBody {
-    planToken: string;
-    amount: number; // Ahora acepta decimales
-    planName: string;
-    userId: string;
-    email: string;
-}
 
 export const createSubscription = async (req: CustomRequest, res: Response) => {
     try {
@@ -152,7 +144,7 @@ export const handleNotification = async (req: Request, res: Response) => {
 
         try {
             dloData = JSON.parse(responseText);
-        } catch (jsonError) {
+        } catch {
             console.error("❌ Error al parsear JSON de DLO:", responseText);
             res.status(500).json({ success: false, message: "Error al procesar respuesta de DLO" });
             return;
@@ -302,7 +294,7 @@ async function activateUserPlan(userId: string, planName: string) {
     }
 }
 
-async function deactivateUserPlan(userId: string) {
+/* async function deactivateUserPlan(userId: string) {
     const { error } = await supabase
         .from('User')
         .update({
@@ -321,7 +313,7 @@ async function handleExpiredSubscription(userId: string) {
     await deactivateUserPlan(userId);
     // Aquí puedes agregar lógica adicional para manejar suscripciones expiradas
 }
-
+ */
 export const getUserSubscription = async (req: CustomRequest, res: Response) => {
     try {
         if (!req.user?.username) {
@@ -487,8 +479,8 @@ function getPlanFeatures(plan: SubscriptionType | null): Record<string, boolean>
             };
     }
 }
-
+/* 
 // Agregar una función helper para comparar montos
 function areAmountsEqual(amount1: number, amount2: number, tolerance = 0.01): boolean {
     return Math.abs(amount1 - amount2) < tolerance;
-}
+} */

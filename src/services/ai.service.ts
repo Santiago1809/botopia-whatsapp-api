@@ -33,7 +33,7 @@ export async function getAIResponse(
       history: messages,
       config: {
         temperature: 0,
-        systemInstruction: prompt // Aquí va el "prompt" como instrucción del sistema
+        systemInstruction: prompt
       }
     })
 

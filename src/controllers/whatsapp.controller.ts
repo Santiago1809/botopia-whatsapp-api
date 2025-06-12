@@ -13,13 +13,8 @@ export const {
   bulkUpdateAgenteHabilitado
 } = contactsController
 
-export const {
-  sendMessage,
-  syncAllHistoriesBatch
-} = messagesController
+export const { sendMessage, getMessageUsage, syncAllHistoriesBatch } =
+  messagesController
 
-export const {
-  startWhatsApp,
-  stopWhatsApp,
-  setupSocketEvents
-} = sessionController
+export const { startWhatsApp, stopWhatsApp, setupSocketEvents } =
+  sessionController

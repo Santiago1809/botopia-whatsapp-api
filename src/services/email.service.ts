@@ -26,15 +26,6 @@ export const transporter = nodemailer.createTransport({
   }
 })
 
-// Verificar la conexión al iniciar
-transporter.verify(function(error, success) {
-  if (error) {
-    console.error('❌ Error en la configuración del servicio de correo:', error)
-  } else {
-    //console.log('✅ Servicio de correo configurado correctamente')
-  }
-})
-
 // Función auxiliar para enviar correos con mejor manejo de errores
 export const sendEmail = async (options: {
   to: string

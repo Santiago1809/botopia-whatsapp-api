@@ -8,8 +8,7 @@ import {
   editAgent,
   getAgents,
   getAllUsers,
-  setUserTokenLimit,
-  updateUserTokens
+  setUserTokenLimit
 } from '../controllers/admin.controller'
 
 const router = express.Router()
@@ -19,12 +18,6 @@ router.get('/agents', authenticateToken, isAdmin, getAgents)
 router.post('/agents', authenticateToken, isAdmin, addAgent)
 router.patch('/agents/:id', authenticateToken, isAdmin, editAgent)
 router.delete('/agents/:id', authenticateToken, isAdmin, deleteAgent)
-router.patch(
-  '/update-user-tokens/:id',
-  authenticateToken,
-  isAdmin,
-  updateUserTokens
-)
 router.patch(
   '/config-tokens/:id',
   authenticateToken,
