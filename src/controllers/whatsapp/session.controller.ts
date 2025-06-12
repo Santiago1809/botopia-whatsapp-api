@@ -40,7 +40,8 @@ export async function startWhatsApp(req: Request, res: Response) {
       authStrategy: new LocalAuth({ clientId: numberId.toString() }),
       puppeteer: {
         headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+        executablePath: '/usr/bin/google-chrome'
       }
     })
     if (client) {
@@ -205,7 +206,8 @@ export function setupSocketEvents(io: Server) {
               authStrategy: new LocalAuth({ clientId: numberId.toString() }),
               puppeteer: {
                 headless: true,
-                args: ['--no-sandbox', '--disable-setuid-sandbox']
+                args: ['--no-sandbox', '--disable-setuid-sandbox'],
+                executablePath: '/usr/bin/google-chrome'
               }
             })
             if (client) {
