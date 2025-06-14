@@ -1,5 +1,5 @@
 import { HttpStatusCode } from 'axios'
-import * as bcrypt from 'bcrypt'
+import * as bcrypt from 'bcryptjs'
 import type { Request, Response } from 'express'
 import jwt from 'jsonwebtoken'
 import type { Server } from 'socket.io'

@@ -1,5 +1,5 @@
 import { HttpStatusCode } from 'axios'
-import bcrypt from 'bcrypt'
+import bcrypt from 'bcryptjs'
 import type { Request, Response } from 'express'
 import { supabase } from '../config/db'
 import type { AddAgent, CustomRequest } from '../interfaces/global'

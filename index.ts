@@ -17,6 +17,7 @@ import statsRoutes from './src/routes/stats.route'
 import userRoutes from './src/routes/user.route'
 import whatsAppRoutes from './src/routes/whatsapp.route'
 import unsyncedContactRoutes from './src/routes/unsyncedcontact.route'
+import metaRoutes from './src/routes/meta.route'
 
 config()
 
@@ -77,6 +78,7 @@ app.use('/api/user', userRoutes)
 app.use('/api/whatsapp', whatsAppRoutes)
 app.use('/api/payments', paymentsRouter)
 app.use('/api/subscriptions', subscriptionsRouter)
+app.use('/api/meta', metaRoutes)
 
 app.use('/api/unsyncedcontacts', unsyncedContactRoutes)
 
