@@ -47,7 +47,8 @@ const allowedOrigins = [
   'http://localhost:3000',
   'https://botopia-whatsapp.vercel.app',
   'https://app.botopia.online',
-  'https://www.botopia.online'
+  'https://www.botopia.online',
+  'https://botopia-whatsapp-git-featureavataria-santiago1809s-projects.vercel.app'
 ]
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback) {
