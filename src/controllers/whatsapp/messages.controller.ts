@@ -415,6 +415,53 @@ export async function handleIncomingMessage(
   numberId: string | number,
   io: Server
 ) {
+  // Validaciones básicas para evitar errores de serialización
+  try {
+    // Verificar que el mensaje tiene las propiedades básicas
+    if (!msg || !msg.id || !msg.id._serialized) {
+      console.log('Mensaje sin ID válido, omitiendo');
+      return;
+    }
+
+    // Verificar que el chat tiene las propiedades básicas
+    if (!chat || !chat.id || !chat.id._serialized) {
+      console.log('Chat sin ID válido, omitiendo');
+      return;
+    }
+
+    // Verificar que el mensaje tiene contenido o es un tipo válido
+    if (!msg.body && !msg.hasMedia) {
+      console.log('Mensaje sin contenido válido, omitiendo');
+      return;
+    }
+
+    // Validación adicional: asegurarse de que el mensaje no es undefined o está corrupto
+    if (typeof msg.from !== 'string' || typeof msg.to !== 'string') {
+      console.log('Mensaje con propiedades from/to inválidas, omitiendo');
+      return;
+    }
+
+    // Verificar que el mensaje no está corrupto
+    if (!msg.from.includes('@') || !msg.to.includes('@')) {
+      console.log('Mensaje con formato de WhatsApp ID inválido, omitiendo');
+      return;
+    }
+
+    // Verificar que el cliente WhatsApp está disponible
+    const client = clients[numberId];
+    if (!client || !client.info || !client.info.wid) {
+      console.log('Cliente WhatsApp no disponible o no inicializado, omitiendo mensaje');
+      return;
+    }
+
+    // Esperar un poco para asegurar que el mensaje esté completamente cargado
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+  } catch (validationError) {
+    console.error('Error en validación inicial del mensaje:', validationError);
+    return;
+  }
+
   // --- CONTROL DE DUPLICADOS EN MEMORIA ---
   if (respondedMessages.has(msg.id._serialized)) {
     return
@@ -516,6 +563,18 @@ export async function handleIncomingMessage(
     // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
     if (!syncDb) {
       try {
+        // Validar que el mensaje y el chat están correctamente formateados
+        if (!msg || !msg.from || !msg.body) {
+          console.log('Mensaje incompleto recibido, omitiendo:', { from: msg?.from, body: msg?.body });
+          return;
+        }
+
+        // Validar que el chat está disponible
+        if (!chat || !chat.id || !chat.id._serialized) {
+          console.log('Chat no válido, omitiendo:', chat);
+          return;
+        }
+
         // Extraer el número del wa_id (sin el @c.us)
         const numberFromWaId = waIdToCheck.split('@')[0]
 
@@ -596,16 +655,42 @@ export async function handleIncomingMessage(
           // Si vas a responder, guarda el mensaje recibido y la respuesta IA
           lastUnsyncedReplies.set(waIdToCheck, msg.body);
           lastUnsyncedAIResponse.set(waIdToCheck, aiResponse[0]);
-          // Mostrar 'escribiendo...' antes de responder
-          await chat.sendStateTyping();
-          await new Promise(res => setTimeout(res, 1200)); // Simula que está escribiendo ~1.2s
-          await chat.clearState();
-          // Responde manualmente aquí (ya que no llamamos a handleIncomingMessageSynced para evitar doble IA)
-          await msg.reply(aiResponse[0]);
+          
+          // Validar que el chat sigue disponible antes de responder
+          try {
+            // Verificar que el chat está activo y disponible
+            if (!chat || !chat.id || !chat.id._serialized) {
+              console.error('Chat no disponible para responder a contacto no sincronizado');
+              return;
+            }
+
+            // Mostrar 'escribiendo...' antes de responder
+            await chat.sendStateTyping();
+            await new Promise(res => setTimeout(res, 1200)); // Simula que está escribiendo ~1.2s
+            await chat.clearState();
+            
+            // Usar chat.sendMessage() en lugar de msg.reply() para evitar problemas de serialización
+            await chat.sendMessage(aiResponse[0]);
+            console.log('✅ Respuesta enviada a contacto no sincronizado:', waIdToCheck);
+          } catch (replyError) {
+            // Los errores de serialización son normales en WhatsApp Web.js
+            // Solo loguear si NO es un error de serialización
+            if (replyError instanceof Error && 
+                !replyError.message.includes('serialize') &&
+                !replyError.message.includes('getMessageModel') &&
+                !replyError.message.includes('Evaluation failed')) {
+              console.error('Error crítico enviando respuesta a contacto no sincronizado:', replyError.message);
+            }
+            // No hacer nada más - los errores de serialización son normales
+          }
           return;
         }
       } catch (error) {
         console.error('Error en manejo de contacto no sincronizado:', error)
+        // Registrar más detalles del error para debugging
+        if (error instanceof Error) {
+          console.error('Error stack:', error.stack);
+        }
       }
       return
     }
@@ -643,9 +728,25 @@ export async function handleIncomingMessage(
     isSynced: boolean,
     agentId?: number
   ) {
-    const isGroup = chat.id.server === 'g.us'
-    const messages = await chat.fetchMessages({ limit: 30 })
-    messages.sort((a: Message, b: Message) => a.timestamp - b.timestamp)
+    try {
+      // Validaciones de seguridad
+      if (!chat || !chat.id) {
+        console.error('Chat no válido en handleIncomingMessageSynced');
+        return;
+      }
+
+      const isGroup = chat.id.server === 'g.us'
+      
+      // Intentar obtener mensajes con manejo de errores
+      let messages: Message[] = [];
+      try {
+        messages = await chat.fetchMessages({ limit: 30 })
+        messages.sort((a: Message, b: Message) => a.timestamp - b.timestamp)
+      } catch (fetchError) {
+        console.error('Error al obtener mensajes del chat:', fetchError);
+        // Continuar con array vacío en caso de error
+        messages = [];
+      }
     let lastMessageTimestamp: number | null = null
     if (messages && messages.length > 0) {
       const lastMsg = messages[messages.length - 1]
@@ -814,8 +915,31 @@ export async function handleIncomingMessage(
         const totalDelay = baseDelay + additionalDelay
 
         setTimeout(async () => {
-          chat.clearState()
-          await msg.reply(finalResponse as string)
+          try {
+            // Validar que el chat sigue disponible
+            if (!chat || !chat.id || !chat.id._serialized) {
+              console.error('Chat no disponible para enviar respuesta de IA');
+              return;
+            }
+
+            await chat.clearState()
+            
+            // Intentar enviar el mensaje usando chat.sendMessage()
+            await chat.sendMessage(finalResponse as string)
+            
+            console.log('✅ Respuesta de IA enviada a:', chat.id._serialized);
+            
+          } catch (sendError) {
+            // Los errores de serialización son normales en WhatsApp Web.js
+            // Solo loguear si NO es un error de serialización
+            if (sendError instanceof Error && 
+                !sendError.message.includes('serialize') &&
+                !sendError.message.includes('getMessageModel') &&
+                !sendError.message.includes('Evaluation failed')) {
+              console.error('Error crítico enviando respuesta de IA:', sendError.message);
+            }
+            // No hacer nada más - los errores de serialización son normales
+          }
         }, totalDelay)
 
         chatHistory.push({
@@ -828,31 +952,49 @@ export async function handleIncomingMessage(
 
         // Espera un pequeño delay para que WhatsApp sincronice el mensaje
         await new Promise((res) => setTimeout(res, 500))
-        // Vuelve a obtener los últimos 30 mensajes
-        const updatedMessages = await chat.fetchMessages({ limit: 30 })
-        updatedMessages.sort(
-          (a: Message, b: Message) => a.timestamp - b.timestamp
-        )
-        const updatedChatHistory = updatedMessages.map((m: Message) => ({
-          role: m.fromMe ? 'assistant' : 'user',
-          content: m.body,
-          timestamp: m.timestamp * 1000,
-          to: chat.id,
-          fromMe: m.fromMe
-        }))
-        let lastMessageTimestamp: number | null = null
-        if (updatedMessages && updatedMessages.length > 0) {
-          const lastMsg = updatedMessages[updatedMessages.length - 1]
-          if (lastMsg) {
-            lastMessageTimestamp = lastMsg.timestamp * 1000
+        
+        // Vuelve a obtener los últimos 30 mensajes con manejo de errores
+        try {
+          const updatedMessages = await chat.fetchMessages({ limit: 30 })
+          updatedMessages.sort(
+            (a: Message, b: Message) => a.timestamp - b.timestamp
+          )
+          const updatedChatHistory = updatedMessages.map((m: Message) => ({
+            role: m.fromMe ? 'assistant' : 'user',
+            content: m.body,
+            timestamp: m.timestamp * 1000,
+            to: chat.id,
+            fromMe: m.fromMe
+          }))
+          let lastMessageTimestamp: number | null = null
+          if (updatedMessages && updatedMessages.length > 0) {
+            const lastMsg = updatedMessages[updatedMessages.length - 1]
+            if (lastMsg) {
+              lastMessageTimestamp = lastMsg.timestamp * 1000
+            }
           }
+          io.to(numberId.toString()).emit('chat-history', {
+            numberId,
+            chatHistory: updatedChatHistory,
+            to: chat.id._serialized,
+            lastMessageTimestamp
+          })
+        } catch (fetchError) {
+          console.error('Error al refrescar el historial del chat después de responder:', fetchError);
+          // Emitir el historial original si falla la actualización
+          io.to(numberId.toString()).emit('chat-history', {
+            numberId,
+            chatHistory,
+            to: chat.id._serialized,
+            lastMessageTimestamp
+          })
         }
-        io.to(numberId.toString()).emit('chat-history', {
-          numberId,
-          chatHistory: updatedChatHistory,
-          to: chat.id._serialized,
-          lastMessageTimestamp
-        })
+      }
+    }
+    } catch (syncError) {
+      console.error('Error en handleIncomingMessageSynced:', syncError);
+      if (syncError instanceof Error) {
+        console.error('Error stack:', syncError.stack);
       }
     }
   }
