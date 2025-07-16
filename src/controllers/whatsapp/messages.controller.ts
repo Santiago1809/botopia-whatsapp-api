@@ -133,9 +133,6 @@ async function sendLimitReachedMessage(
     const lastSent = limitMessagesSent.get(number.userId)
 
     if (lastSent === today) {
-      console.log(
-        `Email de límite ya enviado hoy para usuario ${number.userId}`
-      )
       return
     }
 
@@ -201,10 +198,6 @@ async function sendLimitReachedMessage(
     })
 
     limitMessagesSent.set(number.userId, today)
-
-    console.log(
-      `Email de límite enviado a ${user.email} para usuario ${user.username} (ID: ${user.id}) con plan ${user.subscription}`
-    )
   } catch (error) {
     console.error('Error sending limit reached email:', error)
   }
@@ -419,38 +412,32 @@ export async function handleIncomingMessage(
   try {
     // Verificar que el mensaje tiene las propiedades básicas
     if (!msg || !msg.id || !msg.id._serialized) {
-      console.log('Mensaje sin ID válido, omitiendo');
       return;
     }
 
     // Verificar que el chat tiene las propiedades básicas
     if (!chat || !chat.id || !chat.id._serialized) {
-      console.log('Chat sin ID válido, omitiendo');
       return;
     }
 
     // Verificar que el mensaje tiene contenido o es un tipo válido
     if (!msg.body && !msg.hasMedia) {
-      console.log('Mensaje sin contenido válido, omitiendo');
       return;
     }
 
     // Validación adicional: asegurarse de que el mensaje no es undefined o está corrupto
     if (typeof msg.from !== 'string' || typeof msg.to !== 'string') {
-      console.log('Mensaje con propiedades from/to inválidas, omitiendo');
       return;
     }
 
     // Verificar que el mensaje no está corrupto
     if (!msg.from.includes('@') || !msg.to.includes('@')) {
-      console.log('Mensaje con formato de WhatsApp ID inválido, omitiendo');
       return;
     }
 
     // Verificar que el cliente WhatsApp está disponible
     const client = clients[numberId];
     if (!client || !client.info || !client.info.wid) {
-      console.log('Cliente WhatsApp no disponible o no inicializado, omitiendo mensaje');
       return;
     }
 
@@ -467,12 +454,6 @@ export async function handleIncomingMessage(
     return
   }
   respondedMessages.set(msg.id._serialized, Date.now()) // Log SIEMPRE que se reciba un mensaje
-  // console.log('[WHATSAPP][MSG RECIBIDO]', {
-  //   from: msg.from,
-  //   numberId,
-  //   chatName: chat.name || chat.id._serialized,
-  //   message: msg.body
-  // });
   const idToCheck = chat.id._serialized
   const isGroup = chat.id.server === 'g.us'
   if (msg.isStatus) {
@@ -558,20 +539,17 @@ export async function handleIncomingMessage(
     }
 
     const waIdToCheck = (msg.from || '').trim().toLowerCase()
-    //console.log('Datos para inserción:', { waIdToCheck, numberId, msgFrom: msg.from, msgBody: msg.body });
 
     // --- NO SINCRONIZADO: Solo responde si aiUnknownEnabled y agentehabilitado en Unsyncedcontact ---
     if (!syncDb) {
       try {
         // Validar que el mensaje y el chat están correctamente formateados
         if (!msg || !msg.from || !msg.body) {
-          console.log('Mensaje incompleto recibido, omitiendo:', { from: msg?.from, body: msg?.body });
           return;
         }
 
         // Validar que el chat está disponible
         if (!chat || !chat.id || !chat.id._serialized) {
-          console.log('Chat no válido, omitiendo:', chat);
           return;
         }
 
@@ -671,7 +649,6 @@ export async function handleIncomingMessage(
             
             // Usar chat.sendMessage() en lugar de msg.reply() para evitar problemas de serialización
             await chat.sendMessage(aiResponse[0]);
-            console.log('✅ Respuesta enviada a contacto no sincronizado:', waIdToCheck);
           } catch (replyError) {
             // Los errores de serialización son normales en WhatsApp Web.js
             // Solo loguear si NO es un error de serialización
@@ -926,8 +903,6 @@ export async function handleIncomingMessage(
             
             // Intentar enviar el mensaje usando chat.sendMessage()
             await chat.sendMessage(finalResponse as string)
-            
-            console.log('✅ Respuesta de IA enviada a:', chat.id._serialized);
             
           } catch (sendError) {
             // Los errores de serialización son normales en WhatsApp Web.js
