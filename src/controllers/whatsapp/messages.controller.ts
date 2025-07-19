@@ -1011,12 +1011,25 @@ export async function handleIncomingMessage(
                 fromMe: true
               })
 
-              io.to(numberId.toString()).emit('chat-history', {
-                numberId,
-                chatHistory,
-                to: chat.id._serialized,
-                lastMessageTimestamp: getCurrentUTCDate().getTime()
-              })
+              const now = getCurrentUTCDate().getTime();
+              if (!lastChatHistoryEmit[numberId] || now - lastChatHistoryEmit[numberId] > 1000) {
+                io.to(numberId.toString()).emit('chat-history', {
+                  numberId,
+                  chatHistory,
+                  to: chat.id._serialized,
+                  lastMessageTimestamp: now
+                });
+                lastChatHistoryEmit[numberId] = now;
+                console.log(
+                  'Emitido chat-history inmediato después de respuesta IA - numberId:',
+                  numberId
+                );
+              } else {
+                console.log(
+                  'Emisión de chat-history omitida para evitar duplicados - numberId:',
+                  numberId
+                );
+              }
               console.log(
                 'Emitido chat-history inmediato después de respuesta IA - numberId:',
                 numberId
