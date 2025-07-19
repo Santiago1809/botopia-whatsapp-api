@@ -70,7 +70,7 @@ export async function startWhatsApp(req: Request, res: Response) {
     client.on('qr', async (qr) => {
       try {
         const qrImage = await QRCode.toDataURL(qr)
-        console.log('qr melo')
+        console.info(`✅ QR code generated successfully for numberId: ${numberId}`)
         io.to(numberId.toString()).emit('qr-code', { numberId, qr: qrImage })
       } catch (error) {
         console.error('❌ Error procesando el QR:', error)
