@@ -363,6 +363,7 @@ export async function syncAllHistoriesBatch(
             to: chat.id._serialized,
             lastMessageTimestamp
           })
+          console.log('Emitido msg-controller 366')
         } catch (err) {
           console.error('Error sincronizando chat:', chatId, err)
         }
@@ -458,6 +459,38 @@ export async function handleIncomingMessage(
   const isGroup = chat.id.server === 'g.us'
   if (msg.isStatus) {
     return
+  }
+
+  // EMITIR ACTUALIZACIÓN DEL HISTORIAL DEL CHAT SIEMPRE QUE LLEGUE UN MENSAJE
+  try {
+    const messages = await chat.fetchMessages({ limit: 30 })
+    messages.sort((a: Message, b: Message) => a.timestamp - b.timestamp)
+    
+    let lastMessageTimestamp: number | null = null
+    if (messages && messages.length > 0) {
+      const lastMsg = messages[messages.length - 1]
+      if (lastMsg) {
+        lastMessageTimestamp = lastMsg.timestamp * 1000
+      }
+    }
+
+    const chatHistory = messages.map((m: Message) => ({
+      role: m.fromMe ? 'assistant' : 'user',
+      content: m.body,
+      timestamp: m.timestamp * 1000,
+      to: chat.id._serialized,
+      fromMe: m.fromMe
+    }))
+
+    io.to(numberId.toString()).emit('chat-history', {
+      numberid: numberId,
+      chatHistory,
+      to: chat.id._serialized,
+      lastMessageTimestamp
+    })
+    console.log('Emitido chat-history para mensaje entrante - numberId:', numberId, 'chat:', idToCheck)
+  } catch (historyError) {
+    console.error('Error obteniendo historial del chat:', historyError)
   }
 
   // Increment message usage for incoming message
@@ -584,11 +617,9 @@ export async function handleIncomingMessage(
         }
 
         // EMITIR EVENTO SOCKET para refrescar lista en frontend SIEMPRE
-        if (io && typeof io.to === 'function') {
-          io.to(numberId.toString()).emit('unsynced-contacts-updated', {
-            numberid: numberId
-          })
-        }
+        io.to(numberId.toString()).emit('unsynced-contacts-updated', {
+          numberid: numberId
+        })
 
         // Consultar el contacto actualizado
         const { data: updatedContact, error: queryError } = await supabase
@@ -649,6 +680,38 @@ export async function handleIncomingMessage(
             
             // Usar chat.sendMessage() en lugar de msg.reply() para evitar problemas de serialización
             await chat.sendMessage(aiResponse[0]);
+            
+            // EMITIR actualización del historial después de respuesta IA para contacto no sincronizado
+            try {
+              const messages = await chat.fetchMessages({ limit: 30 })
+              messages.sort((a: Message, b: Message) => a.timestamp - b.timestamp)
+              
+              let lastMessageTimestamp: number | null = null
+              if (messages && messages.length > 0) {
+                const lastMsg = messages[messages.length - 1]
+                if (lastMsg) {
+                  lastMessageTimestamp = lastMsg.timestamp * 1000
+                }
+              }
+
+              const chatHistory = messages.map((m: Message) => ({
+                role: m.fromMe ? 'assistant' : 'user',
+                content: m.body,
+                timestamp: m.timestamp * 1000,
+                to: chat.id._serialized,
+                fromMe: m.fromMe
+              }))
+
+              io.to(numberId.toString()).emit('chat-history', {
+                numberid: numberId,
+                chatHistory,
+                to: chat.id._serialized,
+                lastMessageTimestamp
+              })
+              console.log('Emitido chat-history para respuesta IA a contacto no sincronizado - numberId:', numberId)
+            } catch (historyError) {
+              console.error('Error obteniendo historial después de respuesta IA no sincronizada:', historyError)
+            }
           } catch (replyError) {
             // Los errores de serialización son normales en WhatsApp Web.js
             // Solo loguear si NO es un error de serialización
@@ -732,10 +795,10 @@ export async function handleIncomingMessage(
       }
     }
     const chatHistory = messages.map((m: Message) => ({
-      role: m.fromMe ? 'user' : 'assistant',
+      role: m.fromMe ? 'assistant' : 'user',
       content: m.body,
       timestamp: m.timestamp * 1000,
-      to: chat.id,
+      to: chat.id._serialized,
       fromMe: m.fromMe
     }))
     io.to(numberId.toString()).emit('chat-history', {
@@ -744,6 +807,8 @@ export async function handleIncomingMessage(
       to: chat.id._serialized,
       lastMessageTimestamp
     })
+    console.log('Emitido msg-controller 746')
+    console.log('aCTUALIZANDO HISTORIAL DE CHAT')
     const shouldRespond =
       (!isGroup && number.aiEnabled) ||
       (isGroup && number.aiEnabled && number.responseGroups) ||
@@ -752,11 +817,19 @@ export async function handleIncomingMessage(
       return
     }
     if (shouldRespond) {
+      // Convertir chatHistory al formato mínimo requerido por getAIResponse
+      const aiChatHistory = chatHistory.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+        timestamp: msg.timestamp,
+        to: chat.id // Usar el ChatId original
+      }))
+      
       const [aiResponse] = await getAIResponse(
         number.aiPrompt,
         msg.body,
         number.aiModel,
-        chatHistory
+        aiChatHistory
       )
       const fraseAsesorEspecial =
         'Un momento, por favor. Un asesor especializado te atenderá en breve.'
@@ -904,6 +977,23 @@ export async function handleIncomingMessage(
             // Intentar enviar el mensaje usando chat.sendMessage()
             await chat.sendMessage(finalResponse as string)
             
+            // EMITIR INMEDIATAMENTE la actualización del historial después de enviar
+            chatHistory.push({
+              role: 'assistant',
+              content: finalResponse as string,
+              timestamp: getCurrentUTCDate().getTime(),
+              to: chat.id._serialized,
+              fromMe: true
+            })
+
+            io.to(numberId.toString()).emit('chat-history', {
+              numberId,
+              chatHistory,
+              to: chat.id._serialized,
+              lastMessageTimestamp: getCurrentUTCDate().getTime()
+            })
+            console.log('Emitido chat-history inmediato después de respuesta IA - numberId:', numberId)
+            
           } catch (sendError) {
             // Los errores de serialización son normales en WhatsApp Web.js
             // Solo loguear si NO es un error de serialización
@@ -917,53 +1007,38 @@ export async function handleIncomingMessage(
           }
         }, totalDelay)
 
-        chatHistory.push({
-          role: 'assistant',
-          content: finalResponse as string,
-          timestamp: getCurrentUTCDate().getTime(),
-          to: chat.id,
-          fromMe: false
-        })
-
-        // Espera un pequeño delay para que WhatsApp sincronice el mensaje
-        await new Promise((res) => setTimeout(res, 500))
-        
-        // Vuelve a obtener los últimos 30 mensajes con manejo de errores
-        try {
-          const updatedMessages = await chat.fetchMessages({ limit: 30 })
-          updatedMessages.sort(
-            (a: Message, b: Message) => a.timestamp - b.timestamp
-          )
-          const updatedChatHistory = updatedMessages.map((m: Message) => ({
-            role: m.fromMe ? 'assistant' : 'user',
-            content: m.body,
-            timestamp: m.timestamp * 1000,
-            to: chat.id,
-            fromMe: m.fromMe
-          }))
-          let lastMessageTimestamp: number | null = null
-          if (updatedMessages && updatedMessages.length > 0) {
-            const lastMsg = updatedMessages[updatedMessages.length - 1]
-            if (lastMsg) {
-              lastMessageTimestamp = lastMsg.timestamp * 1000
+        // Opcional: Después de un delay adicional, obtener mensajes actualizados desde WhatsApp
+        setTimeout(async () => {
+          try {
+            const updatedMessages = await chat.fetchMessages({ limit: 30 })
+            updatedMessages.sort(
+              (a: Message, b: Message) => a.timestamp - b.timestamp
+            )
+            const updatedChatHistory = updatedMessages.map((m: Message) => ({
+              role: m.fromMe ? 'assistant' : 'user',
+              content: m.body,
+              timestamp: m.timestamp * 1000,
+              to: chat.id._serialized,
+              fromMe: m.fromMe
+            }))
+            let lastMessageTimestamp: number | null = null
+            if (updatedMessages && updatedMessages.length > 0) {
+              const lastMsg = updatedMessages[updatedMessages.length - 1]
+              if (lastMsg) {
+                lastMessageTimestamp = lastMsg.timestamp * 1000
+              }
             }
+            io.to(numberId.toString()).emit('chat-history', {
+              numberId,
+              chatHistory: updatedChatHistory,
+              to: chat.id._serialized,
+              lastMessageTimestamp
+            })
+            console.log('Emitido chat-history actualizado desde WhatsApp - numberId:', numberId)
+          } catch (fetchError) {
+            console.error('Error al refrescar el historial del chat después de responder:', fetchError);
           }
-          io.to(numberId.toString()).emit('chat-history', {
-            numberId,
-            chatHistory: updatedChatHistory,
-            to: chat.id._serialized,
-            lastMessageTimestamp
-          })
-        } catch (fetchError) {
-          console.error('Error al refrescar el historial del chat después de responder:', fetchError);
-          // Emitir el historial original si falla la actualización
-          io.to(numberId.toString()).emit('chat-history', {
-            numberId,
-            chatHistory,
-            to: chat.id._serialized,
-            lastMessageTimestamp
-          })
-        }
+        }, totalDelay + 1000) // 1 segundo después del envío
       }
     }
     } catch (syncError) {
