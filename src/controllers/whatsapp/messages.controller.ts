@@ -832,7 +832,7 @@ export async function handleIncomingMessage(
         lastMessageTimestamp
       })
       console.log('Emitido msg-controller 746')
-      console.log('aCTUALIZANDO HISTORIAL DE CHAT')
+      console.log('Actualizando historial de chat')
       const shouldRespond =
         (!isGroup && number.aiEnabled) ||
         (isGroup && number.aiEnabled && number.responseGroups) ||
