@@ -831,7 +831,7 @@ export async function handleIncomingMessage(
         to: chat.id._serialized,
         lastMessageTimestamp
       })
-      console.log('Emitido msg-controller 746')
+      console.log(`Chat history emitted for numberId: ${numberId}, chatId: ${chat.id._serialized}`)
       console.log('Actualizando historial de chat')
       const shouldRespond =
         (!isGroup && number.aiEnabled) ||
