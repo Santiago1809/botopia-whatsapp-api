@@ -363,6 +363,7 @@ export async function syncAllHistoriesBatch(
             to: chat.id._serialized,
             lastMessageTimestamp
           })
+          console.log('Emitido msg-controller 366')
         } catch (err) {
           console.error('Error sincronizando chat:', chatId, err)
         }
@@ -412,41 +413,40 @@ export async function handleIncomingMessage(
   try {
     // Verificar que el mensaje tiene las propiedades básicas
     if (!msg || !msg.id || !msg.id._serialized) {
-      return;
+      return
     }
 
     // Verificar que el chat tiene las propiedades básicas
     if (!chat || !chat.id || !chat.id._serialized) {
-      return;
+      return
     }
 
     // Verificar que el mensaje tiene contenido o es un tipo válido
     if (!msg.body && !msg.hasMedia) {
-      return;
+      return
     }
 
     // Validación adicional: asegurarse de que el mensaje no es undefined o está corrupto
     if (typeof msg.from !== 'string' || typeof msg.to !== 'string') {
-      return;
+      return
     }
 
     // Verificar que el mensaje no está corrupto
     if (!msg.from.includes('@') || !msg.to.includes('@')) {
-      return;
+      return
     }
 
     // Verificar que el cliente WhatsApp está disponible
-    const client = clients[numberId];
+    const client = clients[numberId]
     if (!client || !client.info || !client.info.wid) {
-      return;
+      return
     }
 
     // Esperar un poco para asegurar que el mensaje esté completamente cargado
-    await new Promise(resolve => setTimeout(resolve, 200));
-    
+    await new Promise((resolve) => setTimeout(resolve, 200))
   } catch (validationError) {
-    console.error('Error en validación inicial del mensaje:', validationError);
-    return;
+    console.error('Error en validación inicial del mensaje:', validationError)
+    return
   }
 
   // --- CONTROL DE DUPLICADOS EN MEMORIA ---
@@ -458,6 +458,43 @@ export async function handleIncomingMessage(
   const isGroup = chat.id.server === 'g.us'
   if (msg.isStatus) {
     return
+  }
+
+  // EMITIR ACTUALIZACIÓN DEL HISTORIAL DEL CHAT SIEMPRE QUE LLEGUE UN MENSAJE
+  try {
+    const messages = await chat.fetchMessages({ limit: 30 })
+    messages.sort((a: Message, b: Message) => a.timestamp - b.timestamp)
+
+    let lastMessageTimestamp: number | null = null
+    if (messages && messages.length > 0) {
+      const lastMsg = messages[messages.length - 1]
+      if (lastMsg) {
+        lastMessageTimestamp = lastMsg.timestamp * 1000
+      }
+    }
+
+    const chatHistory = messages.map((m: Message) => ({
+      role: m.fromMe ? 'assistant' : 'user',
+      content: m.body,
+      timestamp: m.timestamp * 1000,
+      to: chat.id._serialized,
+      fromMe: m.fromMe
+    }))
+
+    io.to(numberId.toString()).emit('chat-history', {
+      numberid: numberId,
+      chatHistory,
+      to: chat.id._serialized,
+      lastMessageTimestamp
+    })
+    console.log(
+      'Emitido chat-history para mensaje entrante - numberId:',
+      numberId,
+      'chat:',
+      idToCheck
+    )
+  } catch (historyError) {
+    console.error('Error obteniendo historial del chat:', historyError)
   }
 
   // Increment message usage for incoming message
@@ -545,12 +582,12 @@ export async function handleIncomingMessage(
       try {
         // Validar que el mensaje y el chat están correctamente formateados
         if (!msg || !msg.from || !msg.body) {
-          return;
+          return
         }
 
         // Validar que el chat está disponible
         if (!chat || !chat.id || !chat.id._serialized) {
-          return;
+          return
         }
 
         // Extraer el número del wa_id (sin el @c.us)
@@ -584,11 +621,9 @@ export async function handleIncomingMessage(
         }
 
         // EMITIR EVENTO SOCKET para refrescar lista en frontend SIEMPRE
-        if (io && typeof io.to === 'function') {
-          io.to(numberId.toString()).emit('unsynced-contacts-updated', {
-            numberid: numberId
-          })
-        }
+        io.to(numberId.toString()).emit('unsynced-contacts-updated', {
+          numberid: numberId
+        })
 
         // Consultar el contacto actualizado
         const { data: updatedContact, error: queryError } = await supabase
@@ -619,54 +654,106 @@ export async function handleIncomingMessage(
             msg.body,
             number.aiModel,
             [] // Puedes pasar el historial si lo necesitas
-          );
+          )
           if (!aiResponse[0] || typeof aiResponse[0] !== 'string') {
-            return;
+            return
           }
-          const lastReply = lastUnsyncedReplies.get(waIdToCheck);
-          const lastAIResponse = lastUnsyncedAIResponse.get(waIdToCheck);
+          const lastReply = lastUnsyncedReplies.get(waIdToCheck)
+          const lastAIResponse = lastUnsyncedAIResponse.get(waIdToCheck)
           // Lógica: solo bloquear si el mensaje recibido es igual al anterior Y la respuesta IA también es igual a la anterior
-          if (lastReply && lastReply === msg.body && lastAIResponse && aiResponse[0] === lastAIResponse) {
+          if (
+            lastReply &&
+            lastReply === msg.body &&
+            lastAIResponse &&
+            aiResponse[0] === lastAIResponse
+          ) {
             // Es el mismo mensaje recibido y la misma respuesta IA, no respondas
-            return;
+            return
           }
           // Si vas a responder, guarda el mensaje recibido y la respuesta IA
-          lastUnsyncedReplies.set(waIdToCheck, msg.body);
-          lastUnsyncedAIResponse.set(waIdToCheck, aiResponse[0]);
-          
+          lastUnsyncedReplies.set(waIdToCheck, msg.body)
+          lastUnsyncedAIResponse.set(waIdToCheck, aiResponse[0])
+
           // Validar que el chat sigue disponible antes de responder
           try {
             // Verificar que el chat está activo y disponible
             if (!chat || !chat.id || !chat.id._serialized) {
-              console.error('Chat no disponible para responder a contacto no sincronizado');
-              return;
+              console.error(
+                'Chat no disponible para responder a contacto no sincronizado'
+              )
+              return
             }
 
             // Mostrar 'escribiendo...' antes de responder
-            await chat.sendStateTyping();
-            await new Promise(res => setTimeout(res, 1200)); // Simula que está escribiendo ~1.2s
-            await chat.clearState();
-            
+            await chat.sendStateTyping()
+            await new Promise((res) => setTimeout(res, 1200)) // Simula que está escribiendo ~1.2s
+            await chat.clearState()
+
             // Usar chat.sendMessage() en lugar de msg.reply() para evitar problemas de serialización
-            await chat.sendMessage(aiResponse[0]);
+            await chat.sendMessage(aiResponse[0])
+
+            // EMITIR actualización del historial después de respuesta IA para contacto no sincronizado
+            try {
+              const messages = await chat.fetchMessages({ limit: 30 })
+              messages.sort(
+                (a: Message, b: Message) => a.timestamp - b.timestamp
+              )
+
+              let lastMessageTimestamp: number | null = null
+              if (messages && messages.length > 0) {
+                const lastMsg = messages[messages.length - 1]
+                if (lastMsg) {
+                  lastMessageTimestamp = lastMsg.timestamp * 1000
+                }
+              }
+
+              const chatHistory = messages.map((m: Message) => ({
+                role: m.fromMe ? 'assistant' : 'user',
+                content: m.body,
+                timestamp: m.timestamp * 1000,
+                to: chat.id._serialized,
+                fromMe: m.fromMe
+              }))
+
+              io.to(numberId.toString()).emit('chat-history', {
+                numberid: numberId,
+                chatHistory,
+                to: chat.id._serialized,
+                lastMessageTimestamp
+              })
+              console.log(
+                'Emitido chat-history para respuesta IA a contacto no sincronizado - numberId:',
+                numberId
+              )
+            } catch (historyError) {
+              console.error(
+                'Error obteniendo historial después de respuesta IA no sincronizada:',
+                historyError
+              )
+            }
           } catch (replyError) {
             // Los errores de serialización son normales en WhatsApp Web.js
             // Solo loguear si NO es un error de serialización
-            if (replyError instanceof Error && 
-                !replyError.message.includes('serialize') &&
-                !replyError.message.includes('getMessageModel') &&
-                !replyError.message.includes('Evaluation failed')) {
-              console.error('Error crítico enviando respuesta a contacto no sincronizado:', replyError.message);
+            if (
+              replyError instanceof Error &&
+              !replyError.message.includes('serialize') &&
+              !replyError.message.includes('getMessageModel') &&
+              !replyError.message.includes('Evaluation failed')
+            ) {
+              console.error(
+                'Error crítico enviando respuesta a contacto no sincronizado:',
+                replyError.message
+              )
             }
             // No hacer nada más - los errores de serialización son normales
           }
-          return;
+          return
         }
       } catch (error) {
         console.error('Error en manejo de contacto no sincronizado:', error)
         // Registrar más detalles del error para debugging
         if (error instanceof Error) {
-          console.error('Error stack:', error.stack);
+          console.error('Error stack:', error.stack)
         }
       }
       return
@@ -708,268 +795,307 @@ export async function handleIncomingMessage(
     try {
       // Validaciones de seguridad
       if (!chat || !chat.id) {
-        console.error('Chat no válido en handleIncomingMessageSynced');
-        return;
+        console.error('Chat no válido en handleIncomingMessageSynced')
+        return
       }
 
       const isGroup = chat.id.server === 'g.us'
-      
+
       // Intentar obtener mensajes con manejo de errores
-      let messages: Message[] = [];
+      let messages: Message[] = []
       try {
         messages = await chat.fetchMessages({ limit: 30 })
         messages.sort((a: Message, b: Message) => a.timestamp - b.timestamp)
       } catch (fetchError) {
-        console.error('Error al obtener mensajes del chat:', fetchError);
+        console.error('Error al obtener mensajes del chat:', fetchError)
         // Continuar con array vacío en caso de error
-        messages = [];
+        messages = []
       }
-    let lastMessageTimestamp: number | null = null
-    if (messages && messages.length > 0) {
-      const lastMsg = messages[messages.length - 1]
-      if (lastMsg) {
-        lastMessageTimestamp = lastMsg.timestamp * 1000
+      let lastMessageTimestamp: number | null = null
+      if (messages && messages.length > 0) {
+        const lastMsg = messages[messages.length - 1]
+        if (lastMsg) {
+          lastMessageTimestamp = lastMsg.timestamp * 1000
+        }
       }
-    }
-    const chatHistory = messages.map((m: Message) => ({
-      role: m.fromMe ? 'user' : 'assistant',
-      content: m.body,
-      timestamp: m.timestamp * 1000,
-      to: chat.id,
-      fromMe: m.fromMe
-    }))
-    io.to(numberId.toString()).emit('chat-history', {
-      numberId,
-      chatHistory,
-      to: chat.id._serialized,
-      lastMessageTimestamp
-    })
-    const shouldRespond =
-      (!isGroup && number.aiEnabled) ||
-      (isGroup && number.aiEnabled && number.responseGroups) ||
-      (!isGroup && number.aiUnknownEnabled && !isSynced) // Solo para no sincronizados
-    if (!shouldRespond) {
-      return
-    }
-    if (shouldRespond) {
-      const [aiResponse] = await getAIResponse(
-        number.aiPrompt,
-        msg.body,
-        number.aiModel,
-        chatHistory
-      )
-      const fraseAsesorEspecial =
-        'Un momento, por favor. Un asesor especializado te atenderá en breve.'
-      const finalResponse = aiResponse
-      let agent = null
-      if (agentId) {
-        const agentResult = await supabase
-          .from('Agent')
-          .select('id, title, advisorEmail, allowAdvisor, ownerId')
-          .eq('id', agentId)
-          .single()
-        agent = agentResult.data
-      } else {
-        const agentResult = await supabase
-          .from('Agent')
-          .select('id, title, advisorEmail, allowAdvisor, ownerId')
-          .eq('ownerId', number.userId)
-          .eq('isGlobal', false)
-          .order('id', { ascending: false })
-          .limit(1)
-          .single()
-        agent = agentResult.data
+      const chatHistory = messages.map((m: Message) => ({
+        role: m.fromMe ? 'assistant' : 'user',
+        content: m.body,
+        timestamp: m.timestamp * 1000,
+        to: chat.id._serialized,
+        fromMe: m.fromMe
+      }))
+      io.to(numberId.toString()).emit('chat-history', {
+        numberId,
+        chatHistory,
+        to: chat.id._serialized,
+        lastMessageTimestamp
+      })
+      console.log(`Chat history emitted for numberId: ${numberId}, chatId: ${chat.id._serialized}`)
+      console.log('Actualizando historial de chat')
+      const shouldRespond =
+        (!isGroup && number.aiEnabled) ||
+        (isGroup && number.aiEnabled && number.responseGroups) ||
+        (!isGroup && number.aiUnknownEnabled && !isSynced) // Solo para no sincronizados
+      if (!shouldRespond) {
+        return
       }
-      if (
-        typeof aiResponse === 'string' &&
-        aiResponse.trim().toLowerCase() === fraseAsesorEspecial.toLowerCase() &&
-        agent &&
-        agent.allowAdvisor &&
-        agent.advisorEmail
-      ) {
-        try {
-          const fecha = new Date().toLocaleString('es-CO', {
-            timeZone: 'America/Bogota'
-          })
-          // Obtener los últimos 5 mensajes del historial
-          const ultimosMensajes = messages
-            .slice(-5)
-            .map((m: Message) => {
-              const quien = m.fromMe ? 'Bot' : 'Cliente'
-              return `<tr><td style='vertical-align:top;'><b>${quien}:</b></td><td>${m.body}</td></tr>`
-            })
-            .join('')
-          // Extract client phone number from msg.from
-          const clientPhone: string =
-            (msg.from || 'unknown@domain.com').split('@')[0] ?? 'desconocido'
+      if (shouldRespond) {
+        // Convertir chatHistory al formato mínimo requerido por getAIResponse
+        const aiChatHistory = chatHistory.map((msg) => ({
+          role: msg.role,
+          content: msg.content,
+          timestamp: msg.timestamp,
+          to: chat.id // Usar el ChatId original
+        }))
 
-          await transporter.sendMail({
-            from: process.env.SMTP_USER,
-            to: agent.advisorEmail,
-            subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
-            html: advisorRequestEmailTemplate(
-              msg.body || '',
-              fecha,
-              clientPhone,
-              number.number || '',
-              agent.title,
-              ultimosMensajes
-            )
-          })
-          // DESACTIVAR IA para este contacto (sincronizado o no)
-          // Primero intenta en SyncedContactOrGroup
-          const { data: syncedContact } = await supabase
-            .from('SyncedContactOrGroup')
-            .select('id')
-            .eq('numberId', numberId)
-            .eq('wa_id', chat.id._serialized)
-            .eq('type', isGroup ? 'group' : 'contact')
+        const [aiResponse] = await getAIResponse(
+          number.aiPrompt,
+          msg.body,
+          number.aiModel,
+          aiChatHistory
+        )
+        const fraseAsesorEspecial =
+          'Un momento, por favor. Un asesor especializado te atenderá en breve.'
+        const finalResponse = aiResponse
+        let agent = null
+        if (agentId) {
+          const agentResult = await supabase
+            .from('Agent')
+            .select('id, title, advisorEmail, allowAdvisor, ownerId')
+            .eq('id', agentId)
             .single()
-          if (syncedContact && syncedContact.id) {
-            await supabase
-              .from('SyncedContactOrGroup')
-              .update({ agenteHabilitado: false })
-              .eq('id', syncedContact.id)
-            // Emitir evento socket para refrescar sincronizados
-            if (io && typeof io.to === 'function') {
-              io.to(numberId.toString()).emit('synced-contacts-updated', {
-                numberid: numberId
+          agent = agentResult.data
+        } else {
+          const agentResult = await supabase
+            .from('Agent')
+            .select('id, title, advisorEmail, allowAdvisor, ownerId')
+            .eq('ownerId', number.userId)
+            .eq('isGlobal', false)
+            .order('id', { ascending: false })
+            .limit(1)
+            .single()
+          agent = agentResult.data
+        }
+        if (
+          typeof aiResponse === 'string' &&
+          aiResponse.trim().toLowerCase() ===
+            fraseAsesorEspecial.toLowerCase() &&
+          agent &&
+          agent.allowAdvisor &&
+          agent.advisorEmail
+        ) {
+          try {
+            const fecha = new Date().toLocaleString('es-CO', {
+              timeZone: 'America/Bogota'
+            })
+            // Obtener los últimos 5 mensajes del historial
+            const ultimosMensajes = messages
+              .slice(-5)
+              .map((m: Message) => {
+                const quien = m.fromMe ? 'Bot' : 'Cliente'
+                return `<tr><td style='vertical-align:top;'><b>${quien}:</b></td><td>${m.body}</td></tr>`
               })
-            }
-          } else {
-            // Si no está sincronizado, busca en Unsyncedcontact
-            const { data: unsyncedContact } = await supabase
-              .from('Unsyncedcontact')
+              .join('')
+            // Extract client phone number from msg.from
+            const clientPhone: string =
+              (msg.from || 'unknown@domain.com').split('@')[0] ?? 'desconocido'
+
+            await transporter.sendMail({
+              from: process.env.SMTP_USER,
+              to: agent.advisorEmail,
+              subject: `Nuevo cliente quiere hablar con un asesor (${agent.title})`,
+              html: advisorRequestEmailTemplate(
+                msg.body || '',
+                fecha,
+                clientPhone,
+                number.number || '',
+                agent.title,
+                ultimosMensajes
+              )
+            })
+            // DESACTIVAR IA para este contacto (sincronizado o no)
+            // Primero intenta en SyncedContactOrGroup
+            const { data: syncedContact } = await supabase
+              .from('SyncedContactOrGroup')
               .select('id')
-              .eq('numberid', numberId)
+              .eq('numberId', numberId)
               .eq('wa_id', chat.id._serialized)
+              .eq('type', isGroup ? 'group' : 'contact')
               .single()
-            if (unsyncedContact && unsyncedContact.id) {
+            if (syncedContact && syncedContact.id) {
               await supabase
-                .from('Unsyncedcontact')
-                .update({ agentehabilitado: false })
-                .eq('id', unsyncedContact.id)
-              // Emitir evento socket para refrescar no sincronizados
+                .from('SyncedContactOrGroup')
+                .update({ agenteHabilitado: false })
+                .eq('id', syncedContact.id)
+              // Emitir evento socket para refrescar sincronizados
               if (io && typeof io.to === 'function') {
-                io.to(numberId.toString()).emit('unsynced-contacts-updated', {
+                io.to(numberId.toString()).emit('synced-contacts-updated', {
                   numberid: numberId
                 })
               }
+            } else {
+              // Si no está sincronizado, busca en Unsyncedcontact
+              const { data: unsyncedContact } = await supabase
+                .from('Unsyncedcontact')
+                .select('id')
+                .eq('numberid', numberId)
+                .eq('wa_id', chat.id._serialized)
+                .single()
+              if (unsyncedContact && unsyncedContact.id) {
+                await supabase
+                  .from('Unsyncedcontact')
+                  .update({ agentehabilitado: false })
+                  .eq('id', unsyncedContact.id)
+                // Emitir evento socket para refrescar no sincronizados
+                if (io && typeof io.to === 'function') {
+                  io.to(numberId.toString()).emit('unsynced-contacts-updated', {
+                    numberid: numberId
+                  })
+                }
+              }
             }
-          }
-        } catch {
-          console.error(
-            'Error enviando notificación al asesor:',
-            agent.advisorEmail
-          )
-        }
-      }
-      if (finalResponse) {
-        // Check message limit before sending AI response
-        const usageResult = await incrementMessageUsage(number.userId)
-        if (!usageResult.success) {
-          console.error(
-            'Límite de mensajes alcanzado, no se puede enviar respuesta de IA:',
-            usageResult.message
-          )
-
-          // Send upgrade email when limit is reached
-          if (
-            usageResult.message?.includes(
-              'Límite mensual de mensajes alcanzado'
+          } catch {
+            console.error(
+              'Error enviando notificación al asesor:',
+              agent.advisorEmail
             )
-          ) {
-            await sendLimitReachedMessage(msg, chat, number)
           }
-
-          return // Don't send AI response if limit is reached
         }
+        if (finalResponse) {
+          // Check message limit before sending AI response
+          const usageResult = await incrementMessageUsage(number.userId)
+          if (!usageResult.success) {
+            console.error(
+              'Límite de mensajes alcanzado, no se puede enviar respuesta de IA:',
+              usageResult.message
+            )
 
-        chat.sendStateTyping()
-        const messageLength = (finalResponse as string).length
-        const baseDelay = 2000
-        const additionalDelay = Math.min(2000, messageLength * 50)
-        const totalDelay = baseDelay + additionalDelay
-
-        setTimeout(async () => {
-          try {
-            // Validar que el chat sigue disponible
-            if (!chat || !chat.id || !chat.id._serialized) {
-              console.error('Chat no disponible para enviar respuesta de IA');
-              return;
+            // Send upgrade email when limit is reached
+            if (
+              usageResult.message?.includes(
+                'Límite mensual de mensajes alcanzado'
+              )
+            ) {
+              await sendLimitReachedMessage(msg, chat, number)
             }
 
-            await chat.clearState()
-            
-            // Intentar enviar el mensaje usando chat.sendMessage()
-            await chat.sendMessage(finalResponse as string)
-            
-          } catch (sendError) {
-            // Los errores de serialización son normales en WhatsApp Web.js
-            // Solo loguear si NO es un error de serialización
-            if (sendError instanceof Error && 
+            return // Don't send AI response if limit is reached
+          }
+
+          chat.sendStateTyping()
+          const messageLength = (finalResponse as string).length
+          const baseDelay = 2000
+          const additionalDelay = Math.min(2000, messageLength * 50)
+          const totalDelay = baseDelay + additionalDelay
+
+          setTimeout(async () => {
+            try {
+              // Validar que el chat sigue disponible
+              if (!chat || !chat.id || !chat.id._serialized) {
+                console.error('Chat no disponible para enviar respuesta de IA')
+                return
+              }
+
+              await chat.clearState()
+
+              // Intentar enviar el mensaje usando chat.sendMessage()
+              await chat.sendMessage(finalResponse as string)
+
+              // EMITIR INMEDIATAMENTE la actualización del historial después de enviar
+              chatHistory.push({
+                role: 'assistant',
+                content: finalResponse as string,
+                timestamp: getCurrentUTCDate().getTime(),
+                to: chat.id._serialized,
+                fromMe: true
+              })
+
+              const now = getCurrentUTCDate().getTime();
+              if (!lastChatHistoryEmit[numberId] || now - lastChatHistoryEmit[numberId] > 1000) {
+                io.to(numberId.toString()).emit('chat-history', {
+                  numberId,
+                  chatHistory,
+                  to: chat.id._serialized,
+                  lastMessageTimestamp: now
+                });
+                lastChatHistoryEmit[numberId] = now;
+                console.log(
+                  'Emitido chat-history inmediato después de respuesta IA - numberId:',
+                  numberId
+                );
+              } else {
+                console.log(
+                  'Emisión de chat-history omitida para evitar duplicados - numberId:',
+                  numberId
+                );
+              }
+              console.log(
+                'Emitido chat-history inmediato después de respuesta IA - numberId:',
+                numberId
+              )
+            } catch (sendError) {
+              // Los errores de serialización son normales en WhatsApp Web.js
+              // Solo loguear si NO es un error de serialización
+              if (
+                sendError instanceof Error &&
                 !sendError.message.includes('serialize') &&
                 !sendError.message.includes('getMessageModel') &&
-                !sendError.message.includes('Evaluation failed')) {
-              console.error('Error crítico enviando respuesta de IA:', sendError.message);
+                !sendError.message.includes('Evaluation failed')
+              ) {
+                console.error(
+                  'Error crítico enviando respuesta de IA:',
+                  sendError.message
+                )
+              }
+              // No hacer nada más - los errores de serialización son normales
             }
-            // No hacer nada más - los errores de serialización son normales
-          }
-        }, totalDelay)
+          }, totalDelay)
 
-        chatHistory.push({
-          role: 'assistant',
-          content: finalResponse as string,
-          timestamp: getCurrentUTCDate().getTime(),
-          to: chat.id,
-          fromMe: false
-        })
-
-        // Espera un pequeño delay para que WhatsApp sincronice el mensaje
-        await new Promise((res) => setTimeout(res, 500))
-        
-        // Vuelve a obtener los últimos 30 mensajes con manejo de errores
-        try {
-          const updatedMessages = await chat.fetchMessages({ limit: 30 })
-          updatedMessages.sort(
-            (a: Message, b: Message) => a.timestamp - b.timestamp
-          )
-          const updatedChatHistory = updatedMessages.map((m: Message) => ({
-            role: m.fromMe ? 'assistant' : 'user',
-            content: m.body,
-            timestamp: m.timestamp * 1000,
-            to: chat.id,
-            fromMe: m.fromMe
-          }))
-          let lastMessageTimestamp: number | null = null
-          if (updatedMessages && updatedMessages.length > 0) {
-            const lastMsg = updatedMessages[updatedMessages.length - 1]
-            if (lastMsg) {
-              lastMessageTimestamp = lastMsg.timestamp * 1000
+          // Opcional: Después de un delay adicional, obtener mensajes actualizados desde WhatsApp
+          setTimeout(async () => {
+            try {
+              const updatedMessages = await chat.fetchMessages({ limit: 30 })
+              updatedMessages.sort(
+                (a: Message, b: Message) => a.timestamp - b.timestamp
+              )
+              const updatedChatHistory = updatedMessages.map((m: Message) => ({
+                role: m.fromMe ? 'assistant' : 'user',
+                content: m.body,
+                timestamp: m.timestamp * 1000,
+                to: chat.id._serialized,
+                fromMe: m.fromMe
+              }))
+              let lastMessageTimestamp: number | null = null
+              if (updatedMessages && updatedMessages.length > 0) {
+                const lastMsg = updatedMessages[updatedMessages.length - 1]
+                if (lastMsg) {
+                  lastMessageTimestamp = lastMsg.timestamp * 1000
+                }
+              }
+              io.to(numberId.toString()).emit('chat-history', {
+                numberId,
+                chatHistory: updatedChatHistory,
+                to: chat.id._serialized,
+                lastMessageTimestamp
+              })
+              console.log(
+                'Emitido chat-history actualizado desde WhatsApp - numberId:',
+                numberId
+              )
+            } catch (fetchError) {
+              console.error(
+                'Error al refrescar el historial del chat después de responder:',
+                fetchError
+              )
             }
-          }
-          io.to(numberId.toString()).emit('chat-history', {
-            numberId,
-            chatHistory: updatedChatHistory,
-            to: chat.id._serialized,
-            lastMessageTimestamp
-          })
-        } catch (fetchError) {
-          console.error('Error al refrescar el historial del chat después de responder:', fetchError);
-          // Emitir el historial original si falla la actualización
-          io.to(numberId.toString()).emit('chat-history', {
-            numberId,
-            chatHistory,
-            to: chat.id._serialized,
-            lastMessageTimestamp
-          })
+          }, totalDelay + 1000) // 1 segundo después del envío
         }
       }
-    }
     } catch (syncError) {
-      console.error('Error en handleIncomingMessageSynced:', syncError);
+      console.error('Error en handleIncomingMessageSynced:', syncError)
       if (syncError instanceof Error) {
-        console.error('Error stack:', syncError.stack);
+        console.error('Error stack:', syncError.stack)
       }
     }
   }
