@@ -102,7 +102,7 @@ export const loginUser = async (req: Request, res: Response) => {
     if (!user) {
       res
         .status(HttpStatusCode.BadRequest)
-        .json({ message: 'Usuario no encontrado' })
+        .json({ message: 'Usuario no encontrado!' })
       return
     }
 
