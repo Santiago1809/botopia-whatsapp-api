@@ -70,6 +70,7 @@ export async function startWhatsApp(req: Request, res: Response) {
     client.on('qr', async (qr) => {
       try {
         const qrImage = await QRCode.toDataURL(qr)
+        console.info(`✅ QR code generated successfully for numberId: ${numberId}`)
         io.to(numberId.toString()).emit('qr-code', { numberId, qr: qrImage })
       } catch (error) {
         console.error('❌ Error procesando el QR:', error)
@@ -288,6 +289,7 @@ export function setupSocketEvents(io: Server) {
           to: chat.id._serialized,
           lastMessageTimestamp
         })
+        console.log('Emitido session-controller 292')
       } catch (err) {
         return err
       }
