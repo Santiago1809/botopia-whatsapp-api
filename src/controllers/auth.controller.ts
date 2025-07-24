@@ -147,6 +147,9 @@ export const getUserInfo = async (req: CustomRequest, res: Response) => {
         .json({ message: 'Usuario no encontrado' })
       return
     }
+    //console.log("🔍 [DEBUG BACKEND] Usuario encontrado:", user);
+    //console.log("🔍 [DEBUG BACKEND] ID del usuario:", user.id);
+    //console.log("🔍 [DEBUG BACKEND] Tipo del ID:", typeof user.id);
     res.json({ ...user })
   } catch (error) {
     res
