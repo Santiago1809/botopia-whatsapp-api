@@ -138,7 +138,7 @@ export const getUserInfo = async (req: CustomRequest, res: Response) => {
   try {
     const { data: user } = await supabase
       .from('User')
-      .select('username, role')
+      .select('id, username, role, email')
       .eq('username', req.user?.username)
       .single()
     if (!user) {
