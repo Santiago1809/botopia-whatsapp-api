@@ -102,7 +102,7 @@ export const loginUser = async (req: Request, res: Response) => {
     if (!user) {
       res
         .status(HttpStatusCode.BadRequest)
-        .json({ message: 'Usuario no encontrado' })
+        .json({ message: 'Usuario no encontrado!' })
       return
     }
 
@@ -138,7 +138,7 @@ export const getUserInfo = async (req: CustomRequest, res: Response) => {
   try {
     const { data: user } = await supabase
       .from('User')
-      .select('username, role')
+      .select('id, username, role, email')
       .eq('username', req.user?.username)
       .single()
     if (!user) {
@@ -147,6 +147,9 @@ export const getUserInfo = async (req: CustomRequest, res: Response) => {
         .json({ message: 'Usuario no encontrado' })
       return
     }
+    //console.log("🔍 [DEBUG BACKEND] Usuario encontrado:", user);
+    //console.log("🔍 [DEBUG BACKEND] ID del usuario:", user.id);
+    //console.log("🔍 [DEBUG BACKEND] Tipo del ID:", typeof user.id);
     res.json({ ...user })
   } catch (error) {
     res
