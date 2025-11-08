@@ -69,7 +69,7 @@ export const registerUser = async (req: Request, res: Response) => {
       subject: 'Bienvenido Botopia',
       html: welcomeUserTemplate(user.username)
     })
-    res.json({ token, user: { username: user.username, role: user.role } })
+    res.json({ token, user: { id: user.id, username: user.username, role: user.role, email: user.email } })
   } catch (error) {
     res
       .status(HttpStatusCode.InternalServerError)
@@ -126,7 +126,7 @@ export const loginUser = async (req: Request, res: Response) => {
       JWT_SECRET,
       { expiresIn: '5h' }
     )
-    res.json({ token, user: { username: user.username, role: role } })
+    res.json({ token, user: { id: user.id, username: user.username, role: role, email: user.email } })
   } catch (error) {
     res
       .status(HttpStatusCode.InternalServerError)
