@@ -54,11 +54,26 @@ const allowedOrigins = [
 ]
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Permitir sin origin (requests desde el mismo servidor)
+    if (!origin) {
       callback(null, true)
-    } else {
-      callback(null, false)
+      return
     }
+    
+    // Verificar si está en la lista de orígenes permitidos
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true)
+      return
+    }
+    
+    // Permitir cualquier subdominio de vercel.app
+    if (origin.endsWith('.vercel.app')) {
+      callback(null, true)
+      return
+    }
+    
+    // Rechazar otros orígenes
+    callback(null, false)
   },
   methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   credentials: true
