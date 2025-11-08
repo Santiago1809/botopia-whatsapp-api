@@ -45,6 +45,7 @@ app.use(express.json())
 
 const allowedOrigins = [
   'http://localhost:3000',
+  'http://localhost:3002',
   'https://botopia-whatsapp.vercel.app',
   'https://baruc-whatsapp-frontend.vercel.app',
   'https://app.botopia.online',
