@@ -1,11 +1,11 @@
 import type { Request, Response } from 'express'
-import { supabase } from '../config/db'
+import { supabase } from '../config/db.js'
 import {
   MS_IN_VCPU_MONTH,
   PRICE_PER_GB_RAM,
   PRICE_PER_MB_NETWORK,
   PRICE_PER_VCPU
-} from '../lib/constants'
+} from '../lib/constants.js'
 
 export async function getUsageStats(req: Request, res: Response) {
   try {

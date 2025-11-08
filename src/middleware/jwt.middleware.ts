@@ -1,6 +1,6 @@
 import type { NextFunction, Response } from 'express'
 import jwt from 'jsonwebtoken'
-import type { CustomRequest, RequestUser } from '../interfaces/global'
+import type { CustomRequest, RequestUser } from '../interfaces/global.js'
 
 export async function authenticateToken(
   req: CustomRequest,

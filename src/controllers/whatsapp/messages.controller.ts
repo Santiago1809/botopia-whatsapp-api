@@ -4,20 +4,20 @@ import type { Request, Response } from 'express'
 import { PhoneNumberUtil } from 'google-libphonenumber'
 import type { Server } from 'socket.io'
 import type { Chat, Client, Message } from 'whatsapp-web.js'
-import { supabase } from '../../config/db'
+import { supabase } from '../../config/db.js'
 import type {
   CustomRequest,
-  Number,
   SendMessageBody
-} from '../../interfaces/global'
+} from '../../interfaces/global.js'
+import type { WhatsAppNumber as WhatsAppNumberType } from '../../types/global.js'
 import {
   advisorRequestEmailTemplate,
   limitReachedEmailTemplate
-} from '../../lib/constants'
-import { getCurrentUTCDate } from '../../lib/dateUtils'
-import { getAIResponse } from '../../services/ai.service'
-import { transporter } from '../../services/email.service'
-import { clients } from '../../WhatsAppClients'
+} from '../../lib/constants.js'
+import { getCurrentUTCDate } from '../../lib/dateUtils.js'
+import { getAIResponse } from '../../services/ai.service.js'
+import { transporter } from '../../services/email.service.js'
+import { clients } from '../../WhatsAppClients.js'
 
 // Helper function to handle message usage counting
 async function incrementMessageUsage(userId: number): Promise<{
@@ -401,6 +401,9 @@ const lastUnsyncedReplies = new Map<string, string>() // wa_id -> last reply
 
 // Control de última respuesta ENVIADA por la IA a usuarios no sincronizados
 const lastUnsyncedAIResponse = new Map<string, string>() // wa_id -> last AI response
+
+// Control de última emisión de chat-history por numberId (para evitar duplicados)
+const lastChatHistoryEmit: Record<number, number> = {}
 
 // Función para manejar mensajes entrantes
 export async function handleIncomingMessage(
@@ -788,7 +791,7 @@ export async function handleIncomingMessage(
     chat: Chat,
     numberId: string | number,
     io: Server,
-    number: Number,
+    number: WhatsAppNumberType,
     isSynced: boolean,
     agentId?: number
   ) {
@@ -1012,14 +1015,15 @@ export async function handleIncomingMessage(
               })
 
               const now = getCurrentUTCDate().getTime();
-              if (!lastChatHistoryEmit[numberId] || now - lastChatHistoryEmit[numberId] > 1000) {
+              const numberIdNum = typeof numberId === 'string' ? Number(numberId) : numberId;
+              if (!lastChatHistoryEmit[numberIdNum] || now - lastChatHistoryEmit[numberIdNum] > 1000) {
                 io.to(numberId.toString()).emit('chat-history', {
                   numberId,
                   chatHistory,
                   to: chat.id._serialized,
                   lastMessageTimestamp: now
                 });
-                lastChatHistoryEmit[numberId] = now;
+                lastChatHistoryEmit[numberIdNum] = now;
                 console.log(
                   'Emitido chat-history inmediato después de respuesta IA - numberId:',
                   numberId

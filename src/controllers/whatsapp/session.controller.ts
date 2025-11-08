@@ -4,10 +4,10 @@ import type { Request, Response } from 'express'
 import QRCode from 'qrcode'
 import type { Server } from 'socket.io'
 import { Client, LocalAuth } from 'whatsapp-web.js'
-import type { CustomRequest, StartWhatsApp } from '../../interfaces/global'
-import { supabase } from '../../config/db'
-import { clients } from '../../WhatsAppClients'
-import { handleIncomingMessage } from './messages.controller'
+import type { CustomRequest, StartWhatsApp } from '../../interfaces/global.js'
+import { supabase } from '../../config/db.js'
+import { clients } from '../../WhatsAppClients.js'
+import { handleIncomingMessage } from './messages.controller.js'
 
 export async function startWhatsApp(req: Request, res: Response) {
   const { numberId } = req.body as Partial<StartWhatsApp>
@@ -268,7 +268,7 @@ export function setupSocketEvents(io: Server) {
         }
         // Traer solo los últimos 20 mensajes, ordenados de más reciente a más antiguo
         const messages = await chat.fetchMessages({ limit: 20 })
-        messages.sort((a, b) => a.timestamp - b.timestamp)
+        messages.sort((a: { timestamp: number }, b: { timestamp: number }) => a.timestamp - b.timestamp)
         let lastMessageTimestamp: number | null = null
         if (messages && messages.length > 0) {
           const lastMsg = messages[messages.length - 1]
@@ -276,7 +276,7 @@ export function setupSocketEvents(io: Server) {
             lastMessageTimestamp = lastMsg.timestamp * 1000
           }
         }
-        const chatHistory = messages.map((m) => ({
+        const chatHistory = messages.map((m: { fromMe: boolean; body: string; timestamp: number }) => ({
           role: m.fromMe ? 'assistant' : 'user',
           content: m.body,
           timestamp: m.timestamp * 1000,

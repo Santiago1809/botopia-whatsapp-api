@@ -1,11 +1,11 @@
 import { HttpStatusCode } from 'axios'
 import bcrypt from 'bcrypt'
 import type { Request, Response } from 'express'
-import { supabase } from '../config/db'
-import type { AddAgent, CustomRequest } from '../interfaces/global'
-import { notifyNewPassword } from '../lib/constants'
-import { generateSecurePassword } from '../lib/utils'
-import { transporter } from '../services/email.service'
+import { supabase } from '../config/db.js'
+import type { AddAgent, CustomRequest } from '../interfaces/global.js'
+import { notifyNewPassword } from '../lib/constants.js'
+import { generateSecurePassword } from '../lib/utils.js'
+import { transporter } from '../services/email.service.js'
 
 export async function getAgents(_req: Request, res: Response) {
   try {

@@ -1,5 +1,5 @@
 import express from 'express'
-import { createPayment, handleNotification, confirmPayment } from '../controllers/payment.controller'
+import { createPayment, handleNotification, confirmPayment } from '../controllers/payment.controller.js'
 
 const router = express.Router()
 

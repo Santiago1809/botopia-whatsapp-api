@@ -1,12 +1,12 @@
 import type { Request, Response } from 'express'
-import { supabase } from '../config/db'
+import { supabase } from '../config/db.js'
 import type {
   AddWhatsAppNumber,
   CustomRequest,
   ToggleAIBody
-} from '../interfaces/global'
+} from '../interfaces/global.js'
 import { HttpStatusCode } from 'axios'
-import { clients } from '../WhatsAppClients'
+import { clients } from '../WhatsAppClients.js'
 
 export async function toggleAI(req: Request, res: Response) {
   const { number, enabled } = req.body as ToggleAIBody
