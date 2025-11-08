@@ -7,24 +7,36 @@ config()
 const requiredEnvVars = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS']
 const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName])
 
+// NO hacer process.exit - solo advertir y crear transporter si está disponible
+let transporter: nodemailer.Transporter | null = null
+
 if (missingEnvVars.length > 0) {
-  console.error('❌ Faltan variables de entorno requeridas para el servicio de correo:', missingEnvVars)
-  process.exit(1)
+  console.warn('⚠️ Faltan variables de entorno para el servicio de correo:', missingEnvVars)
+  console.warn('⚠️ El servicio de email estará deshabilitado. Las funciones que requieran email fallarán.')
+} else {
+  // Crear el transporter con configuración mejorada solo si todas las variables están presentes
+  try {
+    transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT),
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      },
+      tls: {
+        rejectUnauthorized: false // Permite certificados autofirmados
+      }
+    })
+    console.log('✅ Servicio de correo configurado correctamente')
+  } catch (error) {
+    console.error('❌ Error al configurar el servicio de correo:', error)
+    transporter = null
+  }
 }
 
-// Crear el transporter con configuración mejorada
-export const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT),
-  secure: process.env.SMTP_SECURE === 'true',
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS
-  },
-  tls: {
-    rejectUnauthorized: false // Permite certificados autofirmados
-  }
-})
+// Exportar transporter (puede ser null si no está configurado)
+export { transporter }
 
 // Función auxiliar para enviar correos con mejor manejo de errores
 export const sendEmail = async (options: {
@@ -32,15 +44,22 @@ export const sendEmail = async (options: {
   subject: string
   html: string
 }) => {
+  // Verificar si el transporter está configurado
+  if (!transporter) {
+    const error = new Error('Servicio de correo no configurado. Faltan variables de entorno SMTP.')
+    console.error('❌ Error al enviar correo:', error.message)
+    throw error
+  }
+
   try {
     const mailOptions = {
       from: process.env.SMTP_USER,
       ...options
     }
     
-    console.error('📧 Intentando enviar correo a:', options.to)
+    console.log('📧 Intentando enviar correo a:', options.to)
     const info = await transporter.sendMail(mailOptions)
-    console.error('✅ Correo enviado exitosamente:', info.messageId)
+    console.log('✅ Correo enviado exitosamente:', info.messageId)
     return { success: true, messageId: info.messageId }
   } catch (error) {
     console.error('❌ Error al enviar correo:', error)
