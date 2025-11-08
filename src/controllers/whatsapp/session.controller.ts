@@ -3,8 +3,10 @@ import { HttpStatusCode } from 'axios'
 import type { Request, Response } from 'express'
 import QRCode from 'qrcode'
 import type { Server } from 'socket.io'
-import { Client, LocalAuth } from 'whatsapp-web.js'
+import whatsappWeb from 'whatsapp-web.js'
 import type { CustomRequest, StartWhatsApp } from '../../interfaces/global.js'
+
+const { Client, LocalAuth } = whatsappWeb
 import { supabase } from '../../config/db.js'
 import { clients } from '../../WhatsAppClients.js'
 import { handleIncomingMessage } from './messages.controller.js'
