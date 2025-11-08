@@ -4,9 +4,11 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "bun install && bun build --packages=external . --outdir ./out --target=node --format=cjs",
+    "build": "tsc --project tsconfig.prod.json",
+    "build:bun": "bun install && bun build --packages=external . --outdir ./out --target=node --format=cjs",
     "dev": "bun --watch index.ts",
-    "start": "bun index.ts"
+    "start": "node out/index.js",
+    "start:bun": "bun index.ts"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",
@@ -16,10 +18,14 @@
     "@types/google-libphonenumber": "^7.4.30",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/nodemailer": "^6.4.17",
-    "@types/qrcode": "^1.5.5"
+    "@types/qrcode": "^1.5.5",
+    "typescript": "^5.8.3"
   },
   "peerDependencies": {
     "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   },
   "dependencies": {
     "@eslint/js": "^9.31.0",

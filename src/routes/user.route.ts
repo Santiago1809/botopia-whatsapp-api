@@ -1,5 +1,5 @@
 import express from 'express'
-import { authenticateToken } from '../middleware/jwt.middleware'
+import { authenticateToken } from '../middleware/jwt.middleware.js'
 import {
   updateAgentNumber,
   addWhatsAppNumber,
@@ -11,7 +11,7 @@ import {
   addAgent,
   updateAgent,
   deleteAgent
-} from '../controllers/user.controller'
+} from '../controllers/user.controller.js'
 
 const router = express.Router()
 

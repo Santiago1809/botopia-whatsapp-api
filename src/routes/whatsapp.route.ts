@@ -1,5 +1,5 @@
 import express from 'express'
-import { authenticateToken } from '../middleware/jwt.middleware'
+import { authenticateToken } from '../middleware/jwt.middleware.js'
 import {
   sendMessage,
   getMessageUsage,
@@ -12,8 +12,8 @@ import {
   bulkUpdateAgenteHabilitado,
   getSyncedContacts,
   deleteSynced
-} from '../controllers/whatsapp.controller'
-import { toggleUnknownAi } from '../controllers/user.controller'
+} from '../controllers/whatsapp.controller.js'
+import { toggleUnknownAi } from '../controllers/user.controller.js'
 
 const router = express.Router()
 

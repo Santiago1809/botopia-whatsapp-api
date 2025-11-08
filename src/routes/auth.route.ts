@@ -7,8 +7,8 @@ import {
   registerUser,
   requestResetPassword,
   verifyOtp
-} from '../controllers/auth.controller'
-import { authenticateToken } from '../middleware/jwt.middleware'
+} from '../controllers/auth.controller.js'
+import { authenticateToken } from '../middleware/jwt.middleware.js'
 
 const router = express.Router()
 

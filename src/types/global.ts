@@ -41,6 +41,7 @@ export interface WhatsAppNumber {
   number: string
   responseGroups: boolean
   userId: number
+  aiUnknownEnabled?: boolean
 }
 
 export interface SyncedContact {

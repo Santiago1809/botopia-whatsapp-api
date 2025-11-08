@@ -1,5 +1,5 @@
 import express from 'express'
-import { authenticateToken, isAdmin } from '../middleware/jwt.middleware'
+import { authenticateToken, isAdmin } from '../middleware/jwt.middleware.js'
 import {
   activateUser,
   addAgent,
@@ -9,7 +9,7 @@ import {
   getAgents,
   getAllUsers,
   setUserTokenLimit
-} from '../controllers/admin.controller'
+} from '../controllers/admin.controller.js'
 
 const router = express.Router()
 

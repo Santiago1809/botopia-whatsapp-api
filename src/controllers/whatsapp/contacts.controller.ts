@@ -1,9 +1,9 @@
 // Maneja todo lo relacionado con contactos y grupos
 import { HttpStatusCode } from 'axios'
 import type { Request, Response } from 'express'
-import { supabase } from '../../config/db'
-import { clients } from '../../WhatsAppClients'
-import type { Contact, Group } from '../../types/global'
+import { supabase } from '../../config/db.js'
+import { clients } from '../../WhatsAppClients.js'
+import type { Contact, Group } from '../../types/global.js'
 
 // Estructura en memoria para sincronizados por sesión
 const syncedContactsMemory: {
@@ -25,7 +25,7 @@ export async function getContacts(req: Request, res: Response) {
   }
   try {
     const contacts = await client.getContacts()
-    const contactList = contacts.map((contact) => ({
+    const contactList = contacts.map((contact: { id: { _serialized: string }; name?: string; pushname?: string; number?: string; isGroup: boolean; isMyContact: boolean }) => ({
       id: contact.id._serialized,
       name: contact.name || contact.pushname || contact.number,
       number: contact.number,

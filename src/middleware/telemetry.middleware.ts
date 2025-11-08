@@ -1,8 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import axios from 'axios'
 import type { NextFunction, Request, Response } from 'express'
-import { supabase } from '../config/db'
-import { getCurrentUTCDate } from '../lib/dateUtils'
+import { supabase } from '../config/db.js'
+import { getCurrentUTCDate } from '../lib/dateUtils.js'
 
 export const telemetryMiddleware = (
   req: Request,

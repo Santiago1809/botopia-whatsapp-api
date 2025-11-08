@@ -3,8 +3,8 @@ import {
     handleNotification, 
     createSubscription, 
     getUserSubscription 
-} from '../controllers/subscription.controller'
-import { authenticateToken } from '../middleware/jwt.middleware'
+} from '../controllers/subscription.controller.js'
+import { authenticateToken } from '../middleware/jwt.middleware.js'
 
 const router = express.Router()
 

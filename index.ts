@@ -6,17 +6,17 @@ import rateLimit from 'express-rate-limit'
 import helmet from 'helmet'
 import http from 'http'
 import { Server } from 'socket.io'
-import { setupSocketEvents } from './src/controllers/whatsapp.controller'
-import { telemetryMiddleware } from './src/middleware/telemetry.middleware'
-import adminRoutes from './src/routes/admin.route'
-import authRoutes from './src/routes/auth.route'
+import { setupSocketEvents } from './src/controllers/whatsapp.controller.js'
+import { telemetryMiddleware } from './src/middleware/telemetry.middleware.js'
+import adminRoutes from './src/routes/admin.route.js'
+import authRoutes from './src/routes/auth.route.js'
 
-import paymentsRouter from './src/routes/payments.route'
-import subscriptionsRouter from './src/routes/subscriptions.route'
-import statsRoutes from './src/routes/stats.route'
-import userRoutes from './src/routes/user.route'
-import whatsAppRoutes from './src/routes/whatsapp.route'
-import unsyncedContactRoutes from './src/routes/unsyncedcontact.route'
+import paymentsRouter from './src/routes/payments.route.js'
+import subscriptionsRouter from './src/routes/subscriptions.route.js'
+import statsRoutes from './src/routes/stats.route.js'
+import userRoutes from './src/routes/user.route.js'
+import whatsAppRoutes from './src/routes/whatsapp.route.js'
+import unsyncedContactRoutes from './src/routes/unsyncedcontact.route.js'
 
 config()
 
@@ -46,6 +46,7 @@ app.use(express.json())
 const allowedOrigins = [
   'http://localhost:3000',
   'https://botopia-whatsapp.vercel.app',
+  'https://baruc-whatsapp-frontend.vercel.app',
   'https://app.botopia.online',
   'https://www.botopia.online',
   'https://botopia-whatsapp-git-featureavataria-santiago1809s-projects.vercel.app'

@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import fetch from 'node-fetch';
-import { supabase } from '../config/db';
-import type { CustomRequest } from '../interfaces/global';
+import { supabase } from '../config/db.js';
+import type { CustomRequest } from '../interfaces/global.js';
 
 
 export const createSubscription = async (req: CustomRequest, res: Response) => {

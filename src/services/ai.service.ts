@@ -1,5 +1,5 @@
 import { GoogleGenAI } from '@google/genai'
-import type { Message } from '../interfaces/global'
+import type { Message } from '../interfaces/global.js'
 import { config } from 'dotenv'
 
 config()
