@@ -1,6 +1,9 @@
+// Cargar variables de entorno PRIMERO, antes de cualquier importación
+import { config } from 'dotenv'
+config()
+
 import compression from 'compression'
 import cors, { type CorsOptions } from 'cors'
-import { config } from 'dotenv'
 import express from 'express'
 import rateLimit from 'express-rate-limit'
 import helmet from 'helmet'
@@ -17,8 +20,6 @@ import statsRoutes from './src/routes/stats.route.js'
 import userRoutes from './src/routes/user.route.js'
 import whatsAppRoutes from './src/routes/whatsapp.route.js'
 import unsyncedContactRoutes from './src/routes/unsyncedcontact.route.js'
-
-config()
 
 const app = express()
 const server = http.createServer(app)
@@ -107,17 +108,32 @@ app.use('/api/subscriptions', subscriptionsRouter)
 
 app.use('/api/unsyncedcontacts', unsyncedContactRoutes)
 
-const port = process.env.PORT || 3001
+// Health check endpoint para Railway
+app.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+// Root endpoint
+app.get('/', (_req, res) => {
+  res.status(200).json({ message: 'Botopia WhatsApp API', status: 'running' })
+})
+
+const port = Number(process.env.PORT) || 3001
+const host = process.env.HOST || '0.0.0.0' // Escuchar en todas las interfaces para Railway
 server.keepAliveTimeout = 65000
 server.headersTimeout = 70000
 
-process.on('uncaughtException', (res) => {
-  return res
-})
-process.on('unhandledRejection', (res) => {
-  return res
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error)
+  // No hacer return, dejar que el proceso continúe
 })
 
-server.listen(port, () => {
-  console.log(`Server is running on port ${port}`)
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason)
+  // No hacer return, dejar que el proceso continúe
+})
+
+server.listen(port, host, () => {
+  console.log(`Server is running on ${host}:${port}`)
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`)
 })
