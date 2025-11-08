@@ -6,7 +6,7 @@ import type { Server } from 'socket.io'
 import { supabase } from '../config/db.js'
 import type { ChangePassword, CustomRequest } from '../interfaces/global.js'
 import { resetPasswordTemplate, welcomeUserTemplate } from '../lib/constants.js'
-import { transporter } from '../services/email.service.js'
+import { transporter, sendEmail } from '../services/email.service.js'
 import { Role, type User } from '../types/global.js'
 import { clients } from '../WhatsAppClients.js'
 
@@ -63,11 +63,14 @@ export const registerUser = async (req: Request, res: Response) => {
       JWT_SECRET,
       { expiresIn: '5h' }
     )
-    transporter.sendMail({
-      from: `"Botopia Team" <contacto@botopia.tech>`,
+    // Enviar email de bienvenida (no bloquea si falla)
+    sendEmail({
       to: email,
       subject: 'Bienvenido Botopia',
       html: welcomeUserTemplate(user.username)
+    }).catch(err => {
+      console.error('Error al enviar email de bienvenida:', err)
+      // No fallar el registro si el email falla
     })
     res.json({ token, user: { id: user.id, username: user.username, role: user.role, email: user.email } })
   } catch (error) {
@@ -309,11 +312,14 @@ export const requestResetPassword = async (req: Request, res: Response) => {
       expiresIn: '5m'
     })
     otpStore[email] = { otp, token }
-    transporter.sendMail({
-      from: `"Botopia Team" <contacto@botopia.tech>`,
+    // Enviar email con OTP (no bloquea si falla)
+    sendEmail({
       to: email,
       subject: 'Contraseña actualizada',
       html: resetPasswordTemplate(otp)
+    }).catch(err => {
+      console.error('Error al enviar email con OTP:', err)
+      // Continuar aunque falle el email
     })
     const io: Server = req.app.get('io')
     io.emit('otp-sent', { email, message: 'OTP enviado correctamente' })
