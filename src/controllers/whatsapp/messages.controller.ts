@@ -1,9 +1,11 @@
 // image.pngManeja el envío y recepción de mensajes
 import { HttpStatusCode } from 'axios'
 import type { Request, Response } from 'express'
-import { PhoneNumberUtil } from 'google-libphonenumber'
+import libphonenumber from 'google-libphonenumber'
 import type { Server } from 'socket.io'
 import type { Chat, Client, Message } from 'whatsapp-web.js'
+
+const { PhoneNumberUtil } = libphonenumber
 import { supabase } from '../../config/db.js'
 import type {
   CustomRequest,
