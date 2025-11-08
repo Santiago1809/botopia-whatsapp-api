@@ -22,27 +22,8 @@ config()
 
 const app = express()
 const server = http.createServer(app)
-app.use(helmet())
-app.use(compression())
-app.use(telemetryMiddleware)
-app.use(
-  rateLimit({
-    windowMs: 1 * 60 * 1000, // 1 minute
-    max: 500,
-    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
-    legacyHeaders: true,
-    message: {
-      error: 'Too many requests, please try again later.'
-    },
-    validate: {
-      validationsConfig: false,
-      default: true
-    }
-  })
-)
-app.set('trust proxy', 1) // confía en el primer proxy
-app.use(express.json())
 
+// Configurar CORS PRIMERO - antes de otros middlewares
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3002',
@@ -54,7 +35,7 @@ const allowedOrigins = [
 ]
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback) {
-    // Permitir sin origin (requests desde el mismo servidor)
+    // Permitir sin origin (requests desde el mismo servidor o Postman)
     if (!origin) {
       callback(null, true)
       return
@@ -75,14 +56,42 @@ const corsOptions: CorsOptions = {
     // Rechazar otros orígenes
     callback(null, false)
   },
-  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-  credentials: true
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }
 app.use(cors(corsOptions))
 
-// Ahora sí, middleware con límites ampliados
-app.use(express.json({ limit: '50mb' })) // 👈 aquí el cambio clave
-app.use(express.urlencoded({ limit: '50mb', extended: true })) // 👈 y aquí también
+// Configurar Helmet para que NO bloquee los headers de CORS
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false
+}))
+
+app.set('trust proxy', 1) // confía en el primer proxy
+app.use(compression())
+app.use(telemetryMiddleware)
+app.use(
+  rateLimit({
+    windowMs: 1 * 60 * 1000, // 1 minute
+    max: 500,
+    standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+    legacyHeaders: true,
+    message: {
+      error: 'Too many requests, please try again later.'
+    },
+    validate: {
+      validationsConfig: false,
+      default: true
+    }
+  })
+)
+
+// Middleware con límites ampliados
+app.use(express.json({ limit: '50mb' }))
+app.use(express.urlencoded({ limit: '50mb', extended: true }))
 
 const io = new Server(server, { cors: corsOptions })
 app.set('io', io)
