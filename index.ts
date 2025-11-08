@@ -22,7 +22,55 @@ config()
 
 const app = express()
 const server = http.createServer(app)
-app.use(helmet())
+
+// Configurar CORS PRIMERO - antes de otros middlewares
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:3002',
+  'https://botopia-whatsapp.vercel.app',
+  'https://baruc-whatsapp-frontend.vercel.app',
+  'https://app.botopia.online',
+  'https://www.botopia.online',
+  'https://botopia-whatsapp-git-featureavataria-santiago1809s-projects.vercel.app'
+]
+const corsOptions: CorsOptions = {
+  origin: function (origin: string | undefined, callback) {
+    // Permitir sin origin (requests desde el mismo servidor o Postman)
+    if (!origin) {
+      callback(null, true)
+      return
+    }
+    
+    // Verificar si está en la lista de orígenes permitidos
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true)
+      return
+    }
+    
+    // Permitir cualquier subdominio de vercel.app
+    if (origin.endsWith('.vercel.app')) {
+      callback(null, true)
+      return
+    }
+    
+    // Rechazar otros orígenes
+    callback(null, false)
+  },
+  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true,
+  preflightContinue: false,
+  optionsSuccessStatus: 204
+}
+app.use(cors(corsOptions))
+
+// Configurar Helmet para que NO bloquee los headers de CORS
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginEmbedderPolicy: false
+}))
+
+app.set('trust proxy', 1) // confía en el primer proxy
 app.use(compression())
 app.use(telemetryMiddleware)
 app.use(
@@ -40,34 +88,10 @@ app.use(
     }
   })
 )
-app.set('trust proxy', 1) // confía en el primer proxy
-app.use(express.json())
 
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:3002',
-  'https://botopia-whatsapp.vercel.app',
-  'https://baruc-whatsapp-frontend.vercel.app',
-  'https://app.botopia.online',
-  'https://www.botopia.online',
-  'https://botopia-whatsapp-git-featureavataria-santiago1809s-projects.vercel.app'
-]
-const corsOptions: CorsOptions = {
-  origin: function (origin: string | undefined, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true)
-    } else {
-      callback(null, false)
-    }
-  },
-  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-  credentials: true
-}
-app.use(cors(corsOptions))
-
-// Ahora sí, middleware con límites ampliados
-app.use(express.json({ limit: '50mb' })) // 👈 aquí el cambio clave
-app.use(express.urlencoded({ limit: '50mb', extended: true })) // 👈 y aquí también
+// Middleware con límites ampliados
+app.use(express.json({ limit: '50mb' }))
+app.use(express.urlencoded({ limit: '50mb', extended: true }))
 
 const io = new Server(server, { cors: corsOptions })
 app.set('io', io)
