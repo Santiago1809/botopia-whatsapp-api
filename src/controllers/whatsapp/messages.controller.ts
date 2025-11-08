@@ -192,6 +192,11 @@ async function sendLimitReachedMessage(
       message_limit
     )
 
+    if (!transporter) {
+      console.error('⚠️ Servicio de correo no configurado. No se pudo enviar email de límite alcanzado.')
+      return
+    }
+
     await transporter.sendMail({
       from: process.env.SMTP_USER,
       to: user.email,
@@ -905,6 +910,11 @@ export async function handleIncomingMessage(
             // Extract client phone number from msg.from
             const clientPhone: string =
               (msg.from || 'unknown@domain.com').split('@')[0] ?? 'desconocido'
+
+            if (!transporter) {
+              console.error('⚠️ Servicio de correo no configurado. No se pudo enviar notificación al asesor.')
+              return
+            }
 
             await transporter.sendMail({
               from: process.env.SMTP_USER,

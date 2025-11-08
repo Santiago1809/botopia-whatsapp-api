@@ -205,6 +205,14 @@ export async function changeUserPassword(req: Request, res: Response) {
     }
     const hashedPassword = await bcrypt.hash(password, 10)
     await supabase.from('User').update({ password: hashedPassword })
+    
+    if (!transporter) {
+      res.status(HttpStatusCode.InternalServerError).json({
+        message: 'Servicio de correo no configurado. La contraseña fue actualizada pero no se pudo enviar el correo.'
+      })
+      return
+    }
+    
     const mailOptions = {
       from: `"Botopia Team" <contacto@botopia.tech>`,
       to: email,
