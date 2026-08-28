@@ -112,7 +112,7 @@ export const notifyNewPassword = (password: string) => `
       <div class="otp">${password}</div>
       <p style="font-size: 14px; opacity: 0.8;">Por favor, cambia esta contraseña después de iniciar sesión por motivos de seguridad.</p>
     </div>
-    <div class="footer">Powered by <a href="https://botopia.tech" class="btn">Botopia</a></div>
+    <div class="footer">Powered by <a href="https://lumintik.com" class="btn">Lumintik</a></div>
   </div>
 </body>
 </html>
@@ -234,7 +234,7 @@ export const resetPasswordTemplate = (otp: string | number) => `
       <div class="otp">${otp}</div>
       <p class="note">Si no solicitaste esto, puedes ignorar este mensaje o contactar con soporte.</p>
     </div>
-    <div class="footer">Powered by <a href="https://botopia.tech" class="btn">Botopia</a></div>
+    <div class="footer">Powered by <a href="https://lumintik.com" class="btn">Lumintik</a></div>
   </div>
 </body>
 </html>
@@ -246,7 +246,7 @@ export const welcomeUserTemplate = (name: string) => `
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bienvenido a Botopia</title>
+  <title>Bienvenido a Lumintik</title>
   <style>
     body {
       font-family: 'Segoe UI', Arial, sans-serif;
@@ -352,7 +352,7 @@ export const welcomeUserTemplate = (name: string) => `
   <div class="container">
     <div class="header">
       <div class="welcome-emoji">🎉</div>
-      ¡Bienvenido a Botopia!
+      ¡Bienvenido a Lumintik!
     </div>
     <div class="content">
       <p>Hola${name ? ` <span class="highlight">${name}</span>` : ''} 👋</p>
@@ -370,7 +370,7 @@ export const welcomeUserTemplate = (name: string) => `
       
       <p>Si tienes alguna duda o necesitas ayuda, no dudes en contactarnos.</p>
     </div>
-    <div class="footer">Powered by <a href="https://botopia.tech" class="btn">Botopia</a></div>
+    <div class="footer">Powered by <a href="https://lumintik.com" class="btn">Lumintik</a></div>
   </div>
 </body>
 </html>
@@ -463,7 +463,7 @@ export const limitReachedEmailTemplate = (
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Límite de mensajes alcanzado - Botopia</title>
+  <title>Límite de mensajes alcanzado - Lumintik</title>
   <style>
     body {
       font-family: 'Segoe UI', Arial, sans-serif;
@@ -575,7 +575,7 @@ export const limitReachedEmailTemplate = (
       
       <p style="font-size: 14px; opacity: 0.8;">Este es un mensaje automático del sistema. No respondas a este correo.</p>
     </div>
-    <div class="footer">Powered by <a href="https://botopia.tech" class="btn">Botopia</a></div>
+    <div class="footer">Powered by <a href="https://lumintik.com" class="btn">Lumintik</a></div>
   </div>
 </body>
 </html>
@@ -755,7 +755,7 @@ export const advisorRequestEmailTemplate = (
 
       <p>Por favor, atiende a este cliente lo antes posible para brindarle la mejor experiencia de servicio.</p>
     </div>
-    <div class="footer">Powered by <a href="https://botopia.tech" class="btn">Botopia</a></div>
+    <div class="footer">Powered by <a href="https://lumintik.com" class="btn">Lumintik</a></div>
   </div>
 </body>
 </html>

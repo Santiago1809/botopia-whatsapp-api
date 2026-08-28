@@ -214,7 +214,7 @@ export async function changeUserPassword(req: Request, res: Response) {
     }
     
     const mailOptions = {
-      from: `"Botopia Team" <contacto@botopia.tech>`,
+      from: `"Lumintik Team" <contacto@lumintik.com>`,
       to: email,
       subject: 'Contraseña actualizada',
       html: notifyNewPassword(password)

@@ -1,5 +1,6 @@
 {
-  "name": "whatsapp-api",
+  "name": "lumintik-whatsapp-api",
+  "description": "Lumintik WhatsApp API — backend Express/Socket.io para WhatsApp Business, autenticación JWT, CRM y pagos.",
   "module": "index.ts",
   "type": "module",
   "private": true,

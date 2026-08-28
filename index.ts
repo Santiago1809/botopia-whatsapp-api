@@ -28,6 +28,7 @@ const server = http.createServer(app)
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3002',
+  // Dominios de despliegue reales: NO renombrar en el rebrand, romperían CORS.
   'https://botopia-whatsapp.vercel.app',
   'https://baruc-whatsapp-frontend.vercel.app',
   'https://app.botopia.online',
@@ -115,7 +116,7 @@ app.get('/health', (_req, res) => {
 
 // Root endpoint
 app.get('/', (_req, res) => {
-  res.status(200).json({ message: 'Botopia WhatsApp API', status: 'running' })
+  res.status(200).json({ message: 'Lumintik WhatsApp API', status: 'running' })
 })
 
 const port = Number(process.env.PORT) || 3001

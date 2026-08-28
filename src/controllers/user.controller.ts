@@ -169,8 +169,10 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
       .eq('numberid', Number(numberId));
 
     // Handle WhatsApp client cleanup
-    if (clients[numberId]) {
-      const client = clients[numberId];
+    // req.params en Express 5 puede tipar el valor como string | string[]; el mapa se indexa por string.
+    const clientKey = String(numberId)
+    if (clients[clientKey]) {
+      const client = clients[clientKey];
       try {
         if (client.removeAllListeners) {
           try { client.removeAllListeners(); } catch (err) { console.warn('removeAllListeners failed', err); }
@@ -187,7 +189,7 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
       } catch (err) {
         console.warn('Error cleaning up WhatsApp client:', err);
       }
-      delete clients[numberId];
+      delete clients[clientKey];
     }
 
     const { error: deleteError } = await supabase
