@@ -14,11 +14,17 @@ dLocal Go. Persistencia en Supabase.
 
 ```bash
 bun install
+npm rebuild bcrypt        # ver nota de abajo
 cp .env.example .env      # y rellena los valores
 bun run dev               # http://localhost:3001
 ```
 
 Comprobación rápida: `curl http://localhost:3001/health` → `{"status":"ok",...}`.
+
+> **bcrypt**: según la versión de Bun, `bun install` no ejecuta el postinstall que
+> compila el binding nativo y el arranque falla con
+> `Cannot find module .../bcrypt/lib/binding/napi-v3/bcrypt_lib.node`.
+> Se arregla con `npm rebuild bcrypt` una sola vez (o instalando con `npm install`).
 
 ## Orden de arranque
 
