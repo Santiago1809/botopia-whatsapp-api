@@ -40,13 +40,27 @@ export async function getAIResponse(
       }
     }
 
+    // Un agente sin instrucciones es un caso real: la línea se crea con el prompt
+    // vacío y nadie lo rellena. Mandar `systemInstruction: null` hace que el modelo
+    // rechace la petición, y desde fuera eso se ve como "el agente no contesta", sin
+    // pista de que lo único que falta es escribirle qué debe hacer.
+    const instruccion =
+      typeof prompt === 'string' && prompt.trim()
+        ? prompt
+        : 'Eres un asistente de atención al cliente por WhatsApp. Responde de forma breve, cordial y en el mismo idioma en que te escriban.'
+    if (instruccion !== prompt) {
+      console.warn(
+        '⚠️ El agente de esta línea no tiene instrucciones configuradas; se usa un texto por defecto. Configúralo en la pantalla del agente.'
+      )
+    }
+
     // Crea el chat
     const chat = ai.chats.create({
       model,
       history: messages,
       config: {
         temperature: 0,
-        systemInstruction: prompt
+        systemInstruction: instruccion
       }
     })
 
