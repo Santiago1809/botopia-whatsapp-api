@@ -41,13 +41,42 @@ import type { Chat, Client, Message } from 'whatsapp-web.js'
 const constructores = whatsappWeb as unknown as {
   PrivateChat?: new (client: Client, data: unknown) => Chat
   GroupChat?: new (client: Client, data: unknown) => Chat
+  // `Message` también está exportado (index.js:15) y también está declarado como
+  // interface en el index.d.ts. Se necesita para envolver los modelos crudos que
+  // devuelve el navegador, que es exactamente lo que hace la librería al final
+  // de `Chat.fetchMessages` (Chat.js:248: `new Message(this.client, m)`).
+  Message?: new (client: Client, data: unknown) => Message
 }
 
-// Las funciones de `sendStateTyping`/`clearState` se serializan y se ejecutan
-// DENTRO del navegador, donde `window` sí existe. El tsconfig de este backend
-// solo carga la lib ES2022 (nada de DOM), así que hay que declararlo a mano.
+// Las funciones de `sendStateTyping`/`clearState`/`traerMensajesPorId` se
+// serializan y se ejecutan DENTRO del navegador, donde `window` sí existe. El
+// tsconfig de este backend solo carga la lib ES2022 (nada de DOM), así que hay
+// que declararlo a mano.
+/** Un mensaje tal como lo tiene el store de WhatsApp Web (`t` es el epoch). */
+interface MensajeDelNavegador {
+  isNotification?: boolean
+  t?: number
+}
+
+/** El chat del store, del que aquí solo se usa su colección de mensajes. */
+interface ChatDelNavegador {
+  msgs: { getModelsArray: () => MensajeDelNavegador[] }
+}
+
 declare const window: {
-  WWebJS: { sendChatstate: (estado: string, chatId: string) => unknown }
+  WWebJS: {
+    sendChatstate: (estado: string, chatId: string) => unknown
+    getChat: (
+      chatId: string,
+      opciones?: { getAsModel?: boolean }
+    ) => Promise<ChatDelNavegador | null>
+    getMessageModel: (mensaje: MensajeDelNavegador) => unknown
+  }
+  require: (modulo: string) => {
+    loadEarlierMsgs?: (arg: {
+      chat: ChatDelNavegador
+    }) => Promise<MensajeDelNavegador[] | null>
+  }
 }
 
 type IdChat = { server: string; user: string; _serialized: string }
@@ -165,6 +194,143 @@ export function chatDeRespaldo(
 }
 
 /**
+ * ¿Este cliente tiene un navegador con el que hablar?
+ *
+ * `Client` nace con `pupPage = null` (Client.js:103) y solo recibe la página
+ * cuando el navegador arranca (Client.js:478). `destroy()`, en cambio, cierra el
+ * navegador pero NO pone `pupPage` a null (Client.js:1277-1283), así que hay que
+ * mirar también si la página está cerrada.
+ */
+function tieneNavegador(client: Client): boolean {
+  const page = client.pupPage
+  if (!page) return false
+  try {
+    return typeof page.isClosed !== 'function' || !page.isClosed()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * CON LÍMITE DE TIEMPO, y no solo con captura de errores.
+ *
+ * Las llamadas al navegador no siempre fallan: a veces se quedan esperando para
+ * siempre. Pasa con los grupos, y el efecto era peor que un error, porque el
+ * mensaje entrante se quedaba congelado ahí —ni respuesta, ni descarte, ni una
+ * línea en el log— y desde fuera parecía que el agente ignoraba el grupo.
+ *
+ * El historial es un extra: sirve para darle contexto a la IA. Que tarde no
+ * puede costar la respuesta.
+ */
+async function conLimiteDeTiempo<T>(promesa: Promise<T>, ms: number): Promise<T> {
+  let reloj: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promesa,
+      new Promise<never>((_, rechazar) => {
+        reloj = setTimeout(
+          () => rechazar(new Error(`se agotaron los ${ms / 1000}s de espera`)),
+          ms
+        )
+      })
+    ])
+  } finally {
+    if (reloj) clearTimeout(reloj)
+  }
+}
+
+/**
+ * EL HISTORIAL PEDIDO POR EL ID, SIN PASAR POR `getChatById`.
+ *
+ * Es el mismo `evaluate` que hace `Chat.fetchMessages` (Chat.js:203-246), pero
+ * con el id crudo en vez de con el de un objeto Chat que hay que conseguir
+ * antes. Y conseguirlo antes es justo lo que rompía la pantalla:
+ * `client.getChatById` llama a `window.WWebJS.getChat(chatId)` SIN opciones
+ * (Client.js:1694), o sea con `getAsModel = true` (Utils.js:842), y eso pasa por
+ * `window.WWebJS.getChatModel` (Utils.js:938), donde vive el
+ * `window.require('WAWebLidMigrationUtils')` (Utils.js:961) que hoy revienta con
+ * los chats `@lid` y los grupos.
+ *
+ * `fetchMessages` nunca necesitó ese modelo: pide el chat con
+ * `{ getAsModel: false }` (Chat.js:220-222) y solo usa `chat.msgs`. Así que
+ * este camino es ESTRICTAMENTE más fiable que el anterior, no un apaño.
+ *
+ * NUNCA lanza: sin historial devuelve una lista vacía, para que quien llame
+ * pueda intentarlo por el camino de siempre.
+ */
+export async function traerMensajesPorId(
+  client: Client,
+  idSerializado: string,
+  limite: number,
+  etiqueta: string
+): Promise<Message[]> {
+  const page = client.pupPage
+  if (!page || !tieneNavegador(client)) {
+    console.warn(
+      `⚠️ No se pudo leer el historial de ${etiqueta}: la línea no tiene navegador abierto.`
+    )
+    return []
+  }
+
+  const Mensaje = constructores.Message
+  if (typeof Mensaje !== 'function') {
+    // Una versión futura de la librería podría dejar de exportarlo. No es un
+    // error fatal: se devuelve vacío y quien llama cae al camino de siempre.
+    console.warn(
+      `⚠️ whatsapp-web.js ya no exporta Message: el historial de ${etiqueta} se pide por el camino antiguo.`
+    )
+    return []
+  }
+
+  try {
+    const crudos = await conLimiteDeTiempo(
+      page.evaluate(
+        async (chatId: string, limit: number) => {
+          const noEsAviso = (m: MensajeDelNavegador) => !m.isNotification
+          const chat = await window.WWebJS.getChat(chatId, { getAsModel: false })
+          if (!chat) return []
+          let msgs = chat.msgs.getModelsArray().filter(noEsAviso)
+          if (limit > 0) {
+            while (msgs.length < limit) {
+              // `WAWebChatLoadMessages` es otro módulo del navegador que puede
+              // no existir en la versión que Meta sirva hoy. Si falla, nos
+              // quedamos con lo que ya estaba cargado en el store en vez de
+              // perder el historial entero.
+              let viejos: MensajeDelNavegador[] | null = null
+              try {
+                viejos =
+                  (await window
+                    .require('WAWebChatLoadMessages')
+                    .loadEarlierMsgs?.({ chat })) ?? null
+              } catch {
+                break
+              }
+              if (!viejos || !viejos.length) break
+              msgs = [...viejos.filter(noEsAviso), ...msgs]
+            }
+            if (msgs.length > limit) {
+              msgs.sort((a, b) => ((a.t ?? 0) > (b.t ?? 0) ? 1 : -1))
+              msgs = msgs.splice(msgs.length - limit)
+            }
+          }
+          return msgs.map((m) => window.WWebJS.getMessageModel(m))
+        },
+        idSerializado,
+        limite
+      ),
+      15000
+    )
+    return (crudos as unknown[]).map((m) => new Mensaje(client, m))
+  } catch (error) {
+    const detalle = error instanceof Error ? error.message : String(error)
+    console.warn(
+      `⚠️ El historial de ${etiqueta} no se pudo leer por el id (${detalle.slice(0, 200)}); se intenta por el camino antiguo.`
+    )
+    return []
+  }
+}
+
+/**
  * Pide el chat a WhatsApp y, si el navegador falla, sigue adelante con el
  * sustituto. NUNCA lanza: devolver null solo es posible si el id no es un id de
  * WhatsApp.
@@ -177,6 +343,20 @@ export async function resolverChat(
   idSerializado: string,
   etiqueta: string
 ): Promise<{ chat: Chat | null; esRespaldo: boolean }> {
+  // SIN NAVEGADOR NO SE LE PREGUNTA NADA A WHATSAPP.
+  //
+  // `getChatById` es `this.pupPage.evaluate(...)` (Client.js:1694). Con un
+  // cliente cuyo navegador nunca arrancó —`pupPage` sigue en el null del
+  // constructor, Client.js:103— eso lanza "Cannot read properties of null
+  // (reading 'evaluate')", que era el aviso que llenaba el log de producción
+  // haciéndose pasar por un fallo del store de WhatsApp. No lo es: es que la
+  // línea no tiene navegador, y eso no se arregla reintentando.
+  if (!tieneNavegador(client)) {
+    console.warn(
+      `⚠️ ${etiqueta}: la línea no tiene navegador abierto, no se le puede pedir el chat ${idSerializado}.`
+    )
+    return { chat: chatDeRespaldo(client, idSerializado), esRespaldo: true }
+  }
   try {
     const real = await client.getChatById(idSerializado)
     if (real && real.id && real.id._serialized) {
@@ -213,35 +393,18 @@ export async function traerMensajes(
   limite: number,
   etiqueta: string
 ): Promise<Awaited<ReturnType<Chat['fetchMessages']>>> {
-  /**
-   * CON LÍMITE DE TIEMPO, y no solo con captura de errores.
-   *
-   * `fetchMessages` no siempre falla: a veces se queda esperando para siempre. Pasa con
-   * los grupos, y el efecto era peor que un error, porque el mensaje entrante se quedaba
-   * congelado ahí —ni respuesta, ni descarte, ni una línea en el log— y desde fuera
-   * parecía que el agente ignoraba el grupo.
-   *
-   * El historial es un extra: sirve para darle contexto a la IA. Que tarde no puede
-   * costar la respuesta, así que a los 15 segundos se sigue sin él.
-   */
-  const conLimiteDeTiempo = async <T,>(
-    promesa: Promise<T>,
-    ms: number
-  ): Promise<T> => {
-    let reloj: NodeJS.Timeout | undefined
-    try {
-      return await Promise.race([
-        promesa,
-        new Promise<never>((_, rechazar) => {
-          reloj = setTimeout(
-            () => rechazar(new Error(`se agotaron los ${ms / 1000}s de espera`)),
-            ms
-          )
-        })
-      ])
-    } finally {
-      if (reloj) clearTimeout(reloj)
-    }
+  // Mismo corte que en `resolverChat`, y por lo mismo: `Chat.fetchMessages` es
+  // `this.client.pupPage.evaluate(...)` (Chat.js:204). El chat derivado que
+  // devuelve `resolverChat` es una instancia REAL de PrivateChat/GroupChat, así
+  // que hereda ese `evaluate` y reventaba igual con el null. Aquí se dice qué
+  // pasa de verdad en vez de dejar que el error nulo se disfrace de "el
+  // historial falló".
+  const cliente = (chat as unknown as { client?: Client }).client
+  if (cliente && !tieneNavegador(cliente)) {
+    console.warn(
+      `⚠️ No se pudo leer el historial de ${etiqueta}: la línea no tiene navegador abierto.`
+    )
+    return []
   }
 
   try {

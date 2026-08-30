@@ -2,7 +2,7 @@
 import { HttpStatusCode } from 'axios'
 import type { Response } from 'express'
 import { supabase } from '../../config/db.js'
-import { clients } from '../../WhatsAppClients.js'
+import { clienteVivo } from '../../WhatsAppClients.js'
 import type { CustomRequest } from '../../interfaces/global.js'
 import {
   exigirNumeroPropio,
@@ -38,7 +38,11 @@ export async function getContacts(req: CustomRequest, res: Response) {
   // la libreta de contactos de otra empresa, nombres y teléfonos incluidos.
   if (!(await exigirNumeroPropio(req, res, { id: numberId as string }))) return
 
-  const client = clients[numberId as string]
+  // `clienteVivo` y no `clients[...]`: una entrada del mapa puede ser un cliente
+  // cuyo navegador nunca arrancó (`pupPage` null, Client.js:103). Leerlo en crudo
+  // hacía que `getContacts()` muriera con "Cannot read properties of null
+  // (reading 'evaluate')" en vez de decir que la línea no está conectada.
+  const client = clienteVivo(numberId as string)
   if (!client) {
     res
       .status(HttpStatusCode.NotFound)

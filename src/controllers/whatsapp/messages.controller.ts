@@ -25,7 +25,7 @@ import {
   emitirMensajeEntrante,
   emitirTopeAlcanzado
 } from '../../services/events/webjsEvents.js'
-import { clients } from '../../WhatsAppClients.js'
+import { clienteVivo } from '../../WhatsAppClients.js'
 
 /**
  * Consume un mensaje del cupo mensual del usuario.
@@ -324,7 +324,10 @@ export async function sendMessage(req: CustomRequest, res: Response) {
       }
       // Si está en Unsyncedcontact, permite el envío (sin importar agentehabilitado)
     }
-    const client = clients[numberid]
+    // Un cliente sin navegador está en el mapa igual que uno bueno: si se lee en
+    // crudo, el envío revienta con el "reading 'evaluate'" de null en vez de
+    // avisar de que la línea no está conectada.
+    const client = clienteVivo(numberid)
     if (!client) {
       res.status(HttpStatusCode.NotFound).json({
         message: 'No hay sesión activa para este número'
@@ -561,7 +564,7 @@ export async function handleIncomingMessage(
     }
 
     // Verificar que el cliente WhatsApp está disponible
-    const client = clients[numberId]
+    const client = clienteVivo(numberId)
     if (!client || !client.info || !client.info.wid) {
       descartar('la sesión de WhatsApp de esta línea no está activa')
       return
@@ -790,7 +793,7 @@ export async function handleIncomingMessage(
         let nombreVisible = numberFromWaId
         if (waIdToCheck.endsWith('@lid')) {
           try {
-            const cliente = clients[numberId]
+            const cliente = clienteVivo(numberId)
             const [par] = ((await cliente?.getContactLidAndPhone([waIdToCheck])) ??
               []) as Array<{ pn?: string }>
             const telefono = par?.pn?.split('@')[0]

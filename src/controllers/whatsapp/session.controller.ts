@@ -17,9 +17,16 @@ import {
   ES_ID_WHATSAPP,
   idDeChatDelMensaje,
   resolverChat,
-  traerMensajes
+  traerMensajes,
+  traerMensajesPorId
 } from '../../lib/chatDeRespaldo.js'
-import { clients } from '../../WhatsAppClients.js'
+import {
+  cerrarCliente,
+  clienteVivo,
+  clients,
+  marcarArranque
+} from '../../WhatsAppClients.js'
+import { soltarCerrojoDeSesion } from '../../lib/perfilChromium.js'
 import { JWT_SECRET } from '../../middleware/jwt.middleware.js'
 import {
   exigirNumeroPropio,
@@ -67,6 +74,16 @@ const ultimoQR = new Map<string, { qr: string; en: number }>()
 const VIGENCIA_QR_MS = 60_000
 
 /**
+ * Lo que el historial espera a que una línea caída vuelva a estar lista.
+ *
+ * No es un límite del arranque —ese no puede tenerlo: si hace falta QR, 'ready'
+ * no llega hasta que una persona lo escanea y cortar por tiempo mataría una
+ * vinculación legítima—. Es solo lo que esta petición concreta aguanta antes de
+ * contestar "se está reconectando". El navegador sigue abriéndose por su cuenta.
+ */
+const ESPERA_LINEA_MS = Number(process.env.ESPERA_LINEA_MS || 45_000)
+
+/**
  * El nombre de sala de una línea, SIEMPRE igual: el id numérico en texto.
  *
  * Sin esto, 4, "4" y " 4" son tres salas distintas de socket.io y el QR sale por
@@ -88,14 +105,17 @@ const clientesEscuchando = new WeakSet<object>()
  * PONERLE LA OREJA A UNA LÍNEA. Sin esto, la sesión es SORDA.
  *
  * Este manejador vivía suelto dentro de `startWhatsApp`, y era el ÚNICO
- * `client.on('message')` de todo el repositorio. El problema: no es el único
- * sitio donde se crea un `new Client(...)` — `get-chat-history` también crea uno
- * cuando no hay sesión, y ese solo registraba 'ready' y 'auth_failure'. Una
+ * `client.on('message')` de todo el repositorio. El problema: no era el único
+ * sitio donde se creaba un `new Client(...)` — `get-chat-history` creaba otro
+ * cuando no había sesión, y ese solo registraba 'ready' y 'auth_failure'. Una
  * línea levantada por ese camino (o tras un reinicio del proceso en el que nadie
  * llame a POST /start) quedaba con el QR válido y la sesión activa pero SIN
  * NADIE ESCUCHANDO: "Sin mensajes" en la app, el agente mudo y —lo peor para
  * diagnosticar— ni una sola línea de "PERDIDO" en el log, porque no había
- * manejador que la escribiera. Ahora las dos vías llaman aquí.
+ * manejador que la escribiera.
+ *
+ * Hoy ya no hay dos caminos: los dos pasan por `arrancarLinea`, que es el único
+ * sitio del repositorio que construye un Client, y que llama aquí.
  *
  * El manejador es async y sin try/catch cualquier fallo interno se convertía en
  * un "Unhandled Rejection" con un stack de puppeteer que no dice de qué mensaje
@@ -183,6 +203,250 @@ export function olvidarQR(numberId: string | number): void {
   ultimoQR.delete(nombreDeSala(numberId))
 }
 
+/**
+ * LAS OPCIONES DEL CLIENTE, EN UN SOLO SITIO.
+ *
+ * Estaban copiadas palabra por palabra en `startWhatsApp` y en
+ * `get-chat-history`. Dos copias del mismo bloque significan dos formas de
+ * arrancar la misma línea que pueden separarse sin que nadie se entere: de
+ * hecho ya se habían separado —la del historial no tenía `.catch` ni limpieza
+ * del mapa— y esa diferencia es exactamente lo que dejaba clientes sin
+ * navegador atrapados en el mapa.
+ */
+function opcionesDeCliente(numberId: string) {
+  return {
+    // SALIDA DE EMERGENCIA PARA LA VERSIÓN DE WHATSAPP WEB.
+    //
+    // whatsapp-web.js habla con el WhatsApp Web real dentro del navegador. Cuando Meta
+    // publica una versión nueva, los selectores de la librería dejan de encajar y las
+    // llamadas al store fallan con un error opaco —literalmente "r: r"—. El síntoma no
+    // parece un error: el mensaje entrante se descarta y el chat se queda en "Sin
+    // mensajes" con el agente mudo.
+    //
+    // Por defecto NO se fija nada: la librería elige, que es lo que funciona el 99% del
+    // tiempo. Fijar una versión a ciegas es peor que no fijar ninguna —el repositorio de
+    // versiones solo publica alphas, y apuntar a una que no existe devuelve 404 y deja
+    // el navegador sin arrancar—. Con WWEB_VERSION se puede clavar una concreta el día
+    // que haga falta, sin desplegar.
+    ...(process.env.WWEB_VERSION
+      ? {
+          webVersionCache: {
+            type: 'remote' as const,
+            remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${process.env.WWEB_VERSION}.html`
+          }
+        }
+      : {}),
+    // Devuelve a MsgKey el `_serialized` que WhatsApp renombró a `$1` en julio.
+    // Sin esto fallan la lectura del chat, el envío y el id del mensaje entrante.
+    // Ver src/lib/parcheMsgKey.ts.
+    evalOnNewDoc: parcheMsgKey,
+    authStrategy: new LocalAuth({ clientId: numberId }),
+    puppeteer: {
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-features=TranslateUI',
+        '--disable-default-apps',
+        '--disable-extensions',
+        '--no-first-run',
+        '--disable-plugins',
+        '--disable-sync',
+        '--disable-background-networking',
+        '--disable-software-rasterizer',
+        '--memory-pressure-off',
+        '--max_old_space_size=512'
+      ]
+    }
+  }
+}
+
+/**
+ * ARRANQUES EN CURSO, PARA QUE NUNCA HAYA DOS NAVEGADORES SOBRE EL MISMO PERFIL.
+ *
+ * Había DOS sitios que hacían `new Client(...)` para la misma línea —el
+ * endpoint de arranque y el socket del historial— sin mirar si el otro estaba a
+ * medias. Dos Chromium sobre `session-<id>` es justo lo que el `SingletonLock`
+ * existe para impedir; el segundo falla con "Code: 21" y deja el cerrojo (y un
+ * cliente sin navegador) detrás. Ahora quien llegue segundo se engancha al
+ * arranque que ya está en marcha.
+ */
+const arranques = new Map<string, Promise<WhatsAppClient>>()
+
+/**
+ * Deja la línea con un navegador vivo y devuelve el cliente cuando esté LISTO.
+ *
+ * La promesa se resuelve en 'ready' y se rechaza si el navegador no abre o si
+ * la autenticación falla. NO lleva reloj propio a propósito: cuando hace falta
+ * QR, 'ready' no llega hasta que una persona lo escanea, y cortar por tiempo
+ * mataría una vinculación legítima. Quien no pueda esperar (el historial) pone
+ * su propio límite SIN destruir el cliente.
+ */
+function arrancarLinea(
+  numberId: string | number,
+  io: Server
+): Promise<WhatsAppClient> {
+  const clave = nombreDeSala(numberId)
+  const enMarcha = arranques.get(clave)
+  if (enMarcha) return enMarcha
+
+  const sala = clave
+  const idLinea = Number(clave)
+
+  const promesa = (async () => {
+    // Lo que hubiera antes se cierra: puede ser un cliente sano al que el
+    // usuario le dio a "reconectar", o el cadáver de un arranque fallido.
+    const viejo = clients[clave]
+    if (viejo) await cerrarCliente(viejo, clave, 'se va a rearrancar la línea')
+
+    // EL ARREGLO DE LA CAUSA RAÍZ. Si un contenedor anterior murió sin cerrar
+    // Chromium, su cerrojo sigue en el volumen y el navegador nuevo se niega a
+    // abrir el perfil ("profile appears to be in use ... on another computer"),
+    // así que la línea no arranca NUNCA. Solo se hace aquí, donde ya sabemos
+    // que este proceso no tiene navegador para esta línea.
+    soltarCerrojoDeSesion(clave)
+
+    const client = new Client(opcionesDeCliente(clave))
+    // Se publica en el mapa desde ya —aunque todavía no sirva— para que las
+    // vías de limpieza (parar la línea, borrar el número) puedan cerrarle el
+    // navegador si el usuario cancela a mitad. `clienteVivo()` es quien impide
+    // que alguien lo USE antes de tiempo, y `marcarArranque` evita que lo tire
+    // del mapa mientras está naciendo.
+    clients[clave] = client
+    marcarArranque(clave, true)
+
+    client.on('qr', async (qr) => {
+      try {
+        const qrImage = await QRCode.toDataURL(qr)
+        // Se guarda ANTES de emitir: si no hay nadie escuchando, el código sigue
+        // disponible para el primer socket que entre a la sala (ver join-room).
+        ultimoQR.set(sala, { qr: qrImage, en: Date.now() })
+        // Cuántos sockets hay DENTRO de la sala en el instante del envío. Es el
+        // dato que faltaba para diagnosticar esta pantalla: el log anterior decía
+        // "generated successfully" exactamente igual cuando el QR llegaba a un
+        // navegador que cuando se emitía al vacío.
+        const enSala = io.sockets.adapter.rooms.get(sala)?.size ?? 0
+        console.info(
+          `✅ QR generado para numberId: ${idLinea} — sockets en la sala: ${enSala}`
+        )
+        io.to(sala).emit('qr-code', { numberId: idLinea, qr: qrImage })
+      } catch (error) {
+        console.error('❌ Error procesando el QR:', error)
+      }
+      // El evento avisa de que HAY un QR esperando, para que el cliente pueda
+      // llamar a su operador. El código NO viaja: es una credencial de sesión y
+      // quien lo escanee se apodera de la línea.
+      void marcarQRPendiente(clave)
+    })
+
+    client.on('ready', () => {
+      // Ya se escaneó: el QR guardado es una credencial gastada y no se le puede
+      // volver a entregar a nadie que entre a la sala.
+      olvidarQR(sala)
+      // Se vuelve a fijar por si alguien retiró la entrada mientras arrancaba:
+      // a partir de aquí el cliente SÍ tiene navegador y es el bueno.
+      clients[clave] = client
+      io.to(sala).emit('whatsapp-ready', { numberId: idLinea })
+      // Único "línea conectada" que existe en esta vía.
+      void marcarLineaConectada(clave, 'qr_scanned')
+    })
+
+    // La librería DESTRUYE el navegador ella sola en este caso (Client.js:193),
+    // así que la entrada del mapa quedaba apuntando a un cliente sin navegador
+    // y nadie la borraba nunca: el siguiente que pidiera el historial se
+    // encontraba el cadáver. Ahora se retira aquí.
+    client.on('auth_failure', () => {
+      olvidarQR(sala)
+      void marcarLineaDesconectada(clave, 'auth_failure')
+      if (clients[clave] === client) delete clients[clave]
+    })
+
+    client.on('disconnected', async () => {
+      // Se emite ANTES de cerrar nada: si el cierre se cuelga —que es
+      // exactamente lo que pasa cuando Chromium ya murió— el aviso ya salió y el
+      // cliente se entera igual de que su línea se cayó.
+      olvidarQR(sala)
+      void marcarLineaDesconectada(clave, 'logged_out')
+      // Aquí NO se llama a logout(): la librería ya destruyó el navegador antes
+      // de emitir este evento (Client.js:851-853), así que logout() fallaba
+      // contra un navegador muerto y el `delete` que venía detrás no llegaba a
+      // ejecutarse. Cliente destruido, entrada viva: otro cadáver en el mapa.
+      if (clients[clave] === client) {
+        await cerrarCliente(client, clave, 'la sesión se desconectó')
+      }
+      io.to(sala).emit('whatsapp-numbers-updated')
+    })
+
+    // Se le pasa el id NUMÉRICO, igual que antes: `handleIncomingMessage` lo usa
+    // para consultar la base y para nombrar la sala de socket.io. Es el camino
+    // por el que hoy entran los mensajes y responde el agente, y no se toca.
+    escucharMensajesEntrantes(client, idLinea, io)
+
+    await new Promise<void>((resolver, rechazar) => {
+      let terminado = false
+      const fallar = (motivo: unknown) => {
+        if (terminado) return
+        terminado = true
+        rechazar(motivo instanceof Error ? motivo : new Error(String(motivo)))
+      }
+      client.once('ready', () => {
+        if (terminado) return
+        terminado = true
+        resolver()
+      })
+      client.once('auth_failure', (mensaje: string) =>
+        fallar(new Error(`auth_failure: ${mensaje}`))
+      )
+      // EL `.catch` QUE FALTABA. En la vía del historial, `initialize()` se
+      // llamaba a pelo dentro del ejecutor de la promesa: cuando Chromium no
+      // arrancaba, el rechazo salía por el `unhandledRejection` global de
+      // index.ts —que lo imprime y sigue—, la promesa se quedaba pendiente para
+      // siempre y la entrada del mapa se quedaba ocupada por un cliente sin
+      // navegador. Ese era el "Cannot read properties of null (reading
+      // 'evaluate')" que el usuario veía como un chat vacío.
+      client.initialize().catch(fallar)
+    })
+
+    return client
+  })().catch(async (error: unknown) => {
+    const detalle = error instanceof Error ? error.message : String(error)
+    console.error(
+      `❌ No se pudo abrir el navegador de WhatsApp de la línea ${clave}: ${detalle}`
+    )
+    // Fallo de ARRANQUE, distinto de una caída: la línea nunca llegó a estar
+    // viva. Se distingue en el evento por reason='startup_failed'.
+    void marcarLineaDesconectada(clave, 'startup_failed')
+    const roto = clients[clave]
+    if (roto) await cerrarCliente(roto, clave, 'el arranque falló')
+    olvidarQR(sala)
+    io.to(sala).emit('whatsapp-error', {
+      numberId: idLinea,
+      message:
+        'No pudimos abrir el navegador que genera el código QR. Vuelve a intentarlo; si insiste, la sesión guardada de esta línea puede estar bloqueada.',
+      detail: detalle
+    })
+    throw error instanceof Error ? error : new Error(detalle)
+  })
+
+  arranques.set(clave, promesa)
+  void promesa
+    .catch(() => {
+      /* ya se avisó arriba; aquí solo se limpia el registro */
+    })
+    .finally(() => {
+      if (arranques.get(clave) === promesa) arranques.delete(clave)
+      marcarArranque(clave, false)
+    })
+
+  return promesa
+}
+
 export async function startWhatsApp(req: CustomRequest, res: Response) {
   const { numberId } = req.body as Partial<StartWhatsApp>
   if (!numberId) {
@@ -207,151 +471,30 @@ export async function startWhatsApp(req: CustomRequest, res: Response) {
     // contra un id numérico, así que un "4" en vez de un 4 tiraba el QR en
     // silencio, sin log en ninguno de los dos lados.
     const idLinea = Number(number.id)
-    const sala = nombreDeSala(idLinea)
-
-    if (clients[numberId]) {
-      const client = clients[numberId]
-      await client.logout()
-      await client.destroy()
-      delete clients[numberId]
-    }
-    const client = new Client({
-      // SALIDA DE EMERGENCIA PARA LA VERSIÓN DE WHATSAPP WEB.
-      //
-      // whatsapp-web.js habla con el WhatsApp Web real dentro del navegador. Cuando Meta
-      // publica una versión nueva, los selectores de la librería dejan de encajar y las
-      // llamadas al store fallan con un error opaco —literalmente "r: r"—. El síntoma no
-      // parece un error: el mensaje entrante se descarta y el chat se queda en "Sin
-      // mensajes" con el agente mudo.
-      //
-      // Por defecto NO se fija nada: la librería elige, que es lo que funciona el 99% del
-      // tiempo. Fijar una versión a ciegas es peor que no fijar ninguna —el repositorio de
-      // versiones solo publica alphas, y apuntar a una que no existe devuelve 404 y deja
-      // el navegador sin arrancar—. Con WWEB_VERSION se puede clavar una concreta el día
-      // que haga falta, sin desplegar.
-      ...(process.env.WWEB_VERSION
-        ? {
-            webVersionCache: {
-              type: 'remote' as const,
-              remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${process.env.WWEB_VERSION}.html`
-            }
-          }
-        : {}),
-      // Devuelve a MsgKey el `_serialized` que WhatsApp renombró a `$1` en julio.
-      // Sin esto fallan la lectura del chat, el envío y el id del mensaje entrante.
-      // Ver src/lib/parcheMsgKey.ts.
-      evalOnNewDoc: parcheMsgKey,
-      authStrategy: new LocalAuth({ clientId: numberId.toString() }),
-      puppeteer: {
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--disable-gpu',
-          '--disable-background-timer-throttling',
-          '--disable-backgrounding-occluded-windows',
-          '--disable-renderer-backgrounding',
-          '--disable-features=TranslateUI',
-          '--disable-default-apps',
-          '--disable-extensions',
-          '--no-first-run',
-          '--disable-plugins',
-          '--disable-sync',
-          '--disable-background-networking',
-          '--disable-software-rasterizer',
-          '--memory-pressure-off',
-          '--max_old_space_size=512'
-        ]
-      }
-    })
-    if (client) {
-      clients[numberId] = client
-    }
     const io: Server = req.app.get('io')
 
-    client.on('qr', async (qr) => {
-      try {
-        const qrImage = await QRCode.toDataURL(qr)
-        // Se guarda ANTES de emitir: si no hay nadie escuchando, el código sigue
-        // disponible para el primer socket que entre a la sala (ver join-room).
-        ultimoQR.set(sala, { qr: qrImage, en: Date.now() })
-        // Cuántos sockets hay DENTRO de la sala en el instante del envío. Es el
-        // dato que faltaba para diagnosticar esta pantalla: el log anterior decía
-        // "generated successfully" exactamente igual cuando el QR llegaba a un
-        // navegador que cuando se emitía al vacío.
-        const enSala = io.sockets.adapter.rooms.get(sala)?.size ?? 0
-        console.info(
-          `✅ QR generado para numberId: ${idLinea} — sockets en la sala: ${enSala}`
-        )
-        io.to(sala).emit('qr-code', { numberId: idLinea, qr: qrImage })
-      } catch (error) {
-        console.error('❌ Error procesando el QR:', error)
-      }
-      // El evento avisa de que HAY un QR esperando, para que el cliente pueda
-      // llamar a su operador. El código NO viaja: es una credencial de sesión y
-      // quien lo escanee se apodera de la línea.
-      void marcarQRPendiente(numberId)
-    })
-
-    client.on('ready', () => {
-      // Ya se escaneó: el QR guardado es una credencial gastada y no se le puede
-      // volver a entregar a nadie que entre a la sala.
-      olvidarQR(sala)
-      io.to(sala).emit('whatsapp-ready', { numberId: idLinea })
-      // Único "línea conectada" que existe en esta vía.
-      void marcarLineaConectada(numberId, 'qr_scanned')
-    })
-
-    // No estaba registrado y es un fallo distinto de 'disconnected': aquí la
-    // sesión ni siquiera llegó a autenticarse. Solo emite el evento, no cambia
-    // nada del comportamiento existente.
-    client.on('auth_failure', () => {
-      olvidarQR(sala)
-      void marcarLineaDesconectada(numberId, 'auth_failure')
-    })
-
-    client.on('disconnected', async () => {
-      // Se emite ANTES de destruir la sesión: si logout() o destroy() se cuelgan
-      // —que es exactamente lo que pasa cuando Chromium ya murió— el aviso ya
-      // salió y el cliente se entera igual de que su línea se cayó.
-      olvidarQR(sala)
-      void marcarLineaDesconectada(numberId, 'logged_out')
-      try {
-        if (clients[numberId]) {
-          const client = clients[numberId]
-          await client.logout()
-          await client.destroy()
-          delete clients[numberId]
-          io.to(sala).emit('whatsapp-numbers-updated')
-        }
-      } catch (error) {
-        console.log('❌ Error destruyendo la sesión de WhatsApp:', error)
-      }
-    })
-
-    escucharMensajesEntrantes(client, numberId, io)
-
-    // initialize() se lanzaba sin await y sin catch: si Chromium no arranca (es lo
-    // que pasa cuando faltan sus librerías del sistema en el contenedor), el error
-    // se perdía como unhandled rejection, el front recibía "WhatsApp iniciado" y se
-    // quedaba esperando para siempre un QR que nunca iba a llegar. Ahora el fallo
-    // viaja por socket a la misma pantalla que espera el QR.
-    client.initialize().catch((error: unknown) => {
-      const detail = error instanceof Error ? error.message : String(error)
-      console.error('❌ No se pudo abrir el navegador de WhatsApp:', detail)
-      // Fallo de ARRANQUE, distinto de una caída: la línea nunca llegó a estar
-      // viva. Se distingue en el evento por reason='startup_failed'.
-      void marcarLineaDesconectada(numberId, 'startup_failed')
-      delete clients[numberId]
-      olvidarQR(sala)
-      io.to(sala).emit('whatsapp-error', {
-        numberId: idLinea,
-        message:
-          'No pudimos abrir el navegador que genera el código QR. Al servidor le falta Chromium o alguna de sus librerías del sistema.',
-        detail
-      })
+    // ARRANCAR ES UNA SOLA COSA Y VIVE EN UN SOLO SITIO (`arrancarLinea`).
+    //
+    // Antes, aquí se hacía `await client.logout()` sobre el cliente anterior. Dos
+    // problemas, los dos observados en producción:
+    //
+    //   · con `pupPage` null —un arranque que falló— `logout()` lanza el mismo
+    //     "Cannot read properties of null (reading 'evaluate')" (Client.js:1290)
+    //     ANTES de llegar al `delete clients[numberId]`. Este endpoint devolvía
+    //     500 y la entrada podrida se quedaba en el mapa: la línea no se podía
+    //     revivir de ninguna manera y la única salida que le quedaba al usuario
+    //     era crear una línea NUEVA. De ahí que el numberId fuera subiendo
+    //     2, 4, 5, 7, 8, 9, 10 con el mismo teléfono.
+    //   · `LocalAuth.logout()` BORRA la carpeta de sesión (LocalAuth.js:56-68),
+    //     así que reconectar exigía escanear el QR aunque la sesión estuviera
+    //     perfecta. Ahora se cierra sin desvincular y la sesión guardada se
+    //     restaura sola: en el caso normal el usuario no toca el teléfono.
+    //
+    // No se espera a 'ready': cuando hace falta QR, 'ready' no llega hasta que
+    // alguien lo escanea. El QR y el resultado viajan por socket a la sala, que
+    // es lo que la pantalla de vincular está escuchando.
+    void arrancarLinea(idLinea, io).catch(() => {
+      /* el fallo ya se avisó por 'whatsapp-error' dentro de arrancarLinea */
     })
     res.status(HttpStatusCode.Ok).json({ message: 'WhatsApp iniciado' })
   } catch (error) {
@@ -386,71 +529,31 @@ export async function stopWhatsApp(req: CustomRequest, res: Response) {
       // que un arranque posterior vuelva a contar como transición real.
       olvidarLinea(number.id)
       olvidarQR(number.id)
-      await supabase.from('WhatsAppNumber').delete().eq('id', number.id)
-      if (clients[number.id]) {
-        const client = clients[number.id]
 
-        // Define a safer cleanup function
-        const safeCleanup = async () => {
-          // Remove event listeners first
-          try {
-            client?.removeAllListeners()
-          } catch (err) {
-            console.warn('removeAllListeners failed', err)
-          }
+      // AQUÍ HABÍA UN `DELETE` DE LA FILA. "Detener" estaba implementado como
+      // "borrar la vinculación": este bucle recorría TODOS los números del
+      // usuario y borraba cada fila de app."WhatsAppNumber", y con ella —por el
+      // ON DELETE CASCADE— toda su agenda de contactos. Después, volver a
+      // conectar exigía crear una fila NUEVA, con un id nuevo, y de ahí que el
+      // numberId subiera solo mientras el teléfono era siempre el mismo.
+      // Detener es apagar el navegador. Borrar sigue siendo exclusivo de
+      // DELETE /api/user/delete-number/:id, que es explícito y avisa.
 
-          // Attempt logout if possible
-          try {
-            if (client?.pupBrowser && client.pupBrowser.isConnected()) {
-              await client.logout()
-            }
-          } catch (err) {
-            console.warn('logout failed', err)
-          }
-
-          // Close browser resources
-          try {
-            if (client?.pupPage && !client.pupPage.isClosed?.()) {
-              await client.pupPage.close().catch(() => {})
-            }
-          } catch (err) {
-            console.warn('pupPage close failed', err)
-          }
-
-          // Handle browser disconnection
-          try {
-            if (client?.pupBrowser) {
-              if (client.pupBrowser.isConnected?.()) {
-                client.pupBrowser.disconnect()
-              }
-              await client.pupBrowser.close().catch(() => {})
-            }
-          } catch (err) {
-            console.warn('pupBrowser close failed', err)
-          }
-
-          // Final cleanup
-          try {
-            if (typeof client?.destroy === 'function') {
-              await client.destroy()
-            }
-          } catch (err) {
-            console.warn('destroy failed', err)
-          }
-        }
-
-        // Execute the cleanup with timeout protection
-        try {
-          await Promise.race([
-            safeCleanup(),
-            new Promise((resolve) => setTimeout(resolve, 5000))
-          ])
-        } catch (err) {
-          console.error('Client cleanup failed:', err)
-        }
-
-        // Always delete the client reference
-        delete clients[number.id]
+      const clave = nombreDeSala(number.id)
+      const client = clients[clave]
+      if (client) {
+        // Se lee `clients` en crudo y no `clienteVivo()`: esta vía necesita el
+        // objeto AUNQUE esté muerto, que es justo a quien hay que cerrarle el
+        // navegador para que no quede un Chromium huérfano comiéndose el
+        // contenedor.
+        //
+        // Tampoco se llama a `logout()`: `LocalAuth.logout()` borra la carpeta
+        // de sesión (LocalAuth.js:56-68) y pararía costando un QR nuevo.
+        await Promise.race([
+          cerrarCliente(client, clave, 'el usuario detuvo la línea'),
+          new Promise((resolver) => setTimeout(resolver, 5000))
+        ])
+        delete clients[clave]
       }
     }
     res.status(HttpStatusCode.Ok).json({ message: 'WhatsApp detenido' })
@@ -681,86 +784,65 @@ export function setupSocketEvents(io: Server) {
           return
         }
 
-        let client = clients[numberId]
+        // EL CADÁVER QUE DEJABA EL CHAT EN BLANCO.
+        //
+        // Antes esto era `clients[numberId]` a pelo y la única condición era que
+        // la entrada EXISTIERA. Un `Client` cuyo navegador nunca arrancó existe
+        // igual —nace con `pupPage = null` (Client.js:103)— así que el
+        // `if (!client)` que reconstruye la sesión no se alcanzaba nunca y todas
+        // las peticiones acababan en `pupPage.evaluate` sobre null: los dos
+        // avisos del log ("no devolvió el chat" y "chat derivado") y, en
+        // pantalla, "No hay mensajes en este chat aún" sobre una conversación
+        // que sí existe. `clienteVivo` comprueba que haya navegador y, si no lo
+        // hay, retira la entrada para que la línea se pueda rearrancar.
+        let client = clienteVivo(numberId)
         if (!client) {
-          // Intentar inicializar el cliente automáticamente
+          // La línea sigue existiendo en la base pero este proceso no tiene su
+          // navegador (un redespliegue, un arranque que falló). Se rearranca con
+          // la sesión guardada: no hace falta QR mientras la carpeta del perfil
+          // siga en el volumen.
           const { data: number } = await supabase
             .from('WhatsAppNumber')
-            .select('*')
+            .select('id')
             .eq('id', numberId)
             .single()
-          if (number) {
-            client = new Client({
-              // SALIDA DE EMERGENCIA PARA LA VERSIÓN DE WHATSAPP WEB.
-              //
-              // whatsapp-web.js habla con el WhatsApp Web real dentro del navegador. Cuando Meta
-              // publica una versión nueva, los selectores de la librería dejan de encajar y las
-              // llamadas al store fallan con un error opaco —literalmente "r: r"—. El síntoma no
-              // parece un error: el mensaje entrante se descarta y el chat se queda en "Sin
-              // mensajes" con el agente mudo.
-              //
-              // Por defecto NO se fija nada: la librería elige, que es lo que funciona el 99% del
-              // tiempo. Fijar una versión a ciegas es peor que no fijar ninguna —el repositorio de
-              // versiones solo publica alphas, y apuntar a una que no existe devuelve 404 y deja
-              // el navegador sin arrancar—. Con WWEB_VERSION se puede clavar una concreta el día
-              // que haga falta, sin desplegar.
-              ...(process.env.WWEB_VERSION
-                ? {
-                    webVersionCache: {
-                      type: 'remote' as const,
-                      remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${process.env.WWEB_VERSION}.html`
-                    }
-                  }
-                : {}),
-              // Devuelve a MsgKey el `_serialized` que WhatsApp renombró a `$1` en julio.
-              // Sin esto fallan la lectura del chat, el envío y el id del mensaje entrante.
-              // Ver src/lib/parcheMsgKey.ts.
-              evalOnNewDoc: parcheMsgKey,
-              authStrategy: new LocalAuth({ clientId: numberId.toString() }),
-              puppeteer: {
-                headless: true,
-                args: [
-                  '--no-sandbox',
-                  '--disable-setuid-sandbox',
-                  '--disable-dev-shm-usage',
-                  '--disable-accelerated-2d-canvas',
-                  '--disable-gpu',
-                  '--disable-background-timer-throttling',
-                  '--disable-backgrounding-occluded-windows',
-                  '--disable-renderer-backgrounding',
-                  '--disable-features=TranslateUI',
-                  '--disable-default-apps',
-                  '--disable-extensions',
-                  '--no-first-run',
-                  '--disable-plugins',
-                  '--disable-sync',
-                  '--disable-background-networking',
-                  '--disable-software-rasterizer',
-                  '--memory-pressure-off',
-                  '--max_old_space_size=512'
-                ]
-              }
+          if (!number) return
+
+          try {
+            // Con reloj PROPIO y sin destruir nada: si la sesión guardada ya no
+            // vale, `arrancarLinea` acabará emitiendo un QR y 'ready' no llegará
+            // hasta que alguien lo escanee. Esperar ahí para siempre dejaría la
+            // pantalla colgada, así que se responde y se deja la línea
+            // arrancando por su cuenta.
+            client = await Promise.race([
+              arrancarLinea(numberId, io),
+              new Promise<never>((_, rechazar) =>
+                setTimeout(
+                  () => rechazar(new Error('la línea no llegó a estar lista')),
+                  ESPERA_LINEA_MS
+                )
+              )
+            ])
+          } catch (error) {
+            const detalle = error instanceof Error ? error.message : String(error)
+            const pideQR = qrVigente(numberId) !== null
+            console.warn(
+              `⚠️ Historial de la línea ${numberId} sin sesión activa: ${detalle.slice(0, 200)}`
+            )
+            // Se distingue de FALLO_STORE a propósito: esto NO se arregla
+            // reintentando, y el front reintentaba a ciegas hasta agotar su
+            // techo mientras el usuario veía "Sin mensajes".
+            socket.emit('chat-history-error', {
+              numberId,
+              to,
+              code: 'LINEA_CAIDA',
+              message: pideQR
+                ? 'Esta línea perdió la sesión de WhatsApp: escanea el código QR para volver a vincularla.'
+                : 'La línea de WhatsApp se está reconectando. Abre el chat de nuevo en unos segundos.'
             })
-            if (client) {
-              clients[numberId] = client
-            }
-            // La sesión que nace aquí TAMBIÉN tiene que escuchar mensajes. Antes solo se
-            // registraban 'ready' y 'auth_failure': una línea levantada por esta vía
-            // quedaba sorda —QR válido, sesión activa, "Sin mensajes" y agente mudo— y
-            // ni siquiera dejaba el log de "PERDIDO", porque no había manejador.
-            escucharMensajesEntrantes(client, numberId, io)
-            await new Promise((resolve, reject) => {
-              if (!client)
-                return reject(new Error('Client is undefined after creation'))
-              client.on('ready', resolve)
-              client.on('auth_failure', reject)
-              client.initialize()
-            })
-          } else {
             return
           }
         }
-        if (!client) return
 
         // El id del chat tiene que ir en el formato de WhatsApp (`<numero>@c.us` para
         // personas, `@g.us` para grupos). El front manda lo que tenga guardado del
@@ -796,34 +878,66 @@ export function setupSocketEvents(io: Server) {
           return
         }
 
-        // Mismo motivo que en el manejador de mensajes entrantes: `getChatById` pasa por
-        // `getChatModel` dentro del navegador y hoy revienta con un error minificado
-        // ("r") para grupos y para chats `@lid`. Si falla, se sigue con un chat derivado
-        // del id: puede que el historial venga vacío, pero la pantalla deja de quedarse
-        // colgada sin explicación.
-        const { chat, esRespaldo } = await resolverChat(
+        // EL HISTORIAL NUNCA NECESITÓ EL OBJETO Chat, y pedirlo era el segundo
+        // modo de fallo (el que se veía con los `@lid` y con los grupos).
+        //
+        // `Chat.fetchMessages` no es más que un `pupPage.evaluate` con el id
+        // serializado, y por dentro pide el chat con
+        // `window.WWebJS.getChat(chatId, { getAsModel: false })`
+        // (Chat.js:203-246). Ese `getAsModel: false` SE SALTA
+        // `window.WWebJS.getChatModel` (Utils.js:938), que es donde vive el
+        // `window.require('WAWebLidMigrationUtils')` (Utils.js:961) que hace
+        // reventar a `getChatById` (Client.js:1694, que llama a getChat sin
+        // opciones, o sea con getAsModel = true). Traducción: pedir el historial
+        // directamente por el id es ESTRICTAMENTE más fiable que pasar antes por
+        // `getChatById`, porque no toca el módulo que falla.
+        //
+        // El camino de antes se conserva DETRÁS, como red: si esta lectura
+        // devuelve vacío puede ser un chat realmente vacío o un módulo del
+        // navegador que cambió de nombre, y en el segundo caso `resolverChat` +
+        // `traerMensajes` todavía pueden traerlo.
+        const CUANTOS = 20
+        let messages = await traerMensajesPorId(
           client,
           idChat,
-          `historial de la línea ${numberId}`
+          CUANTOS,
+          `${idChat} (línea ${numberId})`
         )
+        // El chat solo se usa para su id: se deriva del propio identificador, sin
+        // gastar una llamada al navegador que además puede fallar.
+        let chat: Chat | null = messages.length > 0 ? chatDeRespaldo(client, idChat) : null
+
         if (!chat) {
-          socket.emit('chat-history-error', {
-            numberId,
-            to,
-            code: 'CHAT_NO_EXISTE',
-            message: 'Ese chat no existe en la sesión de WhatsApp.'
-          })
-          return
+          // Mismo motivo que en el manejador de mensajes entrantes: `getChatById` pasa por
+          // `getChatModel` dentro del navegador y hoy revienta con un error minificado
+          // ("r") para grupos y para chats `@lid`. Si falla, se sigue con un chat derivado
+          // del id: puede que el historial venga vacío, pero la pantalla deja de quedarse
+          // colgada sin explicación.
+          const resuelto = await resolverChat(
+            client,
+            idChat,
+            `historial de la línea ${numberId}`
+          )
+          chat = resuelto.chat
+          if (!chat) {
+            socket.emit('chat-history-error', {
+              numberId,
+              to,
+              code: 'CHAT_NO_EXISTE',
+              message: 'Ese chat no existe en la sesión de WhatsApp.'
+            })
+            return
+          }
+          // Los últimos 20 mensajes. `traerMensajes` reintenta sin `limit` si la petición
+          // con límite falla —así se salta `WAWebChatLoadMessages`, otro módulo del
+          // navegador que puede no existir en la versión servida— y devuelve una lista
+          // vacía antes que lanzar: mejor un chat vacío que una pantalla colgada.
+          messages = await traerMensajes(
+            chat,
+            CUANTOS,
+            `${idChat} (línea ${numberId}${resuelto.esRespaldo ? ', chat derivado' : ''})`
+          )
         }
-        // Los últimos 20 mensajes. `traerMensajes` reintenta sin `limit` si la petición
-        // con límite falla —así se salta `WAWebChatLoadMessages`, otro módulo del
-        // navegador que puede no existir en la versión servida— y devuelve una lista
-        // vacía antes que lanzar: mejor un chat vacío que una pantalla colgada.
-        const messages = await traerMensajes(
-          chat,
-          20,
-          `${idChat} (línea ${numberId}${esRespaldo ? ', chat derivado' : ''})`
-        )
         messages.sort((a: { timestamp: number }, b: { timestamp: number }) => a.timestamp - b.timestamp)
         let lastMessageTimestamp: number | null = null
         if (messages && messages.length > 0) {

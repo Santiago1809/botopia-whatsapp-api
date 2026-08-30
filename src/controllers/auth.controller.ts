@@ -9,7 +9,7 @@ import { APP_URL } from '../lib/app-url.js'
 import { resetPasswordTemplate, welcomeUserTemplate } from '../lib/constants.js'
 import { transporter, sendEmail } from '../services/email.service.js'
 import { Role, type User } from '../types/global.js'
-import { clients } from '../WhatsAppClients.js'
+import { cerrarCliente, clients } from '../WhatsAppClients.js'
 
 // En producción no hay valor por defecto: un JWT_SECRET adivinable permite firmar
 // tokens de cualquier usuario. Fuera de producción se usa uno fijo para no obligar
@@ -278,75 +278,24 @@ export async function logOut(req: CustomRequest, res: Response) {
     .eq('userId', user.id)
   try {
     for (const numberData of whatsappNumbers || []) {
-      const numberId = numberData.id
-      if (clients[numberId]) {
-        try {
-          const client = clients[numberId]
-          // Define a safer cleanup function
-          const safeCleanup = async () => {
-            // Remove event listeners first
-            try {
-              client.removeAllListeners()
-            } catch (err) {
-              console.warn('removeAllListeners failed', err)
-            }
+      const numberId = String(numberData.id)
+      // Se lee el mapa en CRUDO (no `clienteVivo`): esta vía necesita el objeto
+      // aunque esté muerto, porque es a quien hay que cerrarle el navegador.
+      const client = clients[numberId]
+      if (!client) continue
 
-            // Attempt logout if possible
-            try {
-              if (client.pupBrowser && client.pupBrowser.isConnected()) {
-                await client.logout()
-              }
-            } catch (err) {
-              console.warn('logout failed', err)
-            }
-
-            // Close browser resources
-            try {
-              // Check if page exists and is not closed before attempting to close
-              if (client.pupPage && !client.pupPage.isClosed?.()) {
-                await client.pupPage.close().catch(() => {})
-              }
-            } catch (err) {
-              console.warn('pupPage close failed', err)
-            }
-
-            // Handle browser disconnection
-            try {
-              if (client.pupBrowser) {
-                if (client.pupBrowser.isConnected?.()) {
-                  client.pupBrowser.disconnect()
-                }
-                await client.pupBrowser.close().catch(() => {})
-              }
-            } catch (err) {
-              console.warn('pupBrowser close failed', err)
-            }
-
-            // Final cleanup
-            try {
-              if (typeof client.destroy === 'function') {
-                await client.destroy()
-              }
-            } catch (err) {
-              console.warn('destroy failed', err)
-            }
-          }
-
-          // Execute the cleanup with timeout protection
-          try {
-            await Promise.race([
-              safeCleanup(),
-              new Promise((resolve) => setTimeout(resolve, 5000))
-            ])
-          } catch (err) {
-            console.error('Client cleanup failed:', err)
-          }
-        } catch (err) {
-          console.warn(`Error cleaning up client ${numberId}:`, err)
-        }
-        // Always delete the client reference
-        delete clients[numberId]
-      }
+      // AQUÍ SE LLAMABA A `client.logout()`. `LocalAuth.logout()` borra la
+      // carpeta de sesión entera (LocalAuth.js:56-68), así que CERRAR SESIÓN EN
+      // LA APP DESVINCULABA EL WHATSAPP: al volver a entrar había que escanear
+      // el QR de nuevo, y cuando eso fallaba el operador acababa creando una
+      // línea nueva (el numberId subiendo 2, 4, 5, 7, 8, 9, 10 con el mismo
+      // teléfono). Cerrar sesión solo apaga el navegador; la vinculación se
+      // destruye únicamente desde /api/user/delete-number.
+      await Promise.race([
+        cerrarCliente(client, numberId, 'el usuario cerró sesión'),
+        new Promise((resolver) => setTimeout(resolver, 5000))
+      ])
+      delete clients[numberId]
     }
     // Antes aquí se borraban las filas de app."WhatsAppNumber" del usuario: cerrar
     // sesión destruía la vinculación y obligaba a rescanear el QR en cada login.

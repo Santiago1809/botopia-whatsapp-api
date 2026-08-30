@@ -8,7 +8,9 @@ import type {
 } from '../interfaces/global.js'
 import { HttpStatusCode } from 'axios'
 import { clients } from '../WhatsAppClients.js'
-import { exigirNumeroPropio } from '../lib/propiedad.js'
+import { exigirNumeroPropio, exigirUsuario } from '../lib/propiedad.js'
+import { comparablePorTelefono } from '../lib/telefono.js'
+import { borrarPerfilDeSesion } from '../lib/perfilChromium.js'
 import { olvidarQR } from './whatsapp/session.controller.js'
 
 export async function toggleAI(req: CustomRequest, res: Response) {
@@ -51,41 +53,107 @@ export async function toggleResponseGroups(req: CustomRequest, res: Response) {
   }
 }
 
+/**
+ * CREAR O REUTILIZAR: la misma línea, no una nueva cada vez.
+ *
+ * EL SÍNTOMA: el numberId del usuario fue 2, 4, 5, 7, 8, 9, 10 en una sola
+ * sesión, siempre con el mismo teléfono, mientras en la barra lateral él veía
+ * UNA sola línea. Cada línea nueva estrena su propia carpeta de sesión
+ * (`LocalAuth({ clientId: numberId })` deriva el perfil del id) y su propio
+ * Chromium; los anteriores quedan huérfanos con el navegador muerto. Eso es lo
+ * que llenaba el contenedor y lo que dejaba, en el volumen, los cerrojos que
+ * después impiden arrancar cualquier navegador.
+ *
+ * TRES COSAS ROMPÍAN, Y LAS TRES SE ARREGLAN AQUÍ:
+ *
+ * 1. El guardia comparaba el TEXTO CRUDO (`.eq('number', number)`), así que
+ *    "3203813929" y "+573203813929" pasaban como teléfonos distintos.
+ * 2. Era un mira-luego-inserta sin transacción: dos peticiones a la vez (el
+ *    botón no tenía guarda de doble clic) pasaban las dos el chequeo, y la
+ *    segunda reventaba con un 23505 que el código no miraba —accedía a
+ *    `newNumber.id` sobre null— y salía como un 500 opaco. Eso QUEMA un valor
+ *    del serial: los huecos 3 y 6.
+ * 3. Devolver 409 obligaba al operador a inventarse un número distinto para
+ *    poder reconectar. Ahora, si la línea ya es suya, se le devuelve LA MISMA
+ *    con un 200 y el front sigue su camino normal (solo mira `res.ok` y
+ *    `numberId`).
+ *
+ * Nota sobre el 409 que queda: `number` es UNIQUE a nivel de TODA la tabla
+ * (schema.sql:101), así que si el teléfono ya está registrado por OTRA cuenta no
+ * hay nada que reutilizar. Se mantiene el mensaje de antes.
+ */
 export async function addWhatsAppNumber(req: CustomRequest, res: Response) {
   try {
     const { number, name } = req.body as AddWhatsAppNumber
-    const { data: user } = await supabase
-      .from('User')
-      .select('*')
-      .eq('username', req.user?.username)
-      .single()
-    if (!user) {
+    const usuario = await exigirUsuario(req, res)
+    if (!usuario) return
+
+    const telefono = String(number ?? '').trim()
+    if (!telefono) {
       res
-        .status(HttpStatusCode.NotFound)
-        .json({ message: 'Usuario no encontrado' })
+        .status(HttpStatusCode.BadRequest)
+        .json({ message: 'Falta el número de WhatsApp' })
       return
     }
-    const { data: existingNumber } = await supabase
-      .from('WhatsAppNumber')
-      .select('*')
-      .eq('number', number)
-      .single()
-    if (existingNumber) {
-      res.status(HttpStatusCode.Conflict).json({ message: 'Número ya existe' })
-      return
-    }
-    const { data: newNumber } = await supabase
-      .from('WhatsAppNumber')
-      .insert({
-        number,
-        name,
-        userId: user.id
+
+    // ¿Ya tiene una línea con ese teléfono? La comparación es por dígitos, no
+    // por el texto tal cual: es lo que impide que el mismo número entre otra vez
+    // solo por venir escrito de otra forma.
+    const buscado = comparablePorTelefono(telefono)
+    const { rows: suyos } = await query<{ id: number; number: string }>(
+      'SELECT id, number FROM app."WhatsAppNumber" WHERE "userId" = $1',
+      [usuario.id]
+    )
+    const yaExiste = suyos.find(
+      (fila) => comparablePorTelefono(fila.number) === buscado
+    )
+    if (yaExiste) {
+      console.info(
+        `↩️ ${usuario.username} pidió añadir ${telefono} y ya lo tiene como línea ${yaExiste.id}: se reutiliza en vez de crear otra.`
+      )
+      res.status(HttpStatusCode.Ok).json({
+        message: 'Esta línea ya estaba: se reutiliza',
+        numberId: yaExiste.id,
+        reutilizado: true
       })
-      .select('*')
-      .single()
-    res
-      .status(HttpStatusCode.Created)
-      .json({ message: 'Número creado', numberId: newNumber.id })
+      return
+    }
+
+    try {
+      const { rows } = await query<{ id: number }>(
+        `INSERT INTO app."WhatsAppNumber" (number, name, "userId")
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        [telefono, name ?? null, usuario.id]
+      )
+      const creado = rows[0]
+      if (!creado) throw new Error('el INSERT no devolvió el id')
+      res
+        .status(HttpStatusCode.Created)
+        .json({ message: 'Número creado', numberId: creado.id })
+    } catch (error) {
+      // 23505 = unique_violation. Aquí solo puede venir del UNIQUE global de
+      // `number`, y significa una de dos: o dos peticiones nuestras corrieron a
+      // la vez (doble clic) y la otra ya creó la fila, o el teléfono es de otra
+      // cuenta. Se distingue releyendo, en vez de contestar 500 como antes.
+      const codigo = (error as { code?: string })?.code
+      if (codigo !== '23505') throw error
+
+      const { rows } = await query<{ id: number; userId: number }>(
+        'SELECT id, "userId" FROM app."WhatsAppNumber" WHERE number = $1',
+        [telefono]
+      )
+      const fila = rows[0]
+      if (fila && Number(fila.userId) === usuario.id) {
+        res.status(HttpStatusCode.Ok).json({
+          message: 'Esta línea ya estaba: se reutiliza',
+          numberId: fila.id,
+          reutilizado: true
+        })
+        return
+      }
+      res.status(HttpStatusCode.Conflict).json({ message: 'Número ya existe' })
+    }
   } catch (error) {
     console.error('Error adding WhatsApp number:', error)
     res
@@ -193,6 +261,17 @@ export async function deleteWhatsAppNumer(req: CustomRequest, res: Response) {
     if (deleteError) {
       throw deleteError
     }
+
+    // LA CARPETA DE SESIÓN TAMBIÉN SE VA. Nada en todo el repositorio borraba
+    // nunca `/app/.wwebjs_auth/session-<id>`, así que cada id eliminado dejaba un
+    // perfil de Chromium permanente en el volumen —1,5 GB ya ocupados— y, con él,
+    // su SingletonLock. Ese cerrojo rancio es lo que después impide arrancar
+    // cualquier navegador ("the profile appears to be in use ... on another
+    // computer") y deja la línea con `pupPage` null, que es el chat vacío.
+    //
+    // Va DESPUÉS del DELETE y solo del id que se acaba de borrar: sin fila que
+    // apunte a esa sesión, el perfil no le sirve ya a nadie.
+    borrarPerfilDeSesion(clientKey)
 
     res.status(HttpStatusCode.Ok).json({ message: 'Número eliminado' })
   } catch {
