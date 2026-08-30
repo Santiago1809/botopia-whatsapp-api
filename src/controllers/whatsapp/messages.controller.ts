@@ -704,7 +704,15 @@ export async function handleIncomingMessage(
   if (syncDbError && syncDbError.code !== 'PGRST116') {
     console.error('Error buscando en SyncedContactOrGroup:', syncDbError)
     return
-  } // Obtener el número completo
+  }
+  // Punto ciego: entre "VALIDADO" y la respuesta no había ninguna traza, así que un
+  // mensaje que se paraba aquí desaparecía sin dejar rastro. Esta línea dice por qué
+  // rama va (sincronizado o no), que es lo que decide todo lo que viene después.
+  console.log(
+    `[msg] RUTA · línea ${numberId} · chat ${idToCheck} · ` +
+      `${syncDb ? 'sincronizado' : 'SIN sincronizar'} · es-grupo=${isGroup}`
+  )
+  // Obtener el número completo
   // SEGUNDO SITIO DONDE SE PERDÍAN LOS MENSAJES, 120 líneas después del primero.
   //
   // Aquí se deducía QUÉ línea nuestra había recibido el mensaje parseando `msg.to`
@@ -722,6 +730,13 @@ export async function handleIncomingMessage(
   // O sea: arreglar la entrada sin tocar esto solo habría mudado la pérdida de sitio.
   // Se busca por clave primaria, que es exacta y no depende del formato del id.
   const phoneNumberRaw = msg.to.split('@')[0] ?? ''
+  if (phoneNumberRaw.startsWith('+')) {
+    // Todo el tratamiento del mensaje vive dentro del `if` de abajo. Si el
+    // destinatario llega con un '+' delante, no entra en ninguna rama y el mensaje se
+    // esfuma sin log. No debería pasar —WhatsApp no pone '+' en los ids— pero si pasa,
+    // que se vea.
+    descartar(`el destinatario llegó con formato inesperado: ${msg.to}`)
+  }
   if (!phoneNumberRaw.startsWith('+')) {
     const { data: number, error: numberError } = await supabase
       .from('WhatsAppNumber')
