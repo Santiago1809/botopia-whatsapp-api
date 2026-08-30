@@ -48,3 +48,8 @@ coverage/
 # El bun.lock del repo lo generó un bun más nuevo que el instalado; el despliegue instala
 # con npm (package-lock.json). Se ignora para que Nixpacks no lo detecte y use bun --frozen.
 bun.lock
+
+# Sesión de WhatsApp (LocalAuth). Son credenciales de vinculación: quien las tenga puede
+# suplantar la línea. En producción viven en el volumen de Railway, no en el repo.
+.wwebjs_auth/
+.wwebjs_cache/

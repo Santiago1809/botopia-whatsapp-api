@@ -9,6 +9,7 @@ import type {
 import { HttpStatusCode } from 'axios'
 import { clients } from '../WhatsAppClients.js'
 import { exigirNumeroPropio } from '../lib/propiedad.js'
+import { olvidarQR } from './whatsapp/session.controller.js'
 
 export async function toggleAI(req: CustomRequest, res: Response) {
   const { number, enabled } = req.body as ToggleAIBody
@@ -159,6 +160,10 @@ export async function deleteWhatsAppNumer(req: CustomRequest, res: Response) {
     // Handle WhatsApp client cleanup
     // req.params en Express 5 puede tipar el valor como string | string[]; el mapa se indexa por string.
     const clientKey = String(numberId)
+    // El QR guardado para reenviarlo a quien entre a la sala se queda huérfano si
+    // el número desaparece: aquí no se dispara 'disconnected' (se le quitan los
+    // listeners antes de destruirlo), así que hay que soltarlo a mano.
+    olvidarQR(clientKey)
     if (clients[clientKey]) {
       const client = clients[clientKey];
       try {

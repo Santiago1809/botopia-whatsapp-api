@@ -1,12 +1,11 @@
 // image.pngManeja el envío y recepción de mensajes
 import { HttpStatusCode } from 'axios'
 import type { Response } from 'express'
-import libphonenumber from 'google-libphonenumber'
 import type { Server } from 'socket.io'
 import type { Chat, Client, Message } from 'whatsapp-web.js'
 
-const { PhoneNumberUtil } = libphonenumber
 import { supabase } from '../../config/db.js'
+import { traerMensajes } from '../../lib/chatDeRespaldo.js'
 import type {
   CustomRequest,
   SendMessageBody
@@ -489,36 +488,64 @@ export async function handleIncomingMessage(
   numberId: string | number,
   io: Server
 ) {
+  /**
+   * TRAZA DEL MENSAJE ENTRANTE.
+   *
+   * Todas las salidas de este bloque hacían `return` a secas. Un mensaje podía morir en
+   * cualquiera de ellas y en el servidor no quedaba ni una línea: en la app el chat decía
+   * "Sin mensajes" y el agente no respondía, sin nada que mirar. Se perdieron horas por eso.
+   *
+   * Ahora cada descarte dice QUÉ mensaje y POR QUÉ. `descartar` centraliza el formato para
+   * que se puedan buscar todos con un solo grep: "[msg]".
+   */
+  const traza = (etapa: string, detalle = '') =>
+    console.log(
+      `[msg] ${etapa} · línea ${numberId} · de ${msg?.from ?? '?'} · id ${msg?.id?._serialized ?? '?'}${detalle ? ` · ${detalle}` : ''}`
+    )
+  const descartar = (motivo: string) => {
+    console.warn(
+      `[msg] DESCARTADO (${motivo}) · línea ${numberId} · de ${msg?.from ?? '?'} · id ${msg?.id?._serialized ?? '?'}`
+    )
+  }
+
+  traza('RECIBIDO', `${msg?.hasMedia ? 'con adjunto' : `"${(msg?.body ?? '').slice(0, 60)}"`}`)
+
   // Validaciones básicas para evitar errores de serialización
   try {
     // Verificar que el mensaje tiene las propiedades básicas
     if (!msg || !msg.id || !msg.id._serialized) {
+      descartar('el mensaje no trae id')
       return
     }
 
     // Verificar que el chat tiene las propiedades básicas
     if (!chat || !chat.id || !chat.id._serialized) {
+      descartar('no se pudo determinar el chat')
       return
     }
 
     // Verificar que el mensaje tiene contenido o es un tipo válido
     if (!msg.body && !msg.hasMedia) {
+      descartar('sin texto ni adjunto')
       return
     }
 
     // Validación adicional: asegurarse de que el mensaje no es undefined o está corrupto
     if (typeof msg.from !== 'string' || typeof msg.to !== 'string') {
+      descartar('remitente o destinatario no son texto')
       return
     }
 
     // Verificar que el mensaje no está corrupto
     if (!msg.from.includes('@') || !msg.to.includes('@')) {
+      descartar(`identificadores sin @ (from=${msg.from}, to=${msg.to})`)
       return
     }
 
     // Verificar que el cliente WhatsApp está disponible
     const client = clients[numberId]
     if (!client || !client.info || !client.info.wid) {
+      descartar('la sesión de WhatsApp de esta línea no está activa')
       return
     }
 
@@ -526,19 +553,24 @@ export async function handleIncomingMessage(
     await new Promise((resolve) => setTimeout(resolve, 200))
   } catch (validationError) {
     console.error('Error en validación inicial del mensaje:', validationError)
+    descartar('excepción en las validaciones iniciales')
     return
   }
 
   // --- CONTROL DE DUPLICADOS EN MEMORIA ---
   if (respondedMessages.has(msg.id._serialized)) {
+    descartar('duplicado: ya se procesó este mismo id')
     return
   }
   respondedMessages.set(msg.id._serialized, Date.now()) // Log SIEMPRE que se reciba un mensaje
   const idToCheck = chat.id._serialized
   const isGroup = chat.id.server === 'g.us'
   if (msg.isStatus) {
+    descartar('es un estado, no un mensaje de chat')
     return
   }
+
+  traza('VALIDADO', `chat ${idToCheck}${isGroup ? ' (grupo)' : ''}`)
 
   // El historial se saca del try para que los eventos puedan mirarlo: es el
   // ÚNICO sitio del sistema donde se ve `m.fromMe`, o sea lo único que permite
@@ -548,7 +580,7 @@ export async function handleIncomingMessage(
 
   // EMITIR ACTUALIZACIÓN DEL HISTORIAL DEL CHAT SIEMPRE QUE LLEGUE UN MENSAJE
   try {
-    const messages = await chat.fetchMessages({ limit: 30 })
+    const messages = await traerMensajes(chat, 30, `${idToCheck} (línea ${numberId})`)
     messages.sort((a: Message, b: Message) => a.timestamp - b.timestamp)
     historialDelChat = messages
 
@@ -655,20 +687,34 @@ export async function handleIncomingMessage(
     console.error('Error buscando en SyncedContactOrGroup:', syncDbError)
     return
   } // Obtener el número completo
-  let phoneNumberRaw = msg.to.split('@')[0]
-  if (!phoneNumberRaw?.startsWith('+')) {
-    phoneNumberRaw = '+' + phoneNumberRaw
-    const phoneUtil = PhoneNumberUtil.getInstance()
-    const numberProto = phoneUtil.parseAndKeepRawInput(phoneNumberRaw)
-    const clientNumber = phoneUtil.getNationalSignificantNumber(numberProto)
-
+  // SEGUNDO SITIO DONDE SE PERDÍAN LOS MENSAJES, 120 líneas después del primero.
+  //
+  // Aquí se deducía QUÉ línea nuestra había recibido el mensaje parseando `msg.to`
+  // con libphonenumber y buscando por `number`. Era una vuelta innecesaria —la línea
+  // ya viene identificada por `numberId`, que es un parámetro de esta función y que
+  // unas líneas más arriba ya se usa para consultar—, y encima se rompe en silencio:
+  //
+  //   · con un `@lid` (el identificador nuevo de WhatsApp), `parseAndKeepRawInput`
+  //     NO lanza: a "+101692108443891" le saca el "número nacional" 01692108443891,
+  //     que no casa con ninguna fila y hacía `return` sin más;
+  //   · con ids largos pierde precisión de verdad: "+120363432268746487" sale como
+  //     20363432268746490 (comprobado en local con la librería instalada), porque el
+  //     número se guarda como double y se pasa de los 2^53.
+  //
+  // O sea: arreglar la entrada sin tocar esto solo habría mudado la pérdida de sitio.
+  // Se busca por clave primaria, que es exacta y no depende del formato del id.
+  const phoneNumberRaw = msg.to.split('@')[0] ?? ''
+  if (!phoneNumberRaw.startsWith('+')) {
     const { data: number, error: numberError } = await supabase
       .from('WhatsAppNumber')
       .select('*')
-      .eq('number', clientNumber)
+      .eq('id', numberId)
       .single()
     if (!number || numberError) {
-      console.error('Error buscando en WhatsAppNumber:', numberError)
+      console.error(
+        `❌ Mensaje entrante DESCARTADO: no existe la línea ${numberId} en WhatsAppNumber.`,
+        numberError
+      )
       return
     }
 
@@ -824,6 +870,10 @@ export async function handleIncomingMessage(
 
             // Usar chat.sendMessage() en lugar de msg.reply() para evitar problemas de serialización
             await chat.sendMessage(aiResponse[0])
+            console.log(
+              `[msg] RESPUESTA ENVIADA · línea ${numberId} · chat ${chat.id._serialized} · ` +
+                `"${String(aiResponse[0] ?? '').slice(0, 60)}"`
+            )
 
             // EMITIR actualización del historial después de respuesta IA para contacto no sincronizado
             try {
@@ -971,8 +1021,17 @@ export async function handleIncomingMessage(
         (isGroup && number.aiEnabled && number.responseGroups) ||
         (!isGroup && number.aiUnknownEnabled && !isSynced) // Solo para no sincronizados
       if (!shouldRespond) {
+        // Sin esta línea, "el agente no contesta" era indistinguible de "el mensaje se
+        // perdió": los dos se veían igual desde fuera. Aquí se ve QUÉ interruptor lo frenó.
+        console.log(
+          `[msg] SIN RESPUESTA · línea ${numberId} · chat ${idToCheck} · ` +
+            `IA=${number.aiEnabled ? 'on' : 'off'}, grupo=${isGroup}, ` +
+            `responder-grupos=${number.responseGroups ? 'on' : 'off'}, ` +
+            `no-agendados=${number.aiUnknownEnabled ? 'on' : 'off'}, sincronizado=${isSynced}`
+        )
         return
       }
+      console.log(`[msg] IA PENSANDO · línea ${numberId} · chat ${idToCheck}`)
       if (shouldRespond) {
         // Convertir chatHistory al formato mínimo requerido por getAIResponse
         const aiChatHistory = chatHistory.map((msg) => ({
@@ -1169,7 +1228,10 @@ export async function handleIncomingMessage(
             return // Don't send AI response if limit is reached
           }
 
-          chat.sendStateTyping()
+          // El "escribiendo..." es cosmético y su promesa iba SUELTA: si fallaba, solo
+          // la recogía el `unhandledRejection` global. Se le pone catch para que nunca
+          // tumbe el envío de la respuesta, que es lo que de verdad importa.
+          void Promise.resolve(chat.sendStateTyping()).catch(() => {})
           const messageLength = (finalResponse as string).length
           const baseDelay = 2000
           const additionalDelay = Math.min(2000, messageLength * 50)
@@ -1222,20 +1284,33 @@ export async function handleIncomingMessage(
                 numberId
               )
             } catch (sendError) {
-              // Los errores de serialización son normales en WhatsApp Web.js
-              // Solo loguear si NO es un error de serialización
-              if (
-                sendError instanceof Error &&
-                !sendError.message.includes('serialize') &&
-                !sendError.message.includes('getMessageModel') &&
-                !sendError.message.includes('Evaluation failed')
-              ) {
+              // ESTE FILTRO ESCONDÍA JUSTO EL FALLO QUE ESTAMOS PERSIGUIENDO.
+              //
+              // Callaba los errores que contienen 'serialize', 'getMessageModel' o
+              // 'Evaluation failed' por considerarlos "normales". Son precisamente los
+              // que lanza el WhatsApp Web de dentro del navegador cuando la versión que
+              // sirve Meta no encaja con la librería. Resultado: el agente no enviaba
+              // NADA y en el log no quedaba ni una línea que lo dijera; desde fuera
+              // parecía que la IA simplemente no había querido contestar.
+              //
+              // Ahora se registra SIEMPRE. Los conocidos bajan a warn para no disparar
+              // alertas, pero se ven; el resto sigue siendo error.
+              const detalle =
+                sendError instanceof Error ? sendError.message : String(sendError)
+              const esFalloConocidoDelNavegador =
+                detalle.includes('serialize') ||
+                detalle.includes('getMessageModel') ||
+                detalle.includes('Evaluation failed')
+              if (esFalloConocidoDelNavegador) {
+                console.warn(
+                  `⚠️ La respuesta de la IA NO se pudo enviar al chat ${chat?.id?._serialized ?? '?'} (línea ${numberId}): ${detalle.slice(0, 200)}. Es un fallo del WhatsApp Web del navegador, no del contenido.`
+                )
+              } else {
                 console.error(
-                  'Error crítico enviando respuesta de IA:',
-                  sendError.message
+                  `❌ Error crítico enviando respuesta de IA al chat ${chat?.id?._serialized ?? '?'} (línea ${numberId}):`,
+                  detalle
                 )
               }
-              // No hacer nada más - los errores de serialización son normales
             }
           }, totalDelay)
 
