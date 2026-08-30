@@ -824,21 +824,40 @@ export async function handleIncomingMessage(
           return
         }
 
-        // Si está habilitado y la IA está activada para desconocidos, responder SOLO si NO es grupo
-        const puedeResponderDesconocido =
-          !isGroup &&
-          number.aiUnknownEnabled === true &&
-          !!updatedContact &&
-          updatedContact.agentehabilitado === true
+        /**
+         * ¿Responde el agente a un chat que no está sincronizado?
+         *
+         * Esta rama exigía `!isGroup`, así que un GRUPO no sincronizado no podía recibir
+         * respuesta jamás, tuviera el usuario los interruptores como los tuviera: el
+         * mensaje entraba, se guardaba y ahí moría. Es lo que pasaba con el grupo de
+         * prueba con "IA", "Grupos" y "No agregados" los tres encendidos.
+         *
+         * Ahora cada tipo de chat mira SU interruptor:
+         *   · contacto suelto -> "No agregados" (aiUnknownEnabled), y que el agente esté
+         *     habilitado para ese contacto en concreto.
+         *   · grupo           -> "Grupos" (responseGroups) Y "No agregados", porque un
+         *     grupo sin sincronizar es las dos cosas a la vez: es grupo y no está en la
+         *     agenda. Exigir los dos respeta la intención de ambos controles y evita que
+         *     el agente se ponga a hablar en un grupo al que lo metieron sin avisar.
+         */
+        const puedeResponderDesconocido = isGroup
+          ? number.aiEnabled === true &&
+            number.responseGroups === true &&
+            number.aiUnknownEnabled === true
+          : number.aiUnknownEnabled === true &&
+            !!updatedContact &&
+            updatedContact.agentehabilitado === true
         if (!puedeResponderDesconocido) {
           // Esta es LA decisión que hay que poder leer: aquí es donde el agente calla ante
           // un contacto que no está en la agenda. Con un motivo genérico había que abrir el
           // código para saber cuál de las cuatro condiciones falló.
           console.log(
-            `[msg] SIN RESPUESTA (contacto no agendado) · línea ${numberId} · ` +
-              `es-grupo=${isGroup} · responder-no-agendados=${number.aiUnknownEnabled ? 'on' : 'off'} · ` +
+            `[msg] SIN RESPUESTA (chat sin sincronizar) · línea ${numberId} · ` +
+              `es-grupo=${isGroup} · IA=${number.aiEnabled ? 'on' : 'off'} · ` +
+              `grupos=${number.responseGroups ? 'on' : 'off'} · ` +
+              `no-agendados=${number.aiUnknownEnabled ? 'on' : 'off'} · ` +
               `contacto-en-bd=${updatedContact ? 'sí' : 'no'} · ` +
-              `agente-habilitado-para-este-contacto=${updatedContact?.agentehabilitado ? 'sí' : 'no'}`
+              `agente-para-este-contacto=${updatedContact?.agentehabilitado ? 'sí' : 'no'}`
           )
         }
         if (puedeResponderDesconocido) {
