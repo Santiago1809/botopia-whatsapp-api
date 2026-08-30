@@ -2,11 +2,11 @@
 nixPkgs = ["nodejs_20", "python3"]
 
 [phases.install]
-cmds = ["npm install"]
+cmds = ["npm install --include=dev"]
 
 [phases.build]
 cmds = ["npm run build"]
 
 [start]
-cmd = "node out/index.js"
+cmd = "node db/apply-schema.mjs || echo '⚠️ El esquema no se pudo aplicar; el servidor arranca igual.'; node out/index.js"
 
