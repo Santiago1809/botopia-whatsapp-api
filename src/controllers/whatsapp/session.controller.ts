@@ -49,24 +49,27 @@ export async function startWhatsApp(req: CustomRequest, res: Response) {
       delete clients[numberId]
     }
     const client = new Client({
-      // VERSIÓN DE WHATSAPP WEB, FIJADA A PROPÓSITO.
+      // SALIDA DE EMERGENCIA PARA LA VERSIÓN DE WHATSAPP WEB.
       //
       // whatsapp-web.js habla con el WhatsApp Web real dentro del navegador. Cuando Meta
-      // publica una versión nueva, los selectores internos de la librería dejan de
-      // encajar y las llamadas al store fallan con un error opaco —literalmente "r: r"—
-      // que no dice nada. El síntoma en la app no parece un error: los mensajes entrantes
-      // se descartan en silencio (handleIncomingMessage sale si no hay chat) y el chat se
-      // queda en "Sin mensajes" con el agente mudo.
+      // publica una versión nueva, los selectores de la librería dejan de encajar y las
+      // llamadas al store fallan con un error opaco —literalmente "r: r"—. El síntoma no
+      // parece un error: el mensaje entrante se descarta y el chat se queda en "Sin
+      // mensajes" con el agente mudo.
       //
-      // Fijando la versión, la librería carga el WhatsApp Web que sí conoce en vez del que
-      // Meta esté sirviendo hoy. Se puede mover con WWEB_VERSION sin desplegar, que es lo
-      // que hará falta cuando esta versión quede vieja.
-      webVersionCache: {
-        type: 'remote',
-        remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${
-          process.env.WWEB_VERSION || '2.3000.1023204200'
-        }.html`
-      },
+      // Por defecto NO se fija nada: la librería elige, que es lo que funciona el 99% del
+      // tiempo. Fijar una versión a ciegas es peor que no fijar ninguna —el repositorio de
+      // versiones solo publica alphas, y apuntar a una que no existe devuelve 404 y deja
+      // el navegador sin arrancar—. Con WWEB_VERSION se puede clavar una concreta el día
+      // que haga falta, sin desplegar.
+      ...(process.env.WWEB_VERSION
+        ? {
+            webVersionCache: {
+              type: 'remote' as const,
+              remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${process.env.WWEB_VERSION}.html`
+            }
+          }
+        : {}),
       authStrategy: new LocalAuth({ clientId: numberId.toString() }),
       puppeteer: {
         headless: true,
@@ -504,24 +507,27 @@ export function setupSocketEvents(io: Server) {
             .single()
           if (number) {
             client = new Client({
-              // VERSIÓN DE WHATSAPP WEB, FIJADA A PROPÓSITO.
+              // SALIDA DE EMERGENCIA PARA LA VERSIÓN DE WHATSAPP WEB.
               //
               // whatsapp-web.js habla con el WhatsApp Web real dentro del navegador. Cuando Meta
-              // publica una versión nueva, los selectores internos de la librería dejan de
-              // encajar y las llamadas al store fallan con un error opaco —literalmente "r: r"—
-              // que no dice nada. El síntoma en la app no parece un error: los mensajes entrantes
-              // se descartan en silencio (handleIncomingMessage sale si no hay chat) y el chat se
-              // queda en "Sin mensajes" con el agente mudo.
+              // publica una versión nueva, los selectores de la librería dejan de encajar y las
+              // llamadas al store fallan con un error opaco —literalmente "r: r"—. El síntoma no
+              // parece un error: el mensaje entrante se descarta y el chat se queda en "Sin
+              // mensajes" con el agente mudo.
               //
-              // Fijando la versión, la librería carga el WhatsApp Web que sí conoce en vez del que
-              // Meta esté sirviendo hoy. Se puede mover con WWEB_VERSION sin desplegar, que es lo
-              // que hará falta cuando esta versión quede vieja.
-              webVersionCache: {
-                type: 'remote',
-                remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${
-                  process.env.WWEB_VERSION || '2.3000.1023204200'
-                }.html`
-              },
+              // Por defecto NO se fija nada: la librería elige, que es lo que funciona el 99% del
+              // tiempo. Fijar una versión a ciegas es peor que no fijar ninguna —el repositorio de
+              // versiones solo publica alphas, y apuntar a una que no existe devuelve 404 y deja
+              // el navegador sin arrancar—. Con WWEB_VERSION se puede clavar una concreta el día
+              // que haga falta, sin desplegar.
+              ...(process.env.WWEB_VERSION
+                ? {
+                    webVersionCache: {
+                      type: 'remote' as const,
+                      remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${process.env.WWEB_VERSION}.html`
+                    }
+                  }
+                : {}),
               authStrategy: new LocalAuth({ clientId: numberId.toString() }),
               puppeteer: {
                 headless: true,
@@ -562,8 +568,23 @@ export function setupSocketEvents(io: Server) {
           }
         }
         if (!client) return
-        const chat = await client.getChatById(to)
+
+        // El id del chat tiene que ir en el formato de WhatsApp (`<numero>@c.us` para
+        // personas, `@g.us` para grupos). El front manda lo que tenga guardado del
+        // contacto, que a veces es solo el número: así, getChatById reventaba con un
+        // error opaco y —por el catch de abajo, que devolvía el error en vez de
+        // avisar— el chat se quedaba en blanco para siempre, sin decir nada.
+        const idChat = String(to).includes('@')
+          ? String(to)
+          : `${String(to).replace(/\D/g, '')}@c.us`
+
+        const chat = await client.getChatById(idChat)
         if (!chat) {
+          socket.emit('chat-history-error', {
+            numberId,
+            to,
+            message: 'Ese chat no existe en la sesión de WhatsApp.'
+          })
           return
         }
         // Traer solo los últimos 20 mensajes, ordenados de más reciente a más antiguo
@@ -589,9 +610,19 @@ export function setupSocketEvents(io: Server) {
           to: chat.id._serialized,
           lastMessageTimestamp
         })
-        console.log('Emitido session-controller 292')
       } catch (err) {
-        return err
+        // Antes: `return err`. El error se devolvía al vacío —nadie lee lo que
+        // retorna un handler de socket.io— así que el front pedía el historial, no
+        // llegaba nunca y la conversación se quedaba en blanco sin explicación.
+        const detalle = err instanceof Error ? err.message : String(err)
+        console.error(
+          `❌ No se pudo cargar el historial del chat ${to} en la línea ${numberId}: ${detalle}`
+        )
+        socket.emit('chat-history-error', {
+          numberId,
+          to,
+          message: 'No se pudo cargar la conversación. Reintenta en unos segundos.'
+        })
       }
     })
     socket.onAny(async () => {
