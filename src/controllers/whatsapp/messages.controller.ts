@@ -924,6 +924,14 @@ export async function handleIncomingMessage(
           console.log(
             `[msg] IA PENSANDO (chat sin sincronizar) · línea ${numberId} · chat ${idToCheck}`
           )
+          // Aviso a la pantalla para que muestre "escribiendo…". El agente puede tardar
+          // varios segundos en contestar y, sin esto, el chat parecía muerto justo en el
+          // momento en que más está pasando.
+          io.to(numberId.toString()).emit('agente-escribiendo', {
+            numberId,
+            to: idToCheck,
+            escribiendo: true
+          })
           // Lógica para evitar dos respuestas IA iguales seguidas
           const inicioIA = Date.now()
           let aiResponse
@@ -950,6 +958,13 @@ export async function handleIncomingMessage(
               `[msg] LA IA FALLÓ · línea ${numberId} · chat ${idToCheck} · ` +
                 `${errorIA instanceof Error ? errorIA.message : String(errorIA)}`
             )
+            // Si falla, hay que apagarlo igual: un "escribiendo…" eterno es peor que
+            // no haberlo puesto.
+            io.to(numberId.toString()).emit('agente-escribiendo', {
+              numberId,
+              to: idToCheck,
+              escribiendo: false
+            })
             throw errorIA
           }
           // Punto de escritura #1 del consumo de IA. Va sin await: la respuesta
@@ -1004,6 +1019,11 @@ export async function handleIncomingMessage(
               `[msg] RESPUESTA ENVIADA · línea ${numberId} · chat ${chat.id._serialized} · ` +
                 `"${String(aiResponse[0] ?? '').slice(0, 60)}"`
             )
+            io.to(numberId.toString()).emit('agente-escribiendo', {
+              numberId,
+              to: idToCheck,
+              escribiendo: false
+            })
 
             // EMITIR actualización del historial después de respuesta IA para contacto no sincronizado
             try {
@@ -1166,6 +1186,11 @@ export async function handleIncomingMessage(
         return
       }
       console.log(`[msg] IA PENSANDO · línea ${numberId} · chat ${idToCheck}`)
+      io.to(numberId.toString()).emit('agente-escribiendo', {
+        numberId,
+        to: idToCheck,
+        escribiendo: true
+      })
       if (shouldRespond) {
         // Convertir chatHistory al formato mínimo requerido por getAIResponse
         const aiChatHistory = chatHistory.map((msg) => ({

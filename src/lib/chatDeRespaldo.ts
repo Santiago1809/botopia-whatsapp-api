@@ -213,12 +213,43 @@ export async function traerMensajes(
   limite: number,
   etiqueta: string
 ): Promise<Awaited<ReturnType<Chat['fetchMessages']>>> {
+  /**
+   * CON LÍMITE DE TIEMPO, y no solo con captura de errores.
+   *
+   * `fetchMessages` no siempre falla: a veces se queda esperando para siempre. Pasa con
+   * los grupos, y el efecto era peor que un error, porque el mensaje entrante se quedaba
+   * congelado ahí —ni respuesta, ni descarte, ni una línea en el log— y desde fuera
+   * parecía que el agente ignoraba el grupo.
+   *
+   * El historial es un extra: sirve para darle contexto a la IA. Que tarde no puede
+   * costar la respuesta, así que a los 15 segundos se sigue sin él.
+   */
+  const conLimiteDeTiempo = async <T,>(
+    promesa: Promise<T>,
+    ms: number
+  ): Promise<T> => {
+    let reloj: NodeJS.Timeout | undefined
+    try {
+      return await Promise.race([
+        promesa,
+        new Promise<never>((_, rechazar) => {
+          reloj = setTimeout(
+            () => rechazar(new Error(`se agotaron los ${ms / 1000}s de espera`)),
+            ms
+          )
+        })
+      ])
+    } finally {
+      if (reloj) clearTimeout(reloj)
+    }
+  }
+
   try {
-    return await chat.fetchMessages({ limit: limite })
+    return await conLimiteDeTiempo(chat.fetchMessages({ limit: limite }), 15000)
   } catch (error) {
     const detalle = error instanceof Error ? error.message : String(error)
     try {
-      const todos = await chat.fetchMessages({})
+      const todos = await conLimiteDeTiempo(chat.fetchMessages({}), 10000)
       console.warn(
         `⚠️ El historial de ${etiqueta} falló con límite (${detalle.slice(0, 120)}); se sirvió lo que ya estaba cargado (${todos.length} mensajes).`
       )
