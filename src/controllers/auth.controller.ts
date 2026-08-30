@@ -4,6 +4,7 @@ import type { Request, Response } from 'express'
 import jwt from 'jsonwebtoken'
 import type { Server } from 'socket.io'
 import { supabase } from '../config/db.js'
+import { query } from '../lib/db.js'
 import type { ChangePassword, CustomRequest } from '../interfaces/global.js'
 import { resetPasswordTemplate, welcomeUserTemplate } from '../lib/constants.js'
 import { transporter, sendEmail } from '../services/email.service.js'
@@ -30,15 +31,21 @@ export const registerUser = async (req: Request, res: Response) => {
         .json({ message: 'Faltan datos para el registro' })
       return
     }
-    const orConditions = [`username.eq.${username},email.eq.${email}`]
-    if (phoneNumber !== '') {
-      orConditions.push(`phoneNumber.eq.${phoneNumber}`)
+    // Antes: .or(`username.eq.${username},email.eq.${email}...`) — DSL de PostgREST
+    // que no traduce a SQL y que además interpolaba datos del request sin escapar.
+    // Ahora es un OR explícito y parametrizado. El teléfono solo entra en la
+    // condición si vino, igual que antes.
+    const orParts = ['username = $1', 'email = $2']
+    const orParams: unknown[] = [username, email]
+    if (phoneNumber !== '' && phoneNumber != null) {
+      orParams.push(phoneNumber)
+      orParts.push(`"phoneNumber" = $${orParams.length}`)
     }
-    const { data: existingUser } = await supabase
-      .from('User')
-      .select('*')
-      .or(orConditions.join(','))
-      .single()
+    const existingRows = await query(
+      `SELECT * FROM app."User" WHERE ${orParts.join(' OR ')} LIMIT 1`,
+      orParams
+    )
+    const existingUser = existingRows.rows[0]
     if (existingUser) {
       res
         .status(409)
@@ -89,18 +96,16 @@ export const loginUser = async (req: Request, res: Response) => {
         .json({ message: 'Faltan datos para el login' })
       return
     }
-    const { data: user } = await supabase
-      .from('User')
-      .select('*')
-      .or(
-        'username.eq.' +
-          identifier +
-          ',email.eq.' +
-          identifier +
-          ',phoneNumber.eq.' +
-          identifier
-      )
-      .single()
+    // Antes: .or('username.eq.' + identifier + ...) — concatenaba el identificador
+    // del request DENTRO del filtro de PostgREST sin escapar (inyección de filtro).
+    // Ahora es un solo parámetro comparado contra las tres columnas.
+    const userRows = await query<User>(
+      `SELECT * FROM app."User"
+        WHERE username = $1 OR email = $1 OR "phoneNumber" = $1
+        LIMIT 1`,
+      [identifier]
+    )
+    const user = userRows.rows[0]
 
     if (!user) {
       res
@@ -165,7 +170,14 @@ export const getUsersList = async (req: CustomRequest, res: Response) => {
   try {
     if (req.user?.role !== Role.admin)
       return res.status(403).json({ message: 'Acceso denegado' })
-    const { data: users } = await supabase.from('User').select('*,!password')
+    // Antes: .select('*,!password'), que NO es sintaxis válida de PostgREST.
+    // Respondía 400, el error se ignoraba y `users` quedaba undefined: el listado
+    // de usuarios estaba roto. Se enumeran las columnas y se omite el hash.
+    const { data: users } = await supabase
+      .from('User')
+      .select(
+        'id, username, email, phoneNumber, countryCode, role, active, tokensPerResponse, subscription, subscription_updated_at, createdAt, updatedAt'
+      )
     res.json(users)
   } catch (error) {
     res

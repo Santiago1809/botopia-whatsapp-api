@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express'
 import { supabase } from '../config/db.js'
+import { query } from '../lib/db.js'
 import type {
   AddWhatsAppNumber,
   CustomRequest,
@@ -134,7 +135,10 @@ export async function getWhatsAppNumbers(req: CustomRequest, res: Response) {
 }
 
 export async function deleteWhatsAppNumer(req: Request, res: Response) {
-  const { numberId } = req.params
+  // @types/express-serve-static-core 5.1+ tipa req.params como string | string[],
+  // y `clients` se indexa por string. En una ruta con :numberId nunca llega un
+  // array, así que normalizar aquí es equivalente y deja el build en verde.
+  const numberId = String(req.params['numberId'] ?? '')
   try {
     if (!numberId) {
       res
@@ -222,16 +226,14 @@ export async function getAgents(req: CustomRequest, res: Response) {
       return
     }
 
-    const { data: agents, error: agentsError } = await supabase
-      .from('Agent')
-      .select('*')
-      .or(`isGlobal.eq.true,ownerId.eq.${user.id}`)
+    // Antes: .or(`isGlobal.eq.true,ownerId.eq.${user.id}`) — DSL de PostgREST.
+    // Los agentes visibles para un usuario son los globales más los suyos.
+    const agentsResult = await query(
+      `SELECT * FROM app."Agent" WHERE "isGlobal" = true OR "ownerId" = $1`,
+      [user.id]
+    )
 
-    if (agentsError) {
-      throw agentsError
-    }
-
-    res.status(HttpStatusCode.Ok).json(agents)
+    res.status(HttpStatusCode.Ok).json(agentsResult.rows)
   } catch (error) {
     res
       .status(HttpStatusCode.InternalServerError)

@@ -31,6 +31,124 @@ Comprobación rápida: `curl http://localhost:3001/health` → `{"status":"ok",.
 1. **Este API** en el puerto **3001**.
 2. **Front** (`lumintik-whatsapp`) en el puerto **3000**.
 
+Copia `.env.example` a `.env` y rellena. La única variable de base de datos es
+`DATABASE_URL`: **ya no se usan `SUPABASE_URL` ni `SUPABASE_KEY`.**
+
+```bash
+cp .env.example .env
+```
+
+---
+
+## 🐘 Base de datos: Postgres en Railway
+
+Este servicio y `CRM-ms` comparten **una sola instancia de Postgres** con dos
+esquemas: `app` (este repo) y `crm` (el microservicio). Antes eran dos proyectos
+de Supabase distintos.
+
+### Puesta en marcha desde cero
+
+**1. Crear el Postgres en Railway**
+
+En el proyecto de Railway: `+ New` → `Database` → `Add PostgreSQL`.
+Railway crea el servicio y expone en su pestaña *Variables*:
+
+| Variable | Host | Cuándo usarla |
+|---|---|---|
+| `DATABASE_URL` | `postgres.railway.internal` | Desde los servicios desplegados en el mismo proyecto. Red privada, sin TLS, sin cobro de egress. |
+| `DATABASE_PUBLIC_URL` | `…proxy.rlwy.net` | Desde tu máquina (aplicar el esquema, correr el smoke test). Sale a internet y **exige TLS**. |
+
+El código decide el TLS mirando el host, así que la misma variable funciona en
+los dos casos sin tocar nada (`src/lib/db.ts`).
+
+**2. Aplicar el esquema**
+
+`db/schema.sql` es la fuente canónica del esquema para **los dos** servicios
+(tablas, índices, funciones RPC y los triggers de realtime). Es idempotente:
+se puede correr las veces que haga falta.
+
+```bash
+# con psql
+psql "$DATABASE_PUBLIC_URL" -f db/schema.sql
+
+# o sin psql instalado (usa el driver pg que ya es dependencia)
+DATABASE_URL="$DATABASE_PUBLIC_URL" npm run db:schema
+```
+
+**3. Configurar la variable en los servicios**
+
+En Railway, en **cada** servicio (`botopia-whatsapp-api` y `CRM-ms`):
+
+```
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+```
+
+Referenciarla así (en vez de pegar el valor) hace que rote sola si Railway
+regenera la credencial.
+
+**4. Borrar las variables viejas**
+
+En los dos servicios: eliminar `SUPABASE_URL` y `SUPABASE_KEY`. Y **revocar en
+Supabase** la key `service_role` del CRM: estuvo hardcodeada en un archivo que sí
+está en git.
+
+**5. Levantar**
+
+```bash
+bun install
+bun run dev        # local
+```
+
+### Verificar que quedó bien
+
+```bash
+npm run build
+DATABASE_URL="..." npm run db:smoke
+```
+
+El smoke test hace insert/select/update/delete por cada tabla del esquema `app`
+pasando por el adaptador, prueba las 3 funciones RPC, el upsert con `onConflict`,
+la semántica `PGRST116` de `.single()` y las guardas del adaptador. Crea y borra
+sus propios datos, pero **córrelo contra una base de prueba, no producción**.
+
+### Cómo habla el código con Postgres
+
+No se reescribieron los 105 call sites. `src/config/db.ts` sigue exportando un
+objeto llamado `supabase` con la misma forma de siempre
+(`from().select().eq().single()`, `.rpc()`), solo que ahora es un adaptador sobre
+`pg`: `src/lib/supabase-adapter.ts`.
+
+Dos reglas del adaptador que conviene conocer:
+
+- **No lanza** por errores de la base: devuelve `{ data, error }` como
+  supabase-js. Mucho código ignora `error`, y con `pg` desnudo esas rutas
+  pasarían de "no encontrado" a 500.
+- **Sí lanza**, con un mensaje que dice qué hacer, ante cualquier método de
+  PostgREST que no esté implementado (`.or()`, `.ilike()`, joins embebidos,
+  tablas fuera de la lista blanca…). Un uso nuevo revienta en desarrollo, no en
+  producción con datos.
+
+Lo que PostgREST resolvía con DSL propio se reescribió a SQL parametrizado con
+`query()` de `src/lib/db.ts`: los tres `.or(...)` de `auth.controller.ts` y
+`user.controller.ts`.
+
+### Migrar los datos que ya están en Supabase
+
+`db/schema.sql` está **derivado del código**, no de un dump de producción. Antes
+de mover datos reales:
+
+```bash
+pg_dump --schema-only "$SUPABASE_API_URL" > app_schema.sql
+pg_dump --schema-only "$SUPABASE_CRM_URL" > crm_schema.sql
+```
+
+y conciliar. Los puntos abiertos están marcados con ⚠️ dentro de `schema.sql`
+(qué borraba exactamente `delete_contacts_by_numberid`, y si
+`contacts.esta_al_habilitado` / `ultima_actividad` son columnas propias o espejos).
+Después, `pg_dump --data-only` + `setval` de todas las secuencias.
+
+### Ejecutar en Desarrollo
+
 `http://localhost:3000` y `http://localhost:3002` ya están en la lista de orígenes
 CORS permitidos en `index.ts`.
 
@@ -69,6 +187,26 @@ src/
 ├── services/       # AI (GenAI), Email (nodemailer), WhatsApp
 └── types/          # Tipos TypeScript
 index.ts            # Punto de entrada: CORS, middlewares, rutas, Socket.io
+
+botopia-whatsapp-api/
+├── db/
+│   ├── schema.sql       # DDL canónico (esquemas app + crm), RPCs y triggers
+│   ├── apply-schema.mjs # Aplica schema.sql sin necesitar psql
+│   └── smoke-test.mjs   # CRUD por tabla + RPCs, contra un Postgres real
+├── src/
+│   ├── config/          # Configuración de BD (reexporta el adaptador)
+│   ├── controllers/     # Lógica de negocio
+│   ├── lib/
+│   │   ├── db.ts               # Pool de pg, SSL por host, query() y LISTEN
+│   │   └── supabase-adapter.ts # Adaptador con la forma de supabase-js
+│   ├── middleware/      # Middlewares (JWT, telemetría)
+│   ├── routes/          # Rutas de la API
+│   ├── services/        # Servicios (AI, Email, WhatsApp)
+│   └── types/           # Tipos TypeScript
+├── index.ts             # Punto de entrada
+├── package.json         # Dependencias y scripts
+├── tsconfig.json        # Config TypeScript (desarrollo)
+└── tsconfig.prod.json   # Config TypeScript (producción)
 ```
 
 ## Endpoints
@@ -89,3 +227,23 @@ index.ts            # Punto de entrada: CORS, middlewares, rutas, Socket.io
   de `src/lib/constants.ts` siguen apuntando a los dominios `botopia.online` /
   `botopia-whatsapp.vercel.app`: son infraestructura viva, hay que cambiarlos cuando
   existan los dominios nuevos.
+
+- **Runtime**: Bun (dev) / Node.js (prod)
+- **Framework**: Express.js
+- **Base de Datos**: PostgreSQL en Railway (driver `pg`)
+- **WebSockets**: Socket.io
+- **Autenticación**: JWT
+- **WhatsApp**: whatsapp-web.js
+- **IA**: Google GenAI
+
+## 📝 Scripts Disponibles
+
+- `bun run dev` - Desarrollo con hot reload
+- `bun run start:bun` - Ejecutar con Bun
+- `npm run build` - Compilar para producción
+- `npm start` - Ejecutar en producción
+- `npm run build:bun` - Build con Bun (alternativo)
+- `npm run db:schema` - Aplicar `db/schema.sql` sobre `DATABASE_URL`
+- `npm run db:smoke` - Smoke test del adaptador contra Postgres (requiere build)
+
+This project was created using `bun init` in bun v1.2.9. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.

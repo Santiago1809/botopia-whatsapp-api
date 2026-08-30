@@ -9,7 +9,9 @@
     "build:bun": "bun install && bun build --packages=external . --outdir ./out --target=node --format=cjs",
     "dev": "bun --watch index.ts",
     "start": "node out/index.js",
-    "start:bun": "bun index.ts"
+    "start:bun": "bun index.ts",
+    "db:schema": "node db/apply-schema.mjs",
+    "db:smoke": "node db/smoke-test.mjs"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",
@@ -19,6 +21,7 @@
     "@types/google-libphonenumber": "^7.4.30",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/nodemailer": "^6.4.17",
+    "@types/pg": "^8.23.1",
     "@types/qrcode": "^1.5.5",
     "typescript": "^5.8.3"
   },
@@ -31,7 +34,6 @@
   "dependencies": {
     "@eslint/js": "^9.31.0",
     "@google/genai": "^0.9.0",
-    "@supabase/supabase-js": "^2.52.0",
     "@types/node-fetch": "^2.6.12",
     "axios": "^1.10.0",
     "bcrypt": "^5.1.1",
@@ -48,6 +50,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
     "nodemailer": "^6.10.1",
+    "pg": "^8.23.0",
     "puppeteer": "^24.14.0",
     "qrcode": "^1.5.4",
     "socket.io": "^4.8.1",

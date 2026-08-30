@@ -1,15 +1,11 @@
 import { config } from 'dotenv'
-import { createClient } from '@supabase/supabase-js'
 
 // Asegurar que las variables de entorno estén cargadas
 config()
 
-const supabaseUrl = process.env.SUPABASE_URL
-const supabaseKey = process.env.SUPABASE_KEY
-
-if (!supabaseUrl || !supabaseKey) {
-  console.error('❌ Error: SUPABASE_URL y SUPABASE_KEY deben estar configuradas en las variables de entorno')
-  throw new Error('Variables de entorno de Supabase no configuradas')
-}
-
-export const supabase = createClient(supabaseUrl, supabaseKey)
+// El cliente ya no es de Supabase: es un adaptador con la misma forma
+// (`from().select().eq().single()`, `.rpc()`) montado sobre un pool de `pg` que
+// apunta al Postgres de Railway. Se reexporta con el mismo nombre `supabase`
+// para no tocar los 105 call sites que lo importan de aquí.
+// Detalles: src/lib/supabase-adapter.ts · conexión y SSL: src/lib/db.ts
+export { supabase } from '../lib/supabase-adapter.js'

@@ -132,9 +132,13 @@ export async function activateUser(req: Request, res: Response) {
 }
 export async function getAllUsers(req: Request, res: Response) {
   try {
+    // Antes: .select('*,!password'), sintaxis inválida de PostgREST — devolvía 400
+    // y el listado quedaba undefined. Se enumeran las columnas sin el hash.
     const { data: users } = await supabase
       .from('User')
-      .select('*,!password')
+      .select(
+        'id, username, email, phoneNumber, countryCode, role, active, tokensPerResponse, subscription, subscription_updated_at, createdAt, updatedAt'
+      )
       .eq('active', true)
     res.status(HttpStatusCode.Ok).json(users)
   } catch (error) {
@@ -204,8 +208,15 @@ export async function changeUserPassword(req: Request, res: Response) {
       return
     }
     const hashedPassword = await bcrypt.hash(password, 10)
-    await supabase.from('User').update({ password: hashedPassword })
-    
+    // Faltaba el .eq(): este UPDATE no tenía filtro. Con PostgREST fallaba y el
+    // error se ignoraba (nadie cambiaba de contraseña); con SQL directo habría
+    // reescrito la contraseña de TODOS los usuarios. El adaptador además bloquea
+    // cualquier UPDATE sin filtro, pero el filtro correcto es este.
+    await supabase
+      .from('User')
+      .update({ password: hashedPassword })
+      .eq('email', email)
+
     if (!transporter) {
       res.status(HttpStatusCode.InternalServerError).json({
         message: 'Servicio de correo no configurado. La contraseña fue actualizada pero no se pudo enviar el correo.'
