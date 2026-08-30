@@ -853,6 +853,32 @@ export function setupSocketEvents(io: Server) {
           )
         ) as string[]
 
+        /**
+         * NOMBRES, RESUELTOS UNA VEZ PARA TODO EL HILO.
+         *
+         * `notifyName` —el nombre que la persona tiene puesto en su WhatsApp— no viaja en
+         * todos los mensajes: WhatsApp lo manda en unos sí y en otros no. Al leerlo
+         * mensaje a mensaje, el nombre salía solo en el último y el resto del hilo
+         * quedaba anónimo, como si fueran de personas distintas.
+         *
+         * Se recorre el historial una vez, se guarda el nombre en cuanto aparece para
+         * cada remitente, y luego se aplica a TODOS sus mensajes.
+         */
+        const nombres = new Map<string, string>()
+        for (const m of messages as Array<{
+          fromMe: boolean
+          author?: string
+          from?: string
+          _data?: { notifyName?: string }
+        }>) {
+          if (m.fromMe) continue
+          const quien = m.author || m.from
+          const comoSeLlama = m._data?.notifyName
+          if (quien && comoSeLlama && !nombres.has(quien)) {
+            nombres.set(quien, comoSeLlama)
+          }
+        }
+
         const fotos = new Map<string, string>()
         await Promise.all(
           autoresUnicos.map(async (id) => {
@@ -889,7 +915,10 @@ export function setupSocketEvents(io: Server) {
             // persona tiene puesto en su WhatsApp; si no viene, queda su número.
             autor: m.fromMe
               ? undefined
-              : m._data?.notifyName || m.author || undefined,
+              : nombres.get(m.author || m.from || '') ||
+                m._data?.notifyName ||
+                m.author ||
+                undefined,
             fotoUrl: m.fromMe
               ? undefined
               : fotos.get(m.author || m.from || '') || undefined
