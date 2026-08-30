@@ -20,7 +20,11 @@ export async function authenticateToken(
     const decoded = await new Promise<RequestUser>((resolve, reject) => {
       jwt.verify(
         token as string,
-        process.env.JWT_SECRET || 'secret',
+        // MISMA clave que firma en auth.controller.ts. Estaban distintas ('secret' acá,
+        // 'secret_super_seguro' allá): sin JWT_SECRET en el entorno, el login daba un token
+        // que este middleware rechazaba, y la sesión se caía a los segundos. El fallback se
+        // deja solo para desarrollo; en producción la variable es obligatoria.
+        process.env.JWT_SECRET || 'secret_super_seguro',
         (err, decoded) => {
           if (err) reject(err)
           else resolve(decoded as RequestUser)
