@@ -1,6 +1,6 @@
 // image.pngManeja el envío y recepción de mensajes
 import { HttpStatusCode } from 'axios'
-import type { Request, Response } from 'express'
+import type { Response } from 'express'
 import libphonenumber from 'google-libphonenumber'
 import type { Server } from 'socket.io'
 import type { Chat, Client, Message } from 'whatsapp-web.js'
@@ -51,6 +51,14 @@ async function incrementMessageUsage(userId: number): Promise<{
   message?: string
   currentUsage?: number
   limit?: number
+  /**
+   * `true` cuando el fallo es de infraestructura (la base no respondió) y no una
+   * decisión de negocio. El llamador lo necesita para distinguir un 500 de un
+   * 400: ahora que esta función es la que DECIDE si se puede enviar, confundir
+   * "la base está caída" con "te quedaste sin cupo" le diría al cliente que
+   * agotó su plan cuando no es verdad.
+   */
+  fallaDeInfraestructura?: boolean
 }> {
   try {
     const { data, error } = await supabase.rpc('increment_message_usage', {
@@ -59,7 +67,11 @@ async function incrementMessageUsage(userId: number): Promise<{
 
     if (error) {
       console.error('Error en increment_message_usage:', error)
-      return { success: false, message: 'Error consultando uso de mensajes' }
+      return {
+        success: false,
+        message: 'Error consultando uso de mensajes',
+        fallaDeInfraestructura: true
+      }
     }
 
     const fila = Array.isArray(data) ? data[0] : undefined
@@ -88,7 +100,46 @@ async function incrementMessageUsage(userId: number): Promise<{
     return { success: true, currentUsage, limit }
   } catch (error) {
     console.error('Error en incrementMessageUsage:', error)
-    return { success: false, message: 'Error interno del servidor' }
+    return {
+      success: false,
+      message: 'Error interno del servidor',
+      fallaDeInfraestructura: true
+    }
+  }
+}
+
+/**
+ * Devuelve al cupo un mensaje que se reservó y NO se llegó a enviar.
+ *
+ * Existe porque el cupo ahora se reserva antes de mandar el WhatsApp (ver
+ * sendMessage): sin esta vuelta atrás, un fallo de la sesión de whatsapp-web.js
+ * le costaría al cliente un mensaje que nunca salió.
+ *
+ * Si la devolución falla, se registra con el id del usuario y el motivo pero NO
+ * se propaga: el error que importa contar es el del envío, y enterrar ese detrás
+ * de "no se pudo devolver el cupo" hace más difícil entender qué pasó. Un
+ * mensaje cobrado de más se corrige mirando el log; uno enviado y no cobrado, no.
+ */
+async function devolverMessageUsage(
+  userId: number,
+  motivo: unknown
+): Promise<void> {
+  try {
+    const { error } = await supabase.rpc('refund_message_usage', {
+      p_user_id: userId
+    })
+    if (error) throw error
+    console.warn(
+      `↩️ Cupo devuelto al usuario ${userId}: el envío falló (${
+        motivo instanceof Error ? motivo.message : String(motivo)
+      }).`
+    )
+  } catch (error) {
+    console.error(
+      `❌ No se pudo devolver el cupo reservado del usuario ${userId} tras un envío fallido. ` +
+        'Queda un mensaje cobrado de más este mes:',
+      error instanceof Error ? error.message : error
+    )
   }
 }
 // Helper function to send upgrade email when limit is reached
@@ -282,7 +333,6 @@ export async function sendMessage(req: CustomRequest, res: Response) {
       return
     }
 
-    // Check message limit BEFORE sending
     const { data: number } = await supabase
       .from('WhatsAppNumber')
       .select('userId')
@@ -296,42 +346,53 @@ export async function sendMessage(req: CustomRequest, res: Response) {
       return
     }
 
-    // Check if user has reached message limit
-    const { data: usageData, error: usageError } = await supabase.rpc(
-      'get_user_message_usage',
-      { p_user_id: number.userId }
-    )
-
-    if (usageError || !usageData || usageData.length === 0) {
-      res.status(HttpStatusCode.InternalServerError).json({
-        message: 'Error consultando uso de mensajes del usuario'
-      })
+    // -----------------------------------------------------------------------
+    //  EL CUPO SE RESERVA ANTES DE ENVIAR, NO SE COBRA DESPUÉS.
+    //
+    //  Aquí había dos pasos separados: primero `get_user_message_usage` para
+    //  comprobar `currentUsage >= limit`, y DESPUÉS del envío un
+    //  `incrementMessageUsage`. Entre la comprobación y el cobro hay dos viajes
+    //  a la base y un mensaje de WhatsApp, y en ese hueco cabe otra petición:
+    //  con el cupo en 99 de 100, dos envíos simultáneos leen los dos 99, los dos
+    //  pasan, los dos se envían — y el contador solo cuenta uno. Se envía sin
+    //  cobrar, que es la mitad exacta del negocio.
+    //
+    //  `increment_message_usage` ya hace las dos cosas en una operación con la
+    //  fila bloqueada (FOR UPDATE, ver db/schema.sql): comprueba el tope y
+    //  suma 1, o no hace ninguna de las dos. Llamarla PRIMERO convierte el cupo
+    //  en una reserva: el segundo de los dos envíos simultáneos ve 100 y se
+    //  rechaza antes de tocar WhatsApp.
+    //
+    //  Y si el envío falla después de reservar, se devuelve el cupo. La reserva
+    //  puede sobrar; el mensaje enviado gratis, no. Ante la duda se cobra de
+    //  menos y se avisa en el log, nunca al revés.
+    // -----------------------------------------------------------------------
+    const reserva = await incrementMessageUsage(number.userId)
+    if (!reserva.success) {
+      // 500 si la base no respondió, 400 si es una decisión de negocio (tope
+      // alcanzado, plan sin tope configurado). Decirle "límite alcanzado" a
+      // quien en realidad topó con una base caída manda a buscar el problema al
+      // sitio equivocado.
+      res
+        .status(
+          reserva.fallaDeInfraestructura
+            ? HttpStatusCode.InternalServerError
+            : HttpStatusCode.BadRequest
+        )
+        .json({
+          message: reserva.message ?? 'Límite mensual de mensajes alcanzado',
+          currentUsage: reserva.currentUsage,
+          limit: reserva.limit
+        })
       return
     }
 
-    const { current_usage: currentUsage, message_limit: limit } = usageData[0]
-
-    if (currentUsage >= limit) {
-      res.status(HttpStatusCode.BadRequest).json({
-        message: 'Límite mensual de mensajes alcanzado',
-        currentUsage,
-        limit
-      })
-      return
-    }
-
-    // Now send the message
-    await client.sendSeen(to)
-    await client.sendMessage(to, content)
-
-    // Increment message usage after successful sending
-    const usageResult = await incrementMessageUsage(number.userId)
-    if (!usageResult.success) {
-      // Message was sent but usage wasn't recorded properly
-      console.error(
-        'Error incrementando uso de mensajes después del envío:',
-        usageResult.message
-      )
+    try {
+      await client.sendSeen(to)
+      await client.sendMessage(to, content)
+    } catch (envioError) {
+      await devolverMessageUsage(number.userId, envioError)
+      throw envioError
     }
 
     res.status(HttpStatusCode.Ok).json({ message: 'Mensaje enviado' })

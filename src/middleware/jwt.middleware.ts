@@ -20,8 +20,13 @@ import { query } from '../lib/db.js'
  *
  * En desarrollo se conserva el valor de respaldo —y con un aviso— para no
  * obligar a configurar nada al levantar el proyecto en local.
+ *
+ * Se EXPORTA porque el WebSocket tiene que verificar el mismo token en su
+ * handshake (session.controller.ts). Recalcularlo allí con otro
+ * `process.env.JWT_SECRET || ...` es justamente cómo aparecieron las dos claves
+ * distintas que este comentario describe: una sola definición, importada.
  */
-const JWT_SECRET = (() => {
+export const JWT_SECRET = (() => {
   const fromEnv = process.env.JWT_SECRET
   if (fromEnv) return fromEnv
   if (process.env.NODE_ENV === 'production') {

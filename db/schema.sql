@@ -301,7 +301,27 @@ CREATE TABLE IF NOT EXISTS crm.contacts (
   last_activity  timestamptz,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
-  user_id        integer DEFAULT 2,
+
+  -- ---------------------------------------------------------------------------
+  -- user_id NO DICE DE QUIÉN ES ESTE CONTACTO. Es una columna heredada que nadie
+  -- escribe a conciencia y que nada consulta para decidir permisos.
+  --
+  -- El dueño de un contacto se deriva SIEMPRE de su línea:
+  --     crm.contacts.line_id -> crm.lines.user_id -> app."User".id
+  -- que es la cadena que aplican lib/propiedad.ts (en los dos servicios) y
+  -- events.tenant_de_contacto() más abajo en este archivo.
+  --
+  -- Aquí decía `integer DEFAULT 2`. Ese 2 es un id de usuario real escrito a
+  -- fuego: cada contacto que se creaba sin indicar user_id —o sea, todos—
+  -- quedaba marcado como si fuera de ESE usuario. Hoy no hace daño porque nadie
+  -- lee la columna para autorizar; el daño es futuro y silencioso: el primero
+  -- que la lea como "el dueño" —una consulta de soporte, un informe, un endpoint
+  -- nuevo escrito con prisa— va a concluir que toda la base pertenece al usuario
+  -- 2, y no se va a ver hasta que alguien reciba datos ajenos. Se quita el
+  -- DEFAULT para que la columna quede en NULL: sin dato es honesto, con el dato
+  -- equivocado no.
+  -- ---------------------------------------------------------------------------
+  user_id        integer,
 
   -- ---------------------------------------------------------------------------
   -- Columnas en español que el código LEE hoy y NUNCA escribe:
@@ -317,6 +337,14 @@ CREATE TABLE IF NOT EXISTS crm.contacts (
   esta_al_habilitado boolean GENERATED ALWAYS AS (is_ai_enabled) STORED,
   ultima_actividad   timestamptz GENERATED ALWAYS AS (last_activity) STORED
 );
+
+-- El CREATE de arriba es IF NOT EXISTS: en una base que ya existe no cambia nada,
+-- y ahí es precisamente donde sigue puesto el DEFAULT 2. Esto lo quita. Es
+-- idempotente (DROP DEFAULT sobre una columna que ya no lo tiene no hace nada) y
+-- no toca ni una fila: las que ya están marcadas con el 2 se quedan como están,
+-- porque no hay forma de saber cuáles se escribieron a propósito. Lo que se corta
+-- es que sigan naciendo contactos con un dueño falso.
+ALTER TABLE crm.contacts ALTER COLUMN user_id DROP DEFAULT;
 -- analyticsService/databaseService.ts:263-268 cuenta contactos nuevos por día y por
 -- línea (7 consultas en cada carga del dashboard): necesita line_id Y el rango.
 CREATE INDEX IF NOT EXISTS contacts_line_created_idx ON crm.contacts (line_id, created_at);
@@ -1860,6 +1888,35 @@ BEGIN
 
   RETURN QUERY SELECT true, v_used, v_limit;
 END
+$$;
+
+-- -----------------------------------------------------------------------------
+--  Devolución de un mensaje reservado que no se llegó a enviar.
+--
+--  El controlador pasó a RESERVAR el cupo antes de mandar el WhatsApp: es la
+--  única forma de que dos envíos simultáneos en el límite no pasen los dos
+--  (comprobar y cobrar tienen que ser la misma operación, y lo son en
+--  increment_message_usage). El precio de reservar antes es que hay que saber
+--  deshacerlo cuando el envío falla.
+--
+--  GREATEST(usedmessages - 1, 0): el contador no puede quedar negativo aunque
+--  llegue una devolución de más — un mes con -1 mensajes daría un tope efectivo
+--  mayor que el del plan.
+--
+--  No crea la fila si no existe: no haber reservado nunca y "devolver" no puede
+--  inventar un consumo de -1.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION app.refund_message_usage(p_user_id integer)
+RETURNS integer
+LANGUAGE sql
+AS $$
+  UPDATE app."UserMessageUsage"
+     SET usedmessages = GREATEST(usedmessages - 1, 0),
+         updatedat    = now()
+   WHERE userid = p_user_id
+     AND year   = EXTRACT(YEAR  FROM now())::int
+     AND month  = EXTRACT(MONTH FROM now())::int
+  RETURNING usedmessages;
 $$;
 
 

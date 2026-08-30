@@ -2,7 +2,6 @@ import { HttpStatusCode } from 'axios'
 import * as bcrypt from 'bcrypt'
 import type { Request, Response } from 'express'
 import jwt from 'jsonwebtoken'
-import type { Server } from 'socket.io'
 import { supabase } from '../config/db.js'
 import { query } from '../lib/db.js'
 import type { ChangePassword, CustomRequest } from '../interfaces/global.js'
@@ -388,8 +387,12 @@ export const requestResetPassword = async (req: Request, res: Response) => {
       return
     }
 
-    const io: Server = req.app.get('io')
-    io.emit('otp-sent', { email, message: 'OTP enviado correctamente' })
+    // Aquí había `io.emit('otp-sent', { email, ... })`: el correo de quien pide
+    // recuperar su contraseña, anunciado a TODOS los sockets conectados. Nadie lo
+    // escucha —no hay un solo `on('otp-sent')` en el front— y lo único que hacía
+    // era repartir direcciones de correo y decir en vivo qué cuenta está en medio
+    // de un restablecimiento, que es la señal que busca quien intenta colarse.
+    // Quien pidió el código ya recibe la confirmación en la respuesta HTTP.
     res.status(HttpStatusCode.Ok).json({
       message: 'OTP enviado correctamente',
       expiresInMinutes: OTP_TTL_MINUTES

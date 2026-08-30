@@ -73,25 +73,59 @@ export async function usuarioDeSesion(
   }
 
   const username = req.user?.username
-  let resuelto: UsuarioSesion | null = null
-
-  if (username) {
-    const { rows } = await query<{
-      id: number
-      username: string
-      role: string
-      active: boolean
-    }>('SELECT id, username, role, active FROM app."User" WHERE username = $1', [
-      username
-    ])
-    const fila = rows[0]
-    if (fila && fila.active !== false) {
-      resuelto = { id: Number(fila.id), username: fila.username, role: fila.role }
-    }
-  }
+  // Misma resolución que usa el WebSocket (usuarioPorUsername): una sola
+  // consulta escrita en un solo sitio, para que las dos vías no se separen.
+  const resuelto = username ? await usuarioPorUsername(username) : null
 
   anfitrion[CACHE] = resuelto
   return resuelto
+}
+
+/**
+ * Resuelve un usuario por su nombre, SIN depender de Express.
+ *
+ * Está separado porque el WebSocket también lo necesita y allí no hay `req`: el
+ * token llega en el handshake de socket.io, no en una cabecera HTTP. Es la misma
+ * consulta que hace `usuarioDeSesion`, con la misma regla sobre `active`: un
+ * token sigue siendo válido 5 horas después de dar de baja la cuenta, así que
+ * quien decide es la base y no el token.
+ */
+export async function usuarioPorUsername(
+  username: string
+): Promise<UsuarioSesion | null> {
+  const { rows } = await query<{
+    id: number
+    username: string
+    role: string
+    active: boolean
+  }>('SELECT id, username, role, active FROM app."User" WHERE username = $1', [
+    username
+  ])
+  const fila = rows[0]
+  if (!fila || fila.active === false) return null
+  return { id: Number(fila.id), username: fila.username, role: fila.role }
+}
+
+/**
+ * ¿Este número de WhatsApp es de este usuario? Versión sin Express.
+ *
+ * La usa el WebSocket, que es donde faltaba: `join-room` metía al socket en la
+ * sala `<numberId>` sin comprobar nada, y por esa sala viaja —entre otras cosas—
+ * el QR de vinculación. Devuelve false si el número no existe, que para quien
+ * pregunta es la misma respuesta que "no es tuyo".
+ */
+export async function numeroEsDelUsuario(
+  userId: number,
+  numberId: unknown
+): Promise<boolean> {
+  const id = Number(numberId)
+  // Un id no numérico haría fallar la comparación en Postgres con 22P02.
+  if (!Number.isInteger(id)) return false
+  const { rows } = await query<{ id: number }>(
+    'SELECT id FROM app."WhatsAppNumber" WHERE id = $1 AND "userId" = $2',
+    [id, userId]
+  )
+  return rows.length > 0
 }
 
 /** Igual que el anterior, pero responde 401 y devuelve null si no hay sesión. */

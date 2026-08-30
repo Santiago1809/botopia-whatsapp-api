@@ -1,15 +1,22 @@
 // Maneja la gestión de sesiones de WhatsApp
 import { HttpStatusCode } from 'axios'
-import type { Request, Response } from 'express'
+import type { Response } from 'express'
+import jwt from 'jsonwebtoken'
 import QRCode from 'qrcode'
-import type { Server } from 'socket.io'
+import type { Server, Socket as SocketIO } from 'socket.io'
 import whatsappWeb from 'whatsapp-web.js'
 import type { CustomRequest, StartWhatsApp } from '../../interfaces/global.js'
 
 const { Client, LocalAuth } = whatsappWeb
 import { supabase } from '../../config/db.js'
 import { clients } from '../../WhatsAppClients.js'
-import { exigirNumeroPropio } from '../../lib/propiedad.js'
+import { JWT_SECRET } from '../../middleware/jwt.middleware.js'
+import {
+  exigirNumeroPropio,
+  numeroEsDelUsuario,
+  usuarioPorUsername,
+  type UsuarioSesion
+} from '../../lib/propiedad.js'
 import {
   marcarLineaConectada,
   marcarLineaDesconectada,
@@ -249,18 +256,203 @@ export async function stopWhatsApp(req: CustomRequest, res: Response) {
   }
 }
 
+/**
+ * -----------------------------------------------------------------------------
+ *  EL QR SALÍA POR UNA PUERTA SIN CERRADURA.
+ * -----------------------------------------------------------------------------
+ *
+ *  `join-room` recibía un roomId y hacía `socket.join(roomId)`. Punto. Y la sala
+ *  de este servicio es el `numberId` a secas, así que poner un número —1, 2, 3…,
+ *  que es un serial y no hay nada que adivinar— metía al socket en el canal en
+ *  vivo de otra empresa. Por ese canal salen cinco cosas, todas con
+ *  `io.to(numberId.toString())`:
+ *
+ *     qr-code                  · EL CÓDIGO DE VINCULACIÓN DE SU WHATSAPP
+ *     whatsapp-ready           · su línea acaba de quedar conectada
+ *     whatsapp-numbers-updated · su línea se cayó
+ *     whatsapp-error           · el detalle del fallo de arranque
+ *     chat-history             · SUS CONVERSACIONES, mensaje a mensaje
+ *     sync-progress / *-contacts-updated · su agenda
+ *
+ *  El primero es el peor con diferencia: un QR de WhatsApp Web es una credencial
+ *  de sesión. Quien esté en la sala en el momento en que el dueño le da a
+ *  "conectar" lo ve, y si lo escanea antes que él se lleva la sesión de WhatsApp
+ *  de esa empresa — leer y escribir en nombre de otro, sin tocar la contraseña de
+ *  nadie y sin dejar rastro en esta API.
+ *
+ *  Ahora hay dos puertas: el handshake dice QUIÉN es (io.use, más abajo) y
+ *  `join-room` comprueba que ese número sea suyo antes de dejarlo entrar.
+ * -----------------------------------------------------------------------------
+ */
+
+/**
+ * SOCKETS VIEJOS SIN TOKEN — misma decisión que en el CRM, y por lo mismo.
+ *
+ * Se rechazan. El front que se despliega con este cambio manda el token en el
+ * handshake (`auth: { token }` en hooks/useSocket.ts y context/WhatsAppContext.tsx),
+ * y un socket anónimo es indistinguible de alguien esperando el QR de otro.
+ *
+ * La salida de emergencia lleva fecha obligatoria: WS_GRACIA_SIN_TOKEN=YYYY-MM-DD
+ * admite sockets sin token hasta el final de ESE día (UTC) y después vuelve a
+ * rechazar sola, sin que nadie tenga que acordarse de quitarla. Mientras esté
+ * activa, cada conexión anónima queda en el log con su origen. Un socket admitido
+ * por gracia NO puede entrar en ninguna sala: se conecta, pero no ve nada de
+ * nadie — que es lo que necesita una pestaña vieja para no romperse a gritos
+ * mientras se recarga.
+ */
+const GRACIA_SIN_TOKEN: Date | null = (() => {
+  const crudo = (process.env.WS_GRACIA_SIN_TOKEN ?? '').trim()
+  if (!crudo) return null
+  const hasta = new Date(`${crudo}T23:59:59.999Z`)
+  if (Number.isNaN(hasta.getTime())) {
+    console.error(
+      `❌ WS_GRACIA_SIN_TOKEN="${crudo}" no es una fecha YYYY-MM-DD: se ignora y los sockets sin token se rechazan.`
+    )
+    return null
+  }
+  console.warn(
+    `⚠️ MODO DE GRACIA ACTIVO: se aceptan sockets SIN token hasta ${hasta.toISOString()} (no podrán unirse a ninguna sala).`
+  )
+  return hasta
+})()
+
+let graciaVencidaAvisada = false
+
+function graciaVigente(): boolean {
+  if (!GRACIA_SIN_TOKEN) return false
+  if (Date.now() > GRACIA_SIN_TOKEN.getTime()) {
+    if (!graciaVencidaAvisada) {
+      graciaVencidaAvisada = true
+      console.warn(
+        `⚠️ La gracia de WS_GRACIA_SIN_TOKEN venció el ${GRACIA_SIN_TOKEN.toISOString()}: ya se puede quitar la variable.`
+      )
+    }
+    return false
+  }
+  return true
+}
+
+/** El token del handshake, en las tres formas en que lo manda un cliente. */
+function tokenDelHandshake(socket: SocketIO): string {
+  const auth = (socket.handshake?.auth ?? {}) as { token?: unknown }
+  if (typeof auth.token === 'string' && auth.token) return auth.token
+
+  const enQuery = socket.handshake?.query?.token
+  const query = Array.isArray(enQuery) ? enQuery[0] : enQuery
+  if (typeof query === 'string' && query) return query
+
+  const cabecera = socket.handshake?.headers?.authorization ?? ''
+  if (cabecera.startsWith('Bearer ')) return cabecera.slice(7)
+
+  return ''
+}
+
+/** Usuario ya resuelto en el handshake; null si entró por el modo de gracia. */
+function usuarioDeSocket(socket: SocketIO): UsuarioSesion | null {
+  return (socket.data?.usuario as UsuarioSesion | null | undefined) ?? null
+}
+
 export function setupSocketEvents(io: Server) {
+  // LA PUERTA. Corre durante el handshake, antes de que exista 'connection': un
+  // socket que no la pasa no llega a registrar ningún manejador.
+  io.use((socket, next) => {
+    void (async () => {
+      const token = tokenDelHandshake(socket)
+
+      if (!token) {
+        if (graciaVigente()) {
+          socket.data.usuario = null
+          console.warn(
+            `⚠️ Socket ${socket.id} conectado SIN token (origen ${
+              socket.handshake.headers.origin ?? 'desconocido'
+            }): admitido por WS_GRACIA_SIN_TOKEN, sin acceso a salas.`
+          )
+          next()
+          return
+        }
+        next(new Error('No autorizado: falta el token de sesión'))
+        return
+      }
+
+      try {
+        // MISMA verificación que el middleware HTTP (jwt.middleware.ts): misma
+        // librería y MISMO JWT_SECRET, importado de allí para que no puedan
+        // divergir. Después se relee el usuario en la base, que es lo que hace
+        // que dar de baja una cuenta le corte también los sockets.
+        const datos = jwt.verify(token, JWT_SECRET) as { username?: string }
+        const usuario = datos?.username
+          ? await usuarioPorUsername(datos.username)
+          : null
+        if (!usuario) {
+          console.warn(
+            `⛔ Socket ${socket.id} rechazado: token válido pero la cuenta no existe o está inactiva.`
+          )
+          next(new Error('No autorizado'))
+          return
+        }
+        socket.data.usuario = usuario
+        next()
+      } catch (error) {
+        // Firma inválida, token caducado o base caída: en los tres casos no se
+        // puede afirmar quién es. Fail-closed.
+        console.warn(
+          `⛔ Socket ${socket.id} rechazado: ${
+            error instanceof Error ? error.message : 'token inválido'
+          }`
+        )
+        next(new Error('No autorizado'))
+      }
+    })()
+  })
+
   io.on('connection', (socket) => {
-    socket.on('join-room', (roomId) => {
-      socket.join(roomId)
+    socket.on('join-room', async (roomId) => {
+      const usuario = usuarioDeSocket(socket)
+      if (!usuario) {
+        // Sin identidad no hay número que comprobar. Solo ocurre dentro de la
+        // ventana de gracia: el socket vive, pero no entra a ninguna sala.
+        socket.emit('room-error', {
+          roomId,
+          message: 'Sesión no válida: vuelve a iniciar sesión'
+        })
+        return
+      }
+
+      // La sala ES el numberId. Que sea suyo es toda la comprobación que hacía
+      // falta y la que no existía.
+      if (!(await numeroEsDelUsuario(usuario.id, roomId))) {
+        console.warn(
+          `⛔ ${usuario.username} (id ${usuario.id}) intentó unirse a la sala del número ${roomId}, que no es suyo.`
+        )
+        // "No encontrado" y no "prohibido": distinguirlos convertiría el socket
+        // en un detector de numberIds ajenos válidos, que son seriales.
+        socket.emit('room-error', { roomId, message: 'Número no encontrado' })
+        return
+      }
+
+      socket.join(String(roomId))
+      socket.emit('room-joined', { roomId })
     })
     // El front emite 'leave-room' al cambiar de número y nadie lo escuchaba: el
     // socket seguía en la sala del número anterior y recibía su QR y su historial.
+    // Salir no necesita permiso: irse de una sala no revela nada.
     socket.on('leave-room', (roomId) => {
-      socket.leave(roomId)
+      socket.leave(String(roomId))
     })
     socket.on('get-chat-history', async ({ numberId, to }) => {
       try {
+        // El historial se pedía por numberId y se emitía a la sala de ese
+        // numberId. Con join-room cerrado ya no se podría leer, pero seguiría
+        // sirviendo para ARRANCAR el cliente de WhatsApp de otra empresa (mira
+        // el bloque de abajo: si no hay sesión, la crea). Se comprueba igual.
+        const usuario = usuarioDeSocket(socket)
+        if (!usuario || !(await numeroEsDelUsuario(usuario.id, numberId))) {
+          console.warn(
+            `⛔ Petición de historial rechazada para el número ${numberId}: no es del usuario del socket.`
+          )
+          return
+        }
+
         let client = clients[numberId]
         if (!client) {
           // Intentar inicializar el cliente automáticamente
