@@ -29,23 +29,57 @@ const JWT_SECRET = (() => {
 // Minutos que vive un código de recuperación antes de caducar.
 const OTP_TTL_MINUTES = 10
 
+/**
+ * Deriva un nombre de usuario libre a partir del correo.
+ *
+ * `ana@empresa.com` -> `ana`, y si `ana` está tomado, `ana2`, `ana3`… Se consulta la
+ * base en cada intento en vez de calcular un sufijo al azar para que el nombre siga
+ * siendo legible: es lo que la persona ve como su usuario en la app.
+ */
+async function usernameLibreDesde(email: string): Promise<string> {
+  const base =
+    (email.split('@')[0] ?? '')
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, '')
+      .slice(0, 24) || 'usuario'
+  for (let i = 1; i <= 50; i++) {
+    const intento = i === 1 ? base : `${base}${i}`
+    const { rows } = await query(
+      'SELECT 1 FROM app."User" WHERE username = $1 LIMIT 1',
+      [intento]
+    )
+    if (!rows.length) return intento
+  }
+  // 50 colisiones del mismo buzón es un caso que no se da; aun así no se puede
+  // devolver algo que choque, porque la columna es UNIQUE y el INSERT reventaría.
+  return `${base}${Date.now().toString(36)}`
+}
+
 export const registerUser = async (req: Request, res: Response) => {
   try {
     const {
-      username,
+      username: usernamePedido,
       password,
       role,
       email,
       phoneNumber,
       countryCode
-    } = //private String final username
-      req.body as Partial<User>
-    if (!username || !password || !email) {
+    } = req.body as Partial<User>
+    if (!password || !email) {
       res
         .status(HttpStatusCode.BadRequest)
         .json({ message: 'Faltan datos para el registro' })
       return
     }
+
+    // El registro ya no pide "nombre de usuario": el correo es la identidad. Pero la
+    // columna existe, es NOT NULL y UNIQUE, y se muestra en la app, así que se deriva
+    // del correo. Dos personas con el mismo buzón en dominios distintos
+    // (ana@a.com y ana@b.com) chocarían, y ese choque saldría como "el usuario ya
+    // existe" señalando al correo, que sí está libre: por eso se numera.
+    const username = usernamePedido?.trim()
+      ? usernamePedido.trim()
+      : await usernameLibreDesde(email)
     // Antes: .or(`username.eq.${username},email.eq.${email}...`) — DSL de PostgREST
     // que no traduce a SQL y que además interpolaba datos del request sin escapar.
     // Ahora es un OR explícito y parametrizado. El teléfono solo entra en la
