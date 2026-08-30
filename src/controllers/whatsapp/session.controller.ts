@@ -832,6 +832,39 @@ export function setupSocketEvents(io: Server) {
             lastMessageTimestamp = lastMsg.timestamp * 1000
           }
         }
+        /**
+         * FOTOS DE PERFIL.
+         *
+         * `getProfilePicUrl` es una llamada al navegador por cada contacto, así que se
+         * piden UNA VEZ por autor distinto —no una por mensaje— y en paralelo. Sin este
+         * cuidado, un chat de 30 mensajes disparaba 30 llamadas para 2 personas.
+         *
+         * Que falle es normal y no es un error: mucha gente tiene la foto restringida a
+         * sus contactos. En ese caso se queda sin foto y el front pinta las iniciales.
+         */
+        const autoresUnicos = Array.from(
+          new Set(
+            messages
+              .filter((m: { fromMe: boolean }) => !m.fromMe)
+              .map(
+                (m: { author?: string; from?: string }) => m.author || m.from || ''
+              )
+              .filter(Boolean)
+          )
+        ) as string[]
+
+        const fotos = new Map<string, string>()
+        await Promise.all(
+          autoresUnicos.map(async (id) => {
+            try {
+              const url = await client.getProfilePicUrl(id)
+              if (url) fotos.set(id, url)
+            } catch {
+              /* sin foto pública: el front usa las iniciales */
+            }
+          })
+        )
+
         const chatHistory = messages.map(
           (m: {
             fromMe: boolean
@@ -839,6 +872,7 @@ export function setupSocketEvents(io: Server) {
             timestamp: number
             ack?: number
             author?: string
+            from?: string
             _data?: { notifyName?: string }
           }) => ({
             role: m.fromMe ? 'assistant' : 'user',
@@ -855,7 +889,10 @@ export function setupSocketEvents(io: Server) {
             // persona tiene puesto en su WhatsApp; si no viene, queda su número.
             autor: m.fromMe
               ? undefined
-              : m._data?.notifyName || m.author || undefined
+              : m._data?.notifyName || m.author || undefined,
+            fotoUrl: m.fromMe
+              ? undefined
+              : fotos.get(m.author || m.from || '') || undefined
           })
         )
         const respuesta = {
