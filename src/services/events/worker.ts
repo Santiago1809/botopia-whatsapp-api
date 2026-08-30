@@ -70,6 +70,14 @@ const CONCURRENCIA_POR_DESTINO = 4
 /** Arriendo de la reclamación: si el worker muere, la fila revive sola. */
 const ARRIENDO = "interval '2 minutes'"
 
+/**
+ * Tipo del evento de prueba. NO está en el catálogo a propósito: no se puede
+ * suscribir nadie a él y, sobre todo, un receptor que hace `switch (type)` no lo
+ * confunde con un hecho real. Reusar un tipo del catálogo para probar es cómo se
+ * dispara la automatización de un cliente con datos falsos.
+ */
+const TIPO_PRUEBA = 'webhook.test'
+
 // ---------------------------------------------------------------------------
 
 interface FilaEntrega {
@@ -201,6 +209,11 @@ async function enviarWebhook(fila: FilaEntrega): Promise<Resultado> {
     secreto,
     secretoAnterior
   })
+
+  // El evento de prueba se marca en una cabecera propia ADEMÁS de llevar su
+  // tipo propio, para que un receptor que solo mire cabeceras pueda descartarlo
+  // sin parsear el cuerpo. Nunca se manda esta cabecera en un evento real.
+  if (fila.type === TIPO_PRUEBA) encabezados['X-Lumintik-Test'] = 'true'
 
   // Se prueban las direcciones validadas en orden (IPv4 primero) y se pasa a la
   // siguiente SOLO si el fallo fue de conexión. Un 500 del receptor, un timeout
@@ -890,13 +903,12 @@ export async function enviarPrueba(endpoint: {
     email_preference_id: null,
     attempt_count: 1,
     event_public_id: crypto.randomUUID(),
-    type: 'line.qr_pending',
+    type: TIPO_PRUEBA,
     payload: {
       prueba: true,
       mensaje:
         'Este es un evento de prueba enviado desde la pantalla de Conexiones de Lumintik Agents. No corresponde a ningún hecho real.',
       line: { id: 0, label: 'Línea de prueba', channel: 'whatsapp_web', phone_masked: null },
-      expires_at: new Date(ahora.getTime() + 20_000).toISOString(),
       requested_at: ahora.toISOString()
     },
     occurred_at: ahora,

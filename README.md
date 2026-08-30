@@ -216,6 +216,32 @@ botopia-whatsapp-api/
 - `/api/auth`, `/api/user`, `/api/admin`
 - `/api/whatsapp`, `/api/unsyncedcontacts`
 - `/api/payments`, `/api/subscriptions`, `/api/stats`
+- `/api/connections` — webhooks salientes, avisos por correo y actividad de
+  eventos. Es lo que consume la pantalla **Conexiones** del front.
+
+## Eventos y webhooks
+
+Cada hecho de la cuenta (mensaje entrante, contacto que contesta, cambio de
+etapa, línea caída) se guarda en el esquema `events` de la base y se entrega
+firmado a los destinos que registre el cliente, y/o por correo.
+
+- **Documentación para el cliente**: [`docs/WEBHOOKS.md`](docs/WEBHOOKS.md) —
+  catálogo de eventos, ejemplos de payload y cómo verificar la firma (Node y
+  Python).
+- **Dónde está el código**: `src/services/events/` (emisor, worker de entregas,
+  firma HMAC, validación anti-SSRF, plantillas de correo, resumen diario) y la
+  sección `events` de `db/schema.sql` (tablas, `events.emitir()` y los triggers
+  que producen los eventos de la vía Meta).
+
+### Variables de entorno que usa
+
+| Variable | Para qué | Si falta |
+| --- | --- | --- |
+| `WEBHOOK_SECRET_KEY` | Cifra los secretos de firma guardados. Genérala con `openssl rand -base64 32`. | Se deriva una clave de `JWT_SECRET` y se avisa por log. Si tampoco hay `JWT_SECRET`, no se pueden crear webhooks. |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` | Envío de los avisos por correo. | Los avisos se registran como `blocked` con el motivo escrito. **Nada más se rompe.** |
+| `MAIL_FROM` | Remitente real (dominio verificado del proveedor transaccional). | Se usa `SMTP_USER`. |
+| `EVENTS_WORKER_ENABLED` | `false` apaga el worker de entregas en esta instancia. | Activo. |
+| `WEBHOOK_ALLOW_INSECURE_HOSTS` | **Solo desarrollo**: hosts separados por coma a los que se permite `http://` y puerto libre. | Solo se admite `https://` a direcciones públicas. |
 
 ## Notas
 
