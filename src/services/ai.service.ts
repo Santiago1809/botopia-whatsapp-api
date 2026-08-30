@@ -15,9 +15,26 @@ export async function getAIResponse(
   // El modelo por defecto se puede mover sin tocar código: Google descontinúa versiones
   // (gemini-2.0-flash dejó de existir y devolvía error en cada respuesta del agente, con la
   // clave bien puesta). Con la env se cambia en caliente el día que pase otra vez.
-  model = process.env.GEMINI_MODEL || 'gemini-3.6-flash',
+  modelPedido?: string | null,
   chatHistory: Message[] = [],
 ) {
+  /**
+   * EL MODELO, NORMALIZADO A MANO Y NO CON UN VALOR POR DEFECTO.
+   *
+   * Antes esto era `model = process.env.GEMINI_MODEL || 'gemini-3.6-flash'`. En
+   * JavaScript, el valor por defecto de un parámetro SOLO se aplica cuando el argumento
+   * llega como `undefined`; si llega como `null` —que es lo que devuelve Postgres cuando
+   * la línea no tiene modelo elegido— se pasa el `null` tal cual al SDK, y allí revienta
+   * con "Cannot convert undefined or null to object".
+   *
+   * Desde fuera eso se veía como "el agente no responde", sin más. Es exactamente lo
+   * que pasaba en producción, y lo mismo vale para el historial.
+   */
+  const model =
+    (typeof modelPedido === 'string' && modelPedido.trim()) ||
+    process.env.GEMINI_MODEL ||
+    'gemini-3.6-flash'
+  const historial = Array.isArray(chatHistory) ? chatHistory : []
   // Sin clave, el SDK falla con un error de red genérico y el chat mostraba un
   // "Failed to get AI response" que no dice nada. Se corta antes y se nombra
   // exactamente lo que falta.
@@ -25,7 +42,7 @@ export async function getAIResponse(
     throw new Error(AI_KEY_MISSING_MESSAGE)
   }
   try {
-    let messages = chatHistory.map((msg) => ({
+    let messages = historial.map((msg) => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
       parts: [{ text: msg.content }]
     }))

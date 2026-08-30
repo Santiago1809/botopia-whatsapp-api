@@ -809,11 +809,13 @@ export async function handleIncomingMessage(
             )
           }
         }
-        // El nombre que la persona tiene en su WhatsApp gana a cualquier número.
-        const nombreDeWhatsApp = (
-          msg as unknown as { _data?: { notifyName?: string } }
-        )._data?.notifyName
-        if (nombreDeWhatsApp) nombreVisible = nombreDeWhatsApp
+        // Manda el NÚMERO, con su prefijo de país, y no el nombre que la persona tenga
+        // puesto en su WhatsApp: en una bandeja de trabajo lo que identifica a alguien
+        // sin ambigüedad —y lo que se puede marcar o buscar— es el número. Dos personas
+        // pueden llamarse igual; el número no se repite.
+        nombreVisible = /^\d{6,15}$/.test(numberFromWaId)
+          ? `+${numberFromWaId}`
+          : numberFromWaId
 
         // OJO con lo que NO está aquí: `agentehabilitado`.
         //
