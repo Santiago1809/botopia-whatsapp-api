@@ -711,7 +711,7 @@ export async function handleIncomingMessage(
             void registrarUsoIA({
               userId: number.userId,
               numberId,
-              model: number.aiModel || 'gemini-2.0-flash',
+              model: number.aiModel || 'gemini-3.6-flash',
               latencyMs: Date.now() - inicioIA,
               ok: false,
               errorKind: clasificarErrorIA(errorIA)
@@ -723,7 +723,7 @@ export async function handleIncomingMessage(
           void registrarUsoIA({
             userId: number.userId,
             numberId,
-            model: number.aiModel || 'gemini-2.0-flash',
+            model: number.aiModel || 'gemini-3.6-flash',
             uso: aiResponse[1],
             latencyMs: Date.now() - inicioIA
           })
@@ -939,7 +939,7 @@ export async function handleIncomingMessage(
             userId: number.userId,
             numberId,
             agentId: agentId ?? null,
-            model: number.aiModel || 'gemini-2.0-flash',
+            model: number.aiModel || 'gemini-3.6-flash',
             latencyMs: Date.now() - inicioIA,
             ok: false,
             errorKind: clasificarErrorIA(errorIA)
@@ -950,7 +950,7 @@ export async function handleIncomingMessage(
           userId: number.userId,
           numberId,
           agentId: agentId ?? null,
-          model: number.aiModel || 'gemini-2.0-flash',
+          model: number.aiModel || 'gemini-3.6-flash',
           uso: respuestaIA[1],
           latencyMs: Date.now() - inicioIA
         })

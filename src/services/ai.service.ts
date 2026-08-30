@@ -12,7 +12,10 @@ export const AI_KEY_MISSING_MESSAGE =
 export async function getAIResponse(
   prompt: string,
   userMsg: string,
-  model = 'gemini-2.0-flash',
+  // El modelo por defecto se puede mover sin tocar código: Google descontinúa versiones
+  // (gemini-2.0-flash dejó de existir y devolvía error en cada respuesta del agente, con la
+  // clave bien puesta). Con la env se cambia en caliente el día que pase otra vez.
+  model = process.env.GEMINI_MODEL || 'gemini-3.6-flash',
   chatHistory: Message[] = [],
 ) {
   // Sin clave, el SDK falla con un error de red genérico y el chat mostraba un

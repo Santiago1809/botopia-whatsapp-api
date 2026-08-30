@@ -36,10 +36,19 @@ import { query } from './db.js'
  *    TELEMETRY_RETENTION_DAYS      (por defecto 90) telemetría de infraestructura
  *    EVENTS_RETENTION_DAYS         (por defecto 0 = NO borrar) bitácora crm.events
  *    CONVERSATIONS_RETENTION_DAYS  (por defecto 0 = NO borrar) historial de chat
+ *    AI_USAGE_RETENTION_DAYS       (por defecto 0 = NO borrar) consumo de IA
  *
- *  Los dos últimos nacen APAGADOS a propósito: crm.conversations es la
- *  conversación con el cliente, o sea dato de negocio, no basura. Borrarlo tiene
- *  que ser una decisión explícita de alguien, nunca el valor por defecto.
+ *  Los tres últimos nacen APAGADOS a propósito: crm.conversations es la
+ *  conversación con el cliente y app.ai_usage es la prueba de cuánto costó cada
+ *  mes. Los dos son dato de negocio, no basura, así que borrarlos tiene que ser
+ *  una decisión explícita de alguien, nunca el valor por defecto. Si algún día se
+ *  activa el de IA, 400 días es el mínimo razonable: deja cerrar un ejercicio
+ *  completo y comparar contra el mismo mes del año anterior.
+ *
+ *  LO QUE NO PASA POR AQUÍ: events.event, events.delivery y
+ *  events.delivery_attempt (el carril de webhooks). Los purga su propio worker,
+ *  también una vez al día, con events.purgar_retencion(). Se dejan separados
+ *  porque el worker puede correr en un proceso distinto del API.
  * =============================================================================
  */
 
@@ -47,6 +56,7 @@ export interface ResultadoRetencion {
   telemetry?: number
   events?: number
   conversations?: number
+  ai_usage?: number
   ran_at?: string
   skipped?: string
   last_run_at?: string
@@ -72,15 +82,17 @@ export async function runRetention(force = false): Promise<ResultadoRetencion> {
   const telemetryDays = dias('TELEMETRY_RETENTION_DAYS', 90)
   const eventsDays = dias('EVENTS_RETENTION_DAYS', 0)
   const conversationsDays = dias('CONVERSATIONS_RETENTION_DAYS', 0)
+  const aiUsageDays = dias('AI_USAGE_RETENTION_DAYS', 0)
 
   const { rows } = await query<{ result: ResultadoRetencion }>(
     `SELECT app.run_retention(
         p_telemetry_days     => $1,
         p_events_days        => NULLIF($2, 0),
         p_conversations_days => NULLIF($3, 0),
-        p_force              => $4
+        p_force              => $4,
+        p_ai_usage_days      => NULLIF($5, 0)
       ) AS result`,
-    [telemetryDays, eventsDays, conversationsDays, force]
+    [telemetryDays, eventsDays, conversationsDays, force, aiUsageDays]
   )
 
   return rows[0]?.result ?? {}
@@ -108,7 +120,8 @@ export function scheduleRetentionOnBoot(delayMs = 30_000): void {
       } else {
         console.log(
           `🧹 Limpieza hecha: ${r.telemetry ?? 0} filas de telemetría, ` +
-            `${r.events ?? 0} eventos, ${r.conversations ?? 0} mensajes.`
+            `${r.events ?? 0} eventos, ${r.conversations ?? 0} mensajes, ` +
+            `${r.ai_usage ?? 0} registros de consumo de IA.`
         )
       }
     } catch (err) {

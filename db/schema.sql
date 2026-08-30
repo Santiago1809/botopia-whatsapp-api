@@ -1735,12 +1735,25 @@ $$;
 --  p_min_interval evita que un servicio que se reinicia en bucle (deploy fallido,
 --  OOM) purgue veinte veces en una hora.
 -- -----------------------------------------------------------------------------
+--  app.ai_usage entra en la purga como CUARTA tabla (ver más abajo, en la
+--  sección de multi-inquilino, por qué nace apagada y cada cuánto conviene
+--  correr todo esto).
+--
+--  EL DROP DE ABAJO ES OBLIGATORIO, NO COSMÉTICO. Añadir un parámetro a una
+--  función de Postgres NO la reemplaza: crea una SEGUNDA función con otra firma.
+--  Con las dos vivas, la llamada por argumentos nombrados de src/lib/retention.ts
+--  sería ambigua ("function app.run_retention(...) is not unique") y la purga
+--  dejaría de correr en silencio. Se borra la firma vieja de 5 parámetros y se
+--  crea la de 6. Es idempotente: en una base nueva el DROP no encuentra nada.
+DROP FUNCTION IF EXISTS app.run_retention(integer, integer, integer, interval, boolean);
+
 CREATE OR REPLACE FUNCTION app.run_retention(
   p_telemetry_days     integer  DEFAULT 90,
   p_events_days        integer  DEFAULT NULL,
   p_conversations_days integer  DEFAULT NULL,
   p_min_interval       interval DEFAULT '20 hours',
-  p_force              boolean  DEFAULT false
+  p_force              boolean  DEFAULT false,
+  p_ai_usage_days      integer  DEFAULT NULL
 ) RETURNS jsonb
 LANGUAGE plpgsql
 AS $$
@@ -1749,6 +1762,7 @@ DECLARE
   v_tel   bigint := 0;
   v_ev    bigint := 0;
   v_conv  bigint := 0;
+  v_ia    bigint := 0;
 BEGIN
   IF NOT pg_try_advisory_xact_lock(hashtext('app.run_retention')) THEN
     RETURN jsonb_build_object('skipped', 'lock');
@@ -1763,9 +1777,10 @@ BEGIN
   v_tel  := app.purge_by_age('app."Telemetry"',    'timeStamp',       p_telemetry_days);
   v_ev   := app.purge_by_age('crm.events',         'marca_de_tiempo', p_events_days);
   v_conv := app.purge_by_age('crm.conversations',  'created_at',      p_conversations_days);
+  v_ia   := app.purge_by_age('app.ai_usage',       'occurred_at',     p_ai_usage_days);
 
   INSERT INTO app.maintenance_log (job, last_run_at, rows_deleted)
-  VALUES ('retention', now(), v_tel + v_ev + v_conv)
+  VALUES ('retention', now(), v_tel + v_ev + v_conv + v_ia)
   ON CONFLICT (job) DO UPDATE
     SET last_run_at  = EXCLUDED.last_run_at,
         rows_deleted = EXCLUDED.rows_deleted;
@@ -1774,6 +1789,7 @@ BEGIN
     'telemetry',     v_tel,
     'events',        v_ev,
     'conversations', v_conv,
+    'ai_usage',      v_ia,
     'ran_at',        now()
   );
 END
@@ -2109,7 +2125,7 @@ CREATE INDEX IF NOT EXISTS unsynced_numberid_ultimo_idx
 --  por defecto. Si algún día se activa, 400 días es un mínimo razonable: deja
 --  cerrar un ejercicio completo y comparar con el mismo mes del año anterior.
 --
---  CADA CUÁNTO CORRER LA PURGA (vale para las tres tablas de app.run_retention):
+--  CADA CUÁNTO CORRER LA PURGA (vale para las cuatro tablas de app.run_retention):
 --    · Una vez al día es de sobra. El disparo está en el arranque del API
 --      (src/lib/retention.ts, 30 s después de levantar), así que cualquier
 --      despliegue ya la cubre, y app.maintenance_log impide que se repita antes
@@ -2119,58 +2135,6 @@ CREATE INDEX IF NOT EXISTS unsynced_numberid_ultimo_idx
 --    · events.event / delivery / delivery_attempt van por su lado, en el worker
 --      de webhooks (events.purgar_retencion, una vez al día).
 --
---  EL DROP ES OBLIGATORIO, NO COSMÉTICO. Añadir un parámetro a una función de
---  Postgres NO la reemplaza: crea una SEGUNDA función con otra firma. Con las dos
---  vivas, la llamada por argumentos nombrados de retention.ts pasaría a ser
---  ambigua ("function app.run_retention(...) is not unique") y la purga dejaría
---  de correr. Se borra la firma vieja explícitamente y se crea la nueva.
+--  Los detalles de la firma y el porqué del DROP están junto a la propia
+--  función, más arriba en este archivo.
 -- =============================================================================
-DROP FUNCTION IF EXISTS app.run_retention(integer, integer, integer, interval, boolean);
-
-CREATE OR REPLACE FUNCTION app.run_retention(
-  p_telemetry_days     integer  DEFAULT 90,
-  p_events_days        integer  DEFAULT NULL,
-  p_conversations_days integer  DEFAULT NULL,
-  p_min_interval       interval DEFAULT '20 hours',
-  p_force              boolean  DEFAULT false,
-  p_ai_usage_days      integer  DEFAULT NULL
-) RETURNS jsonb
-LANGUAGE plpgsql
-AS $$
-DECLARE
-  v_last  timestamptz;
-  v_tel   bigint := 0;
-  v_ev    bigint := 0;
-  v_conv  bigint := 0;
-  v_ia    bigint := 0;
-BEGIN
-  IF NOT pg_try_advisory_xact_lock(hashtext('app.run_retention')) THEN
-    RETURN jsonb_build_object('skipped', 'lock');
-  END IF;
-
-  SELECT last_run_at INTO v_last FROM app.maintenance_log WHERE job = 'retention';
-
-  IF NOT p_force AND v_last IS NOT NULL AND v_last > now() - p_min_interval THEN
-    RETURN jsonb_build_object('skipped', 'reciente', 'last_run_at', v_last);
-  END IF;
-
-  v_tel  := app.purge_by_age('app."Telemetry"',    'timeStamp',       p_telemetry_days);
-  v_ev   := app.purge_by_age('crm.events',         'marca_de_tiempo', p_events_days);
-  v_conv := app.purge_by_age('crm.conversations',  'created_at',      p_conversations_days);
-  v_ia   := app.purge_by_age('app.ai_usage',       'occurred_at',     p_ai_usage_days);
-
-  INSERT INTO app.maintenance_log (job, last_run_at, rows_deleted)
-  VALUES ('retention', now(), v_tel + v_ev + v_conv + v_ia)
-  ON CONFLICT (job) DO UPDATE
-    SET last_run_at  = EXCLUDED.last_run_at,
-        rows_deleted = EXCLUDED.rows_deleted;
-
-  RETURN jsonb_build_object(
-    'telemetry',     v_tel,
-    'events',        v_ev,
-    'conversations', v_conv,
-    'ai_usage',      v_ia,
-    'ran_at',        now()
-  );
-END
-$$;
