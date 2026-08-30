@@ -34,6 +34,7 @@ import {
   olvidarLinea
 } from '../../services/events/lineEvents.js'
 import { handleIncomingMessage } from './messages.controller.js'
+import { parcheMsgKey } from '../../lib/parcheMsgKey.js'
 
 /**
  * EL ÚLTIMO QR DE CADA LÍNEA, PARA QUIEN LLEGA TARDE A LA SALA.
@@ -236,6 +237,10 @@ export async function startWhatsApp(req: CustomRequest, res: Response) {
             }
           }
         : {}),
+      // Devuelve a MsgKey el `_serialized` que WhatsApp renombró a `$1` en julio.
+      // Sin esto fallan la lectura del chat, el envío y el id del mensaje entrante.
+      // Ver src/lib/parcheMsgKey.ts.
+      evalOnNewDoc: parcheMsgKey,
       authStrategy: new LocalAuth({ clientId: numberId.toString() }),
       puppeteer: {
         headless: true,
@@ -707,6 +712,10 @@ export function setupSocketEvents(io: Server) {
                     }
                   }
                 : {}),
+              // Devuelve a MsgKey el `_serialized` que WhatsApp renombró a `$1` en julio.
+              // Sin esto fallan la lectura del chat, el envío y el id del mensaje entrante.
+              // Ver src/lib/parcheMsgKey.ts.
+              evalOnNewDoc: parcheMsgKey,
               authStrategy: new LocalAuth({ clientId: numberId.toString() }),
               puppeteer: {
                 headless: true,
