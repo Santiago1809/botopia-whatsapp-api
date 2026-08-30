@@ -1008,10 +1008,13 @@ export async function handleIncomingMessage(
               return
             }
 
-            // Mostrar 'escribiendo...' antes de responder
-            await chat.sendStateTyping()
+            // "Escribiendo…" en el WhatsApp de quien escribió. Va SIN await y con el
+            // error capturado a propósito: es puro adorno, y estaba puesto de forma que
+            // un fallo suyo se llevaba por delante la respuesta entera. Perder el
+            // "escribiendo" es un detalle; perder la respuesta, no.
+            void Promise.resolve(chat.sendStateTyping()).catch(() => {})
             await new Promise((res) => setTimeout(res, 1200)) // Simula que está escribiendo ~1.2s
-            await chat.clearState()
+            void Promise.resolve(chat.clearState()).catch(() => {})
 
             // Usar chat.sendMessage() en lugar de msg.reply() para evitar problemas de serialización
             await chat.sendMessage(aiResponse[0])
