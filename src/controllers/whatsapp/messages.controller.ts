@@ -818,12 +818,23 @@ export async function handleIncomingMessage(
         }
 
         // Si está habilitado y la IA está activada para desconocidos, responder SOLO si NO es grupo
-        if (
+        const puedeResponderDesconocido =
           !isGroup &&
           number.aiUnknownEnabled === true &&
-          updatedContact &&
+          !!updatedContact &&
           updatedContact.agentehabilitado === true
-        ) {
+        if (!puedeResponderDesconocido) {
+          // Esta es LA decisión que hay que poder leer: aquí es donde el agente calla ante
+          // un contacto que no está en la agenda. Con un motivo genérico había que abrir el
+          // código para saber cuál de las cuatro condiciones falló.
+          console.log(
+            `[msg] SIN RESPUESTA (contacto no agendado) · línea ${numberId} · ` +
+              `es-grupo=${isGroup} · responder-no-agendados=${number.aiUnknownEnabled ? 'on' : 'off'} · ` +
+              `contacto-en-bd=${updatedContact ? 'sí' : 'no'} · ` +
+              `agente-habilitado-para-este-contacto=${updatedContact?.agentehabilitado ? 'sí' : 'no'}`
+          )
+        }
+        if (puedeResponderDesconocido) {
           // Lógica para evitar dos respuestas IA iguales seguidas
           const inicioIA = Date.now()
           let aiResponse
@@ -966,7 +977,7 @@ export async function handleIncomingMessage(
           console.error('Error stack:', error.stack)
         }
       }
-      descartar('punto 10: condición no cumplida más adelante en el flujo')
+      // (el motivo ya se explicó arriba, en "SIN RESPUESTA (contacto no agendado)")
       return
     }
 
