@@ -69,6 +69,39 @@ try {
         'Los que hablen de FK o UNIQUE omitidos requieren limpiar datos: ver db/migrations/.'
     )
   }
+
+  // ---------------------------------------------------------------------------
+  //  ADMIN INICIAL
+  //
+  //  app."User".role nace SIEMPRE en 'user' y no había forma de promover a nadie:
+  //  la consola de admin exige rol admin, así que sin esto queda inalcanzable
+  //  para todo el mundo, incluido el dueño de la plataforma. El huevo y la
+  //  gallina se rompe desde fuera: ADMIN_EMAILS, separados por coma.
+  //
+  //  Solo PROMUEVE. Quitar a alguien de admin es una decisión deliberada y se
+  //  hace a mano; que borrar un correo de la variable degradara la cuenta en el
+  //  siguiente despliegue sería una sorpresa cara.
+  // ---------------------------------------------------------------------------
+  const correosAdmin = (process.env.ADMIN_EMAILS ?? '')
+    .split(',')
+    .map((c) => c.trim().toLowerCase())
+    .filter(Boolean)
+  if (correosAdmin.length > 0) {
+    const { rows } = await client.query(
+      `UPDATE app."User"
+          SET role = 'admin', "updatedAt" = now()
+        WHERE lower(email) = ANY($1::text[]) AND role <> 'admin'
+        RETURNING email`,
+      [correosAdmin]
+    )
+    if (rows.length > 0) {
+      console.log(`✅ admin: ${rows.map((r) => r.email).join(', ')}`)
+    } else {
+      console.log(
+        `✅ admin: sin cambios (${correosAdmin.length} correo(s) en ADMIN_EMAILS ya eran admin o no tienen cuenta todavía)`
+      )
+    }
+  }
 } catch (err) {
   console.error('❌ Error aplicando schema.sql:', err.message)
   process.exitCode = 1
