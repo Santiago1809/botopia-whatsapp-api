@@ -73,7 +73,7 @@ export const registerUser = async (req: Request, res: Response) => {
     // Enviar email de bienvenida (no bloquea si falla)
     sendEmail({
       to: email,
-      subject: 'Bienvenido Lumintik',
+      subject: 'Bienvenido a Lumintik Agents',
       html: welcomeUserTemplate(user.username)
     }).catch(err => {
       console.error('Error al enviar email de bienvenida:', err)

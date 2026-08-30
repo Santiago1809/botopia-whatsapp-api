@@ -246,7 +246,7 @@ export const welcomeUserTemplate = (name: string) => `
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bienvenido a Lumintik</title>
+  <title>Bienvenido a Lumintik Agents</title>
   <style>
     body {
       font-family: 'Segoe UI', Arial, sans-serif;
@@ -352,7 +352,7 @@ export const welcomeUserTemplate = (name: string) => `
   <div class="container">
     <div class="header">
       <div class="welcome-emoji">🎉</div>
-      ¡Bienvenido a Lumintik!
+      ¡Bienvenido a Lumintik Agents!
     </div>
     <div class="content">
       <p>Hola${name ? ` <span class="highlight">${name}</span>` : ''} 👋</p>
