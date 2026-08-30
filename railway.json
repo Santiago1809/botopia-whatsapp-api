@@ -5,9 +5,8 @@
     "buildCommand": "npm install && npm run build"
   },
   "deploy": {
-    "startCommand": "node out/index.js",
+    "startCommand": "node db/apply-schema.mjs && node out/index.js",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
 }
-
