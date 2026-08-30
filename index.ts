@@ -11,9 +11,15 @@ import http from 'http'
 import { Server } from 'socket.io'
 import { setupSocketEvents } from './src/controllers/whatsapp.controller.js'
 import { telemetryMiddleware } from './src/middleware/telemetry.middleware.js'
+import { scheduleRetentionOnBoot } from './src/lib/retention.js'
 import { APP_URL } from './src/lib/app-url.js'
 import adminRoutes from './src/routes/admin.route.js'
 import authRoutes from './src/routes/auth.route.js'
+import connectionsRoutes from './src/routes/connections.route.js'
+import { emitirCaidaPorReinicio } from './src/services/events/lineEvents.js'
+import { iniciarResumenDiario, detenerResumenDiario } from './src/services/events/dailySummary.js'
+import { iniciarWorkerDeEntregas, detenerWorkerDeEntregas } from './src/services/events/worker.js'
+import { clients } from './src/WhatsAppClients.js'
 
 import paymentsRouter from './src/routes/payments.route.js'
 import subscriptionsRouter from './src/routes/subscriptions.route.js'
@@ -21,6 +27,7 @@ import statsRoutes from './src/routes/stats.route.js'
 import userRoutes from './src/routes/user.route.js'
 import whatsAppRoutes from './src/routes/whatsapp.route.js'
 import unsyncedContactRoutes from './src/routes/unsyncedcontact.route.js'
+import { authenticateToken } from './src/middleware/jwt.middleware.js'
 
 const app = express()
 const server = http.createServer(app)
@@ -120,7 +127,11 @@ app.use('/api/whatsapp', whatsAppRoutes)
 app.use('/api/payments', paymentsRouter)
 app.use('/api/subscriptions', subscriptionsRouter)
 
-app.use('/api/unsyncedcontacts', unsyncedContactRoutes)
+// Con sesión, como el resto: sin ella `GET /` de esta ruta devolvía teléfono, nombre y el
+// texto del último WhatsApp de TODOS los inquilinos, y sus DELETE borraban los contactos de
+// cualquier número. Era la única de las nueve montada sin autenticación.
+app.use('/api/unsyncedcontacts', authenticateToken, unsyncedContactRoutes)
+app.use('/api/connections', connectionsRoutes)
 
 // Health check endpoint para Railway
 app.get('/health', (_req, res) => {
@@ -150,4 +161,51 @@ process.on('unhandledRejection', (reason, promise) => {
 server.listen(port, host, () => {
   console.log(`Server is running on ${host}:${port}`)
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`)
+
+  // Bus de eventos: el worker que entrega los webhooks y los avisos por correo,
+  // y el planificador del resumen diario. Los dos son tolerantes a que falte
+  // configuración — sin SMTP el correo queda registrado como 'blocked' con el
+  // motivo y nada más se rompe.
+  iniciarWorkerDeEntregas()
+  iniciarResumenDiario()
 })
+
+/**
+ * Apagado graceful.
+ *
+ * EL AGUJERO QUE TAPA: cuando Railway reinicia el servicio, todas las sesiones
+ * de whatsapp-web.js mueren con el proceso y NADIE emitía 'disconnected' — la
+ * base seguía listando el número como si la línea existiera y el cliente no se
+ * enteraba de que había dejado de recibir mensajes. Aquí se emite
+ * line.disconnected(reason='service_restart') por cada sesión viva, esperando de
+ * verdad a que se escriba, porque el proceso está a punto de terminar.
+ *
+ * Se le pone tope de 5 s: un apagado que se cuelga es peor que un evento que no
+ * sale, porque Railway acaba matando el proceso a lo bruto de todas formas.
+ */
+let apagando = false
+const apagadoGraceful = async (senal: string) => {
+  if (apagando) return
+  apagando = true
+  console.log(`🛑 ${senal} recibido — cerrando`)
+
+  try {
+    await Promise.race([
+      (async () => {
+        await emitirCaidaPorReinicio(Object.keys(clients))
+        detenerResumenDiario()
+        await detenerWorkerDeEntregas()
+      })(),
+      new Promise((resolve) => setTimeout(resolve, 5000))
+    ])
+  } catch (error) {
+    console.error('❌ Error en el apagado graceful:', error)
+  }
+
+  server.close(() => process.exit(0))
+  // Si alguna conexión abierta impide cerrar, no se espera indefinidamente.
+  setTimeout(() => process.exit(0), 3000).unref()
+}
+
+process.on('SIGTERM', () => void apagadoGraceful('SIGTERM'))
+process.on('SIGINT', () => void apagadoGraceful('SIGINT'))

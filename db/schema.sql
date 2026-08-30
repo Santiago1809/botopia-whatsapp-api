@@ -35,6 +35,22 @@ CREATE SCHEMA IF NOT EXISTS crm;
 -- gen_random_uuid() para las PK uuid del CRM.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- pg_trgm es lo único que hace indexable un `ILIKE '%texto%'` (comodín al INICIO:
+-- ningún btree sirve). Lo pide searchContacts (contactService.ts:376-377) y el
+-- `phone LIKE '%digits'` de getContactByPhone (contactService.ts:516), que corre en
+-- CADA mensaje entrante. Va dentro de un bloque con EXCEPTION porque:
+--   · es contrib, viene con Postgres, no se instala nada nuevo;
+--   · pero si el rol no puede crear extensiones, un CREATE EXTENSION pelado
+--     abortaría TODO el archivo (apply-schema.mjs lo manda como una sola
+--     transacción implícita). Aquí solo se pierde el índice de búsqueda.
+DO $$
+BEGIN
+  CREATE EXTENSION IF NOT EXISTS pg_trgm;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'pg_trgm no disponible (%). La búsqueda de contactos seguirá siendo seq scan.', SQLERRM;
+END
+$$;
+
 
 -- =============================================================================
 --  ESQUEMA app — backend botopia-whatsapp-api
@@ -209,6 +225,11 @@ CREATE INDEX IF NOT EXISTS subscriptions_token_email_status_idx
 -- subscription.controller.ts:344-351 (última pagada del usuario).
 CREATE INDEX IF NOT EXISTS subscriptions_user_status_idx
   ON app.subscriptions (user_id, status, created_at DESC);
+-- payment.controller.ts:191-197 (última suscripción del usuario, SIN filtrar status:
+-- por eso el índice de arriba, que arranca por status en la 2ª posición, no puede
+-- servir el ORDER BY y termina ordenando en memoria).
+CREATE INDEX IF NOT EXISTS subscriptions_user_created_idx
+  ON app.subscriptions (user_id, created_at DESC);
 
 -- Código de un solo uso para recuperar contraseña. Vive en la base y no en memoria
 -- del proceso porque un redespliegue de Railway (o una segunda instancia) borraba
@@ -296,11 +317,45 @@ CREATE TABLE IF NOT EXISTS crm.contacts (
   esta_al_habilitado boolean GENERATED ALWAYS AS (is_ai_enabled) STORED,
   ultima_actividad   timestamptz GENERATED ALWAYS AS (last_activity) STORED
 );
-CREATE INDEX IF NOT EXISTS contacts_line_id_idx      ON crm.contacts (line_id);
-CREATE INDEX IF NOT EXISTS contacts_funnel_stage_idx ON crm.contacts (funnel_stage);
+-- analyticsService/databaseService.ts:263-268 cuenta contactos nuevos por día y por
+-- línea (7 consultas en cada carga del dashboard): necesita line_id Y el rango.
+CREATE INDEX IF NOT EXISTS contacts_line_created_idx ON crm.contacts (line_id, created_at);
+-- contactService.ts:409 filtra por funnel_stage y getStats:445-447 añade la línea.
+CREATE INDEX IF NOT EXISTS contacts_stage_line_idx   ON crm.contacts (funnel_stage, line_id);
 CREATE INDEX IF NOT EXISTS contacts_phone_idx        ON crm.contacts (phone);
 -- searchContacts ordena por ultima_actividad descendente.
 CREATE INDEX IF NOT EXISTS contacts_ultima_actividad_idx ON crm.contacts (ultima_actividad DESC);
+
+-- Los dos de una sola columna que había antes quedan CONTENIDOS en los compuestos
+-- de arriba (un índice (a,b) sirve igual de bien para `WHERE a = ?`). Mantener los
+-- cuatro solo costaría escrituras más lentas y más espacio, sin ganar ninguna
+-- consulta. Se borran aquí, no en una migración aparte, porque DROP INDEX de un
+-- índice redundante no puede dejar ninguna consulta sin plan.
+DROP INDEX IF EXISTS crm.contacts_line_id_idx;
+DROP INDEX IF EXISTS crm.contacts_funnel_stage_idx;
+
+-- contactService.ts:376-377 -> `c.name ILIKE '%q%' OR c.phone ILIKE '%q%'`, y
+-- contactService.ts:516 -> `c.phone LIKE '%digits'` en cada mensaje entrante.
+-- Ambos llevan comodín al inicio: solo un GIN de trigramas los indexa.
+-- (Un btree con text_pattern_ops NO sirve para esto: acelera 'abc%', no '%abc'.)
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm') THEN
+    CREATE INDEX IF NOT EXISTS contacts_name_trgm_idx
+      ON crm.contacts USING gin (name gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS contacts_phone_trgm_idx
+      ON crm.contacts USING gin (phone gin_trgm_ops);
+  ELSE
+    RAISE NOTICE 'Sin pg_trgm: la búsqueda de contactos por nombre/teléfono queda sin índice.';
+  END IF;
+END
+$$;
+
+-- contactService.ts:378 -> `c.tags @> $2::jsonb`. jsonb_path_ops indexa solo el
+-- operador de contención, que es el único que usa el código: índice más chico y
+-- más rápido que el jsonb_ops por defecto.
+CREATE INDEX IF NOT EXISTS contacts_tags_gin_idx
+  ON crm.contacts USING gin (tags jsonb_path_ops);
 
 -- Mensaje individual de una conversación (usuario, bot o agente humano).
 CREATE TABLE IF NOT EXISTS crm.conversations (
@@ -327,6 +382,15 @@ CREATE INDEX IF NOT EXISTS conversations_line_created_idx
 -- databaseService.ts:123-129 (mensajes del bot, que van con line_id NULL).
 CREATE INDEX IF NOT EXISTS conversations_bot_null_line_idx
   ON crm.conversations (sender, created_at DESC) WHERE line_id IS NULL;
+-- databaseService.ts:145-150 y :307-312 ("Strategy 2"): filtra line_id IS NULL por
+-- rango de fecha SIN tocar sender, así que el índice parcial de arriba —que arranca
+-- por sender— no puede resolverlo.
+CREATE INDEX IF NOT EXISTS conversations_null_line_created_idx
+  ON crm.conversations (created_at DESC) WHERE line_id IS NULL;
+-- databaseService.ts:162-166 ("Strategy 3"): 30 días SIN ningún filtro de línea.
+-- Hoy es un seq scan de la tabla entera de mensajes.
+CREATE INDEX IF NOT EXISTS conversations_created_idx
+  ON crm.conversations (created_at DESC);
 
 -- Bitácora de eventos por contacto. Columnas 100% en español (una sola lectura en
 -- todo el código: eventService.ts:12-31), se respeta el nombrado original.
@@ -549,6 +613,748 @@ CREATE TRIGGER synced_notify
 
 
 -- =============================================================================
+--  ESQUEMA events — bus de eventos, webhooks salientes y avisos por correo
+--
+--  Por qué un esquema nuevo y no tablas sueltas en `app`: esto no es una tabla
+--  más del backend de WhatsApp, es un subsistema con su propio ciclo de vida
+--  (productor, cola, worker, retención). Tenerlo aparte hace que un `\dt events.*`
+--  responda "qué compone el bus" sin ruido, y que la purga por retención pueda
+--  escribirse contra un esquema entero en vez de contra una lista de nombres.
+--
+--  POR QUÉ OUTBOX Y NO "emitir desde el listener":
+--    pgListener.ts:30-32 y el bloque REALTIME de arriba documentan la limitación
+--    conocida: NOTIFY se emite al COMMIT y si el proceso está caído en ese
+--    instante el aviso SE PIERDE. Eso es tolerable para refrescar una pantalla.
+--    No lo es para un webhook que el cliente factura. Aquí el trigger ESCRIBE la
+--    fila de `events.event` dentro de la MISMA transacción que el cambio de
+--    negocio: o commitean los dos o ninguno, y un redespliegue en el peor
+--    momento no puede perder un evento. El NOTIFY queda solo como despertador
+--    del worker; si se pierde, el poll de la cola recoge la entrega igual.
+-- =============================================================================
+
+CREATE SCHEMA IF NOT EXISTS events;
+
+-- -----------------------------------------------------------------------------
+--  events.event — la bitácora inmutable de hechos (el outbox)
+--
+--  PK bigint identity y NO uuid: el orden de inserción es el orden natural de los
+--  hechos y un índice sobre un entero de 8 bytes ocupa la mitad de página que uno
+--  sobre uuid v4, que además fragmenta el árbol por ser aleatorio. El uuid existe
+--  aparte (public_id) porque es lo que se EXPONE: un entero secuencial le diría al
+--  cliente cuántos eventos genera toda la plataforma.
+--
+--  account_id es FK REAL a app."User" con ON DELETE CASCADE. Las tablas viejas
+--  usan referencia lógica sin FK (crm.contacts.user_id); las nuevas no tienen por
+--  qué heredar esa deuda. Es NULLABLE a propósito: si la cadena de resolución del
+--  tenant no llega a un usuario, el evento se guarda igual con account_id nulo y
+--  queda visible en events.evento_sin_dueno — NUNCA se descarta en silencio.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS events.event (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  public_id   uuid NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+  account_id  integer REFERENCES app."User"(id) ON DELETE CASCADE,
+  type        text NOT NULL,
+  occurred_at timestamptz NOT NULL DEFAULT now(),
+  payload     jsonb NOT NULL,
+  -- Clave de idempotencia del PRODUCTOR. Los eventos que nacen de un trigger
+  -- FOR EACH ROW no la necesitan (dispara una vez) y van NULL; los que nacen de
+  -- código sí (un reinicio a medias puede repetir la llamada).
+  dedupe_key  text,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+-- COALESCE(account_id,0) y no account_id pelado: en un índice único dos NULL NO
+-- chocan, así que sin esto los eventos huérfanos de tenant se podrían duplicar,
+-- que es justo el caso donde más cuesta darse cuenta.
+CREATE UNIQUE INDEX IF NOT EXISTS event_dedupe_key
+  ON events.event (COALESCE(account_id, 0), type, dedupe_key)
+  WHERE dedupe_key IS NOT NULL;
+-- Purga por retención.
+CREATE INDEX IF NOT EXISTS event_created_at_idx ON events.event (created_at);
+-- Resumen diario: "todo lo que le pasó a esta cuenta entre estas dos horas".
+CREATE INDEX IF NOT EXISTS event_account_occurred_idx
+  ON events.event (account_id, occurred_at DESC);
+
+-- Los eventos cuyo tenant no se pudo resolver. Que existan es un fallo de datos
+-- (una línea sin user_id, un número sin dueño), y esta vista es dónde se ve.
+CREATE OR REPLACE VIEW events.evento_sin_dueno AS
+  SELECT id, public_id, type, occurred_at, payload
+  FROM events.event
+  WHERE account_id IS NULL;
+
+-- -----------------------------------------------------------------------------
+--  events.webhook_endpoint — un destino registrado por el cliente
+--
+--  El secreto se guarda CIFRADO y no hasheado. Un hash sería más seguro pero
+--  imposible: para firmar hay que tener el secreto en claro en el momento del
+--  envío. AES-256-GCM con clave de entorno hace que un volcado de la base no
+--  baste para falsificar webhooks.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS events.webhook_endpoint (
+  id                     uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  account_id             integer NOT NULL REFERENCES app."User"(id) ON DELETE CASCADE,
+  url                    text NOT NULL,
+  label                  text,
+  secret_ciphertext      bytea NOT NULL,
+  -- "whsec_A7f2…" para que la pantalla pueda decir CUÁL secreto es sin tenerlo.
+  secret_prefix          text NOT NULL,
+  secret_rotated_at      timestamptz,
+  -- Durante la ventana de rotación se firma con los dos y el receptor acepta si
+  -- alguna cuadra. Sin esto, rotar un secreto es una caída coordinada.
+  prev_secret_ciphertext bytea,
+  prev_secret_expires_at timestamptz,
+  -- El cuerpo del mensaje sale de nuestra frontera solo si el cliente lo pide.
+  include_message_body   boolean NOT NULL DEFAULT false,
+  is_active              boolean NOT NULL DEFAULT true,
+  disabled_at            timestamptz,
+  disabled_reason        text,
+  -- Cuenta ENTREGAS agotadas seguidas, no intentos. Cualquier 2xx lo pone a 0.
+  failure_streak         integer NOT NULL DEFAULT 0,
+  created_at             timestamptz NOT NULL DEFAULT now(),
+  updated_at             timestamptz NOT NULL DEFAULT now(),
+  -- Registrar dos veces el mismo destino y recibirlo todo duplicado es el
+  -- reporte de bug más frecuente en sistemas de webhooks. Se hace imposible.
+  CONSTRAINT webhook_endpoint_account_url_key UNIQUE (account_id, url)
+);
+-- Parcial: la pantalla de /connections lista los vivos, y los deshabilitados no
+-- ensucian el índice.
+CREATE INDEX IF NOT EXISTS webhook_endpoint_account_active_idx
+  ON events.webhook_endpoint (account_id) WHERE is_active;
+
+-- -----------------------------------------------------------------------------
+--  events.webhook_endpoint_event — a qué se suscribe cada destino
+--
+--  Fila por evento y no un array en el endpoint. Motivo: el fan-out pregunta
+--  "¿qué endpoints quieren message.received?"; con un array eso es un scan o un
+--  GIN, con esta tabla es un index scan directo. La PK compuesta además hace
+--  imposible suscribir dos veces al mismo evento.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS events.webhook_endpoint_event (
+  endpoint_id uuid NOT NULL REFERENCES events.webhook_endpoint(id) ON DELETE CASCADE,
+  event_type  text NOT NULL,
+  PRIMARY KEY (endpoint_id, event_type)
+);
+CREATE INDEX IF NOT EXISTS webhook_endpoint_event_type_idx
+  ON events.webhook_endpoint_event (event_type, endpoint_id);
+
+-- -----------------------------------------------------------------------------
+--  events.email_preference — los interruptores de aviso por correo
+--
+--  timezone es COLUMNA y no constante porque hoy 'America/Bogota' está escrito a
+--  fuego en tres sitios distintos (websocketManager.ts:164-178, emailService.ts:63,
+--  messages.controller.ts:899-901) y un resumen diario que llegue a las 3 de la
+--  mañana no lo lee nadie.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS events.email_preference (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  account_id integer NOT NULL REFERENCES app."User"(id) ON DELETE CASCADE,
+  to_email   text NOT NULL,
+  event_type text NOT NULL,
+  is_active  boolean NOT NULL DEFAULT true,
+  timezone   text NOT NULL DEFAULT 'America/Bogota',
+  -- Solo la usa daily.summary: a qué hora local se manda el resumen.
+  send_at    time,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT email_preference_unique UNIQUE (account_id, to_email, event_type)
+);
+CREATE INDEX IF NOT EXISTS email_preference_type_account_idx
+  ON events.email_preference (event_type, account_id) WHERE is_active;
+
+-- -----------------------------------------------------------------------------
+--  events.delivery — UNA entrega por (evento, destino)
+--
+--  Un solo carril para webhook y correo. Podrían ser dos tablas, pero entonces
+--  habría dos colas, dos calendarios de reintento y dos registros de intentos
+--  que envejecen distinto; el destino es lo único que cambia, así que el destino
+--  es una columna.
+--
+--  Los estados, con precisión, porque de aquí depende qué recoge el worker:
+--    pending    · nunca se intentó
+--    delivering · reclamada por un worker; next_attempt_at es el VENCIMIENTO del
+--                 arriendo, no la próxima espera. Si el worker muere, la fila
+--                 vuelve a ser elegible sola al vencer, sin proceso reaper.
+--    failed     · el intento falló y HAY reintento (next_attempt_at en futuro)
+--    exhausted  · no hay más intentos: o se acabaron, o el error no es
+--                 reintentable (un 4xx devuelve lo mismo en cada intento porque
+--                 el cuerpo es idéntico). Cuenta para failure_streak.
+--    succeeded  · 2xx
+--    blocked    · la URL fue rechazada por la validación anti-SSRF, o no hay SMTP.
+--                 CERO intentos y no se reintenta: el arreglo es del cliente o de
+--                 la configuración, no nuestro, y en la pantalla se ve distinto.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS events.delivery (
+  id                  bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  -- Viaja en la cabecera X-Lumintik-Delivery y es ESTABLE entre reintentos: es
+  -- la clave con la que el receptor deduplica.
+  public_id           uuid NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+  event_id            bigint NOT NULL REFERENCES events.event(id) ON DELETE CASCADE,
+  channel             text NOT NULL CHECK (channel IN ('webhook','email')),
+  endpoint_id         uuid REFERENCES events.webhook_endpoint(id) ON DELETE CASCADE,
+  email_preference_id uuid REFERENCES events.email_preference(id) ON DELETE CASCADE,
+  status              text NOT NULL DEFAULT 'pending'
+                      CHECK (status IN ('pending','delivering','succeeded','failed','exhausted','blocked')),
+  attempt_count       integer NOT NULL DEFAULT 0,
+  next_attempt_at     timestamptz NOT NULL DEFAULT now(),
+  last_status_code    integer,
+  last_error_kind     text,
+  last_error          text,
+  created_at          timestamptz NOT NULL DEFAULT now(),
+  completed_at        timestamptz,
+  -- El destino tiene que ser exactamente uno y coherente con el canal.
+  CONSTRAINT delivery_destino_coherente CHECK (
+    (channel = 'webhook' AND endpoint_id IS NOT NULL AND email_preference_id IS NULL) OR
+    (channel = 'email'   AND email_preference_id IS NOT NULL AND endpoint_id IS NULL)
+  )
+);
+-- EL SEGURO DEL FAN-OUT. Si el productor corre dos veces sobre el mismo evento
+-- (un reinicio a medias), el segundo INSERT ... ON CONFLICT DO NOTHING no crea
+-- una entrega duplicada. Sin estos dos índices, un fallo del worker se traduce
+-- en webhooks y correos DOBLES para el cliente.
+CREATE UNIQUE INDEX IF NOT EXISTS delivery_event_endpoint_key
+  ON events.delivery (event_id, endpoint_id) WHERE endpoint_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS delivery_event_email_key
+  ON events.delivery (event_id, email_preference_id) WHERE email_preference_id IS NOT NULL;
+-- EL ÍNDICE QUE SOSTIENE TODO. Es PARCIAL a propósito: la tabla va a tener
+-- millones de filas 'succeeded' y el índice solo contiene la cola VIVA, que son
+-- decenas. Un índice total sobre next_attempt_at crecería para siempre y la
+-- consulta del worker se degradaría mes a mes aunque la cola estuviera vacía.
+CREATE INDEX IF NOT EXISTS delivery_cola_idx
+  ON events.delivery (next_attempt_at)
+  WHERE status IN ('pending','failed','delivering');
+-- "Últimas 50 entregas de este endpoint" en /connections. Sin esto, esa vista
+-- hace un scan de la tabla entera.
+CREATE INDEX IF NOT EXISTS delivery_endpoint_created_idx
+  ON events.delivery (endpoint_id, created_at DESC);
+-- Lo pide la FK: sin él, borrar un evento hace scan de delivery.
+CREATE INDEX IF NOT EXISTS delivery_event_idx ON events.delivery (event_id);
+
+-- -----------------------------------------------------------------------------
+--  events.delivery_attempt — qué pasó exactamente en cada intento
+--
+--  UNIQUE (delivery_id, attempt_number) en vez de un índice suelto: además de
+--  servir la vista de detalle, impide registrar dos veces el intento 3 si el
+--  worker se reinicia entre el envío y el UPDATE.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS events.delivery_attempt (
+  id               bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  delivery_id      bigint NOT NULL REFERENCES events.delivery(id) ON DELETE CASCADE,
+  attempt_number   integer NOT NULL,
+  requested_at     timestamptz NOT NULL DEFAULT now(),
+  duration_ms      integer,
+  -- Convierte un "no funciona" en un diagnóstico: si el cliente ve que
+  -- resolvimos a una IP que no es la suya, sabe que su DNS está mal.
+  resolved_ip      inet,
+  request_headers  jsonb,          -- con la firma, SIN el secreto
+  response_status  integer,
+  response_headers jsonb,
+  -- Truncado a 2 KB EN EL CÓDIGO, no confiando en el receptor: guardar la
+  -- respuesta entera de un tercero es cómo se llena un disco.
+  response_excerpt text,
+  error_kind       text,           -- dns|tls|timeout|conn_reset|http_4xx|http_5xx|redirect|ssrf_blocked|smtp_*
+  error_message    text,
+  CONSTRAINT delivery_attempt_numero_key UNIQUE (delivery_id, attempt_number)
+);
+
+-- -----------------------------------------------------------------------------
+--  events.emitir() — el productor. UNA sola implementación.
+--
+--  Vive en la base y no en TypeScript por dos razones que no son de gusto:
+--    1) Los triggers la necesitan, y from_stage SOLO existe en el OLD del
+--       trigger: ningún controlador puede saber la etapa anterior.
+--    2) Los tres procesos (API, CRM y cualquier cron) emiten exactamente lo
+--       mismo llamando a la misma función, sin duplicar el fan-out en cada repo.
+--
+--  Devuelve el id del evento, o NULL si dedupe_key ya existía (no se hace nada).
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION events.emitir(
+  p_type        text,
+  p_account_id  integer,
+  p_payload     jsonb,
+  p_dedupe_key  text DEFAULT NULL,
+  p_occurred_at timestamptz DEFAULT now()
+)
+RETURNS bigint
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_event_id    bigint;
+  v_deliveries  integer := 0;
+  v_n           integer;
+BEGIN
+  INSERT INTO events.event (account_id, type, occurred_at, payload, dedupe_key)
+  VALUES (p_account_id, p_type, p_occurred_at, p_payload, p_dedupe_key)
+  ON CONFLICT DO NOTHING
+  RETURNING id INTO v_event_id;
+
+  -- dedupe_key repetida: el evento ya se emitió. No es un error.
+  IF v_event_id IS NULL THEN
+    RETURN NULL;
+  END IF;
+
+  -- Sin tenant no hay a quién entregarle: el evento queda guardado y visible en
+  -- events.evento_sin_dueno, pero no se reparte a ciegas.
+  IF p_account_id IS NULL THEN
+    RETURN v_event_id;
+  END IF;
+
+  INSERT INTO events.delivery (event_id, channel, endpoint_id)
+  SELECT v_event_id, 'webhook', e.id
+  FROM events.webhook_endpoint e
+  JOIN events.webhook_endpoint_event s ON s.endpoint_id = e.id
+  WHERE e.account_id = p_account_id
+    AND e.is_active
+    AND s.event_type = p_type
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deliveries := v_deliveries + v_n;
+
+  INSERT INTO events.delivery (event_id, channel, email_preference_id)
+  SELECT v_event_id, 'email', p.id
+  FROM events.email_preference p
+  WHERE p.account_id = p_account_id
+    AND p.is_active
+    AND p.event_type = p_type
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  v_deliveries := v_deliveries + v_n;
+
+  -- Despertador del worker, no el transporte. Si este NOTIFY se pierde porque el
+  -- worker está caído, el poll de la cola recoge las entregas igual — que es
+  -- precisamente la garantía que el carril de Realtime no tiene.
+  IF v_deliveries > 0 THEN
+    PERFORM pg_notify('events_delivery_ready', v_event_id::text);
+  END IF;
+
+  RETURN v_event_id;
+END;
+$$;
+
+-- -----------------------------------------------------------------------------
+--  Resolución del tenant. Es la decisión que más se puede torcer, y hay una
+--  trampa concreta en el código:
+--
+--    crm.conversations.user_id NO SIRVE. Está declarada integer DEFAULT 2 y
+--    conversationService.ts:151 escribe literalmente user_id: 2 en cada
+--    inserción. Es SIEMPRE 2. Lo mismo crm.contacts.user_id DEFAULT 2.
+--
+--  La cadena correcta para la vía Meta es line_id -> crm.lines.user_id, con el
+--  rodeo por el contacto porque conversations.line_id es NULL A PROPÓSITO para
+--  los mensajes del bot (ver el comentario de la tabla).
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION events.tenant_de_linea(p_line_id uuid)
+RETURNS integer
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT user_id FROM crm.lines WHERE id = p_line_id;
+$$;
+
+CREATE OR REPLACE FUNCTION events.tenant_de_contacto(p_contact_id uuid)
+RETURNS integer
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT l.user_id
+  FROM crm.contacts c
+  JOIN crm.lines l ON l.id = c.line_id
+  WHERE c.id = p_contact_id;
+$$;
+
+CREATE OR REPLACE FUNCTION events.tenant_de_numero(p_number_id integer)
+RETURNS integer
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT "userId" FROM app."WhatsAppNumber" WHERE id = p_number_id;
+$$;
+
+-- Ficha pública de una línea Meta. NUNCA incluye JWT, NUMBER_ID, WABA_ID ni los
+-- Telefono_contacto_*: son las credenciales de Meta del cliente y los celulares
+-- de su equipo interno, y esto sale de nuestra frontera.
+CREATE OR REPLACE FUNCTION events.ficha_linea(p_line_id uuid)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT jsonb_build_object(
+    'id',      l.id,
+    'label',   COALESCE(NULLIF(l."NOMBRE_LINEA", ''), l.number),
+    'channel', 'meta'
+  )
+  FROM crm.lines l
+  WHERE l.id = p_line_id;
+$$;
+
+-- Ficha pública de un contacto del CRM. El teléfono viaja COMPLETO (el cliente
+-- lo necesita para actuar); lo que no viaja es el cuerpo de la conversación.
+CREATE OR REPLACE FUNCTION events.ficha_contacto(p_contact_id uuid)
+RETURNS jsonb
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT jsonb_build_object(
+    'id',           c.id,
+    'phone',        c.phone,
+    'name',         c.name,
+    'funnel_stage', c.funnel_stage,
+    'priority',     c.priority,
+    'tags',         c.tags
+  )
+  FROM crm.contacts c
+  WHERE c.id = p_contact_id;
+$$;
+
+-- -----------------------------------------------------------------------------
+--  PRODUCTORES POR TRIGGER (vía Meta)
+--
+--  Son triggers APARTE de los *_notify de arriba, no una extensión de
+--  app.notify_row_change(). Motivo: si el productor de eventos tuviera un fallo,
+--  con una función compartida se llevaría por delante el WebSocket del CRM, que
+--  hoy funciona. Separados, cada carril falla solo.
+--
+--  Y cada uno envuelve su cuerpo en EXCEPTION WHEN OTHERS: un evento que no se
+--  puede producir NO puede impedir que se guarde el mensaje del lead. Esa es la
+--  regla dura — el camino principal manda. Se paga con un WARNING en los logs.
+-- -----------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION events.capturar_conversacion()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_account   integer;
+  v_contacto  jsonb;
+  v_linea     jsonb;
+  v_prev_ts   timestamptz;
+  v_prev_send text;
+  v_base      jsonb;
+BEGIN
+  BEGIN
+    v_account := COALESCE(
+      events.tenant_de_linea(NEW.line_id),
+      events.tenant_de_contacto(NEW.contact_id)
+    );
+    v_contacto := events.ficha_contacto(NEW.contact_id);
+    v_linea := events.ficha_linea(
+      COALESCE(NEW.line_id, (SELECT line_id FROM crm.contacts WHERE id = NEW.contact_id))
+    );
+
+    v_base := jsonb_build_object(
+      'message_id', NEW.id,
+      'channel',    'meta',
+      'line',       v_linea,
+      'contact',    v_contacto,
+      -- preview truncado a 140; el cuerpo completo viaja aparte y solo si la
+      -- suscripción marca include_message_body.
+      'preview',    left(COALESCE(NEW.message, ''), 140),
+      'body',       NEW.message,
+      'flow',       NEW.flow,
+      'intent',     NEW.intent,
+      'sent_at',    NEW."timestamp"
+    );
+
+    IF NEW.sender = 'user' THEN
+      PERFORM events.emitir(
+        'message.received',
+        v_account,
+        v_base || jsonb_build_object('direction', 'inbound', 'has_media', false),
+        NEW.id::text,
+        NEW."timestamp"
+      );
+
+      -- contact.replied: "el lead CONTESTÓ", que no es lo mismo que "escribió".
+      -- Definición: hay un mensaje nuestro ANTERIOR a este. La subconsulta cae en
+      -- conversations_contact_ts_idx (contact_id, timestamp DESC), es barata.
+      SELECT c."timestamp", c.sender INTO v_prev_ts, v_prev_send
+      FROM crm.conversations c
+      WHERE c.contact_id = NEW.contact_id
+        AND c.sender IN ('bot','agent')
+        AND c."timestamp" < NEW."timestamp"
+      ORDER BY c."timestamp" DESC
+      LIMIT 1;
+
+      IF v_prev_ts IS NOT NULL THEN
+        PERFORM events.emitir(
+          'contact.replied',
+          v_account,
+          jsonb_build_object(
+            'contact', v_contacto,
+            'line',    v_linea,
+            'message', jsonb_build_object(
+              'id',      NEW.id,
+              'preview', left(COALESCE(NEW.message, ''), 140),
+              'body',    NEW.message,
+              'sent_at', NEW."timestamp"
+            ),
+            'replied_to', jsonb_build_object('sent_at', v_prev_ts, 'sender', v_prev_send),
+            -- Lo que hace útil el aviso: "contestó a los 3 días" no es lo mismo
+            -- que "contestó a los 40 segundos".
+            'silence_seconds', GREATEST(0, EXTRACT(EPOCH FROM (NEW."timestamp" - v_prev_ts))::int)
+          ),
+          NEW.id::text,
+          NEW."timestamp"
+        );
+      END IF;
+    ELSE
+      PERFORM events.emitir(
+        'message.sent',
+        v_account,
+        v_base || jsonb_build_object(
+          'direction', 'outbound',
+          'sender',    CASE WHEN NEW.sender = 'agent' THEN 'agent' ELSE 'bot' END
+        ),
+        NEW.id::text,
+        NEW."timestamp"
+      );
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'events: no se pudo producir el evento de la conversación %: %', NEW.id, SQLERRM;
+  END;
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION events.capturar_contacto()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_account integer;
+BEGIN
+  BEGIN
+    IF TG_OP = 'DELETE' THEN
+      -- Solo ids: la fila ya no existe y no hay nada más que se pueda releer.
+      PERFORM events.emitir(
+        'contact.deleted',
+        events.tenant_de_linea(OLD.line_id),
+        jsonb_build_object('contact_id', OLD.id, 'line_id', OLD.line_id, 'deleted_at', now()),
+        NULL
+      );
+      RETURN NULL;
+    END IF;
+
+    v_account := events.tenant_de_linea(NEW.line_id);
+
+    IF TG_OP = 'INSERT' THEN
+      PERFORM events.emitir(
+        'contact.created',
+        v_account,
+        jsonb_build_object(
+          'contact', events.ficha_contacto(NEW.id),
+          'line',    events.ficha_linea(NEW.line_id),
+          'source',  'inbound_message',
+          'created_at', NEW.created_at
+        ),
+        NEW.id::text,
+        NEW.created_at
+      );
+      RETURN NULL;
+    END IF;
+
+    -- UPDATE. from_stage SOLO puede venir del OLD del trigger: esta es la razón
+    -- por la que el productor vive en la base y no en el controlador del kanban.
+    IF NEW.funnel_stage IS DISTINCT FROM OLD.funnel_stage THEN
+      PERFORM events.emitir(
+        'contact.stage_changed',
+        v_account,
+        jsonb_build_object(
+          'contact',    events.ficha_contacto(NEW.id),
+          'line',       events.ficha_linea(NEW.line_id),
+          'from_stage', OLD.funnel_stage,
+          'to_stage',   NEW.funnel_stage,
+          'changed_at', now()
+        ),
+        NULL
+      );
+    END IF;
+
+    IF OLD.is_ai_enabled AND NOT NEW.is_ai_enabled THEN
+      PERFORM events.emitir(
+        'contact.ai_disabled',
+        v_account,
+        jsonb_build_object(
+          'contact',     events.ficha_contacto(NEW.id),
+          'line',        events.ficha_linea(NEW.line_id),
+          'reason',      'manual',
+          'disabled_at', now()
+        ),
+        NULL
+      );
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'events: no se pudo producir el evento del contacto: %', SQLERRM;
+  END;
+  RETURN NULL;
+END;
+$$;
+
+-- Vía whatsapp-web.js. Aquí el INSERT es "contacto nuevo" y el UPDATE es "un
+-- mensaje de alguien ya conocido" (messages.controller.ts:618 hace upsert con
+-- onConflict numberid,wa_id). El trigger produce SOLO el alta: message.received
+-- lo emite el código, que es el único sitio donde se sabe la dirección del
+-- mensaje y existe la clave de idempotencia natural (msg.id._serialized).
+CREATE OR REPLACE FUNCTION events.capturar_unsynced()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_account integer;
+  v_linea   jsonb;
+BEGIN
+  BEGIN
+    IF TG_OP = 'DELETE' THEN
+      RETURN NULL;
+    END IF;
+
+    v_account := events.tenant_de_numero(NEW.numberid);
+    SELECT jsonb_build_object(
+             'id', n.id,
+             'label', COALESCE(NULLIF(n.name, ''), n.number),
+             'channel', 'whatsapp_web'
+           )
+      INTO v_linea
+      FROM app."WhatsAppNumber" n WHERE n.id = NEW.numberid;
+
+    IF TG_OP = 'INSERT' THEN
+      PERFORM events.emitir(
+        'contact.created',
+        v_account,
+        jsonb_build_object(
+          'contact', jsonb_build_object(
+            'id',    NEW.id,
+            'phone', NEW.number,
+            'name',  NEW.name,
+            'wa_id', NEW.wa_id
+          ),
+          'line',   v_linea,
+          'source', 'inbound_message',
+          'created_at', now()
+        ),
+        'unsynced:' || NEW.id::text
+      );
+    ELSIF OLD.agentehabilitado AND NOT NEW.agentehabilitado THEN
+      PERFORM events.emitir(
+        'contact.ai_disabled',
+        v_account,
+        jsonb_build_object(
+          'contact', jsonb_build_object(
+            'id',    NEW.id,
+            'phone', NEW.number,
+            'name',  NEW.name,
+            'wa_id', NEW.wa_id
+          ),
+          'line',        v_linea,
+          'reason',      'handoff_requested',
+          'disabled_at', now()
+        ),
+        NULL
+      );
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'events: no se pudo producir el evento de Unsyncedcontact: %', SQLERRM;
+  END;
+  RETURN NULL;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION events.capturar_synced()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_linea jsonb;
+BEGIN
+  BEGIN
+    IF TG_OP = 'UPDATE' AND OLD."agenteHabilitado" AND NOT NEW."agenteHabilitado" THEN
+      SELECT jsonb_build_object(
+               'id', n.id,
+               'label', COALESCE(NULLIF(n.name, ''), n.number),
+               'channel', 'whatsapp_web'
+             )
+        INTO v_linea
+        FROM app."WhatsAppNumber" n WHERE n.id = NEW."numberId";
+
+      PERFORM events.emitir(
+        'contact.ai_disabled',
+        events.tenant_de_numero(NEW."numberId"),
+        jsonb_build_object(
+          'contact', jsonb_build_object(
+            'id',    NEW.id,
+            'name',  NEW.name,
+            'wa_id', NEW.wa_id
+          ),
+          'line',        v_linea,
+          'reason',      'handoff_requested',
+          'disabled_at', now()
+        ),
+        NULL
+      );
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'events: no se pudo producir el evento de SyncedContactOrGroup: %', SQLERRM;
+  END;
+  RETURN NULL;
+END;
+$$;
+
+-- DROP + CREATE, igual que los *_notify: es lo idempotente aquí y hace que un
+-- cambio en la función se aplique al re-correr el archivo.
+DROP TRIGGER IF EXISTS conversations_capture_event ON crm.conversations;
+CREATE TRIGGER conversations_capture_event
+  AFTER INSERT ON crm.conversations
+  FOR EACH ROW EXECUTE FUNCTION events.capturar_conversacion();
+
+DROP TRIGGER IF EXISTS contacts_capture_event ON crm.contacts;
+CREATE TRIGGER contacts_capture_event
+  AFTER INSERT OR UPDATE OR DELETE ON crm.contacts
+  FOR EACH ROW EXECUTE FUNCTION events.capturar_contacto();
+
+DROP TRIGGER IF EXISTS unsynced_capture_event ON app."Unsyncedcontact";
+CREATE TRIGGER unsynced_capture_event
+  AFTER INSERT OR UPDATE ON app."Unsyncedcontact"
+  FOR EACH ROW EXECUTE FUNCTION events.capturar_unsynced();
+
+DROP TRIGGER IF EXISTS synced_capture_event ON app."SyncedContactOrGroup";
+CREATE TRIGGER synced_capture_event
+  AFTER UPDATE ON app."SyncedContactOrGroup"
+  FOR EACH ROW EXECUTE FUNCTION events.capturar_synced();
+
+-- -----------------------------------------------------------------------------
+--  Retención. event, delivery y delivery_attempt crecen sin techo; el worker
+--  llama a esto una vez al día. Los intentos son lo que más pesa (traen
+--  cabeceras y un trozo de respuesta por intento) y son lo que menos se mira
+--  pasada la semana, por eso duran 30 días y los eventos 90.
+--
+--  Si algún día el volumen lo pide: particionar delivery_attempt por mes y
+--  cambiar este DELETE por DROP PARTITION, que es instantáneo.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION events.purgar_retencion(
+  p_dias_intentos integer DEFAULT 30,
+  p_dias_eventos  integer DEFAULT 90
+)
+RETURNS TABLE (intentos_borrados bigint, eventos_borrados bigint)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_intentos bigint;
+  v_eventos  bigint;
+BEGIN
+  DELETE FROM events.delivery_attempt
+  WHERE requested_at < now() - make_interval(days => p_dias_intentos);
+  GET DIAGNOSTICS v_intentos = ROW_COUNT;
+
+  -- delivery cuelga de event por FK ON DELETE CASCADE: borrar el evento se lleva
+  -- sus entregas y sus intentos, así que una sola sentencia basta.
+  DELETE FROM events.event
+  WHERE created_at < now() - make_interval(days => p_dias_eventos);
+  GET DIAGNOSTICS v_eventos = ROW_COUNT;
+
+  RETURN QUERY SELECT v_intentos, v_eventos;
+END;
+$$;
+
+
+-- =============================================================================
 --  SEMILLA MÍNIMA
 --  PlanLimit son 5 filas y sin ellas el envío de mensajes se bloquea siempre
 --  (get_user_message_usage devuelve tope 0). Valores tomados de getPlanLimits()
@@ -561,3 +1367,481 @@ INSERT INTO app."PlanLimit" (plan_name, monthly_message_limit) VALUES
   ('INDUSTRIAL', 50000),
   ('EXPIRED',        0)
 ON CONFLICT (plan_name) DO NOTHING;
+
+
+-- =============================================================================
+--  ENDURECIMIENTO — restricciones que el código NECESITA pero el DDL no tenía
+--
+--  Va TODO al final del archivo a propósito: varias cosas de aquí dependen de que
+--  las tablas y la semilla de PlanLimit ya existan.
+--
+--  Regla de esta sección: como este archivo se corre en cada arranque CONTRA UNA
+--  BASE VIVA y entero dentro de una sola transacción implícita, ninguna sentencia
+--  puede fallar — un error aborta el despliegue completo. Por eso todo lo que
+--  depende de los datos existentes (una FK que puede encontrar huérfanos, un
+--  UNIQUE que puede encontrar duplicados) pasa por los dos ayudantes de abajo,
+--  que MIRAN PRIMERO y, si no pueden, dejan un NOTICE en el log en vez de reventar.
+--  Lo que queda sin aplicar está documentado en db/migrations/ como paso manual.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+--  Ayudante 1: añadir una FK solo si es seguro.
+--  Se salta el trabajo si la constraint ya existe (así el escaneo de huérfanos se
+--  paga UNA vez, no en cada arranque), no toca tablas más grandes que p_max_rows
+--  (el escaneo costaría más que el arranque) y no intenta nada si encuentra filas
+--  huérfanas: en ese caso avisa y sigue.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION app.ensure_fk(
+  p_table      text,     -- 'crm.contacts'
+  p_constraint text,     -- 'contacts_user_id_fkey'
+  p_column     text,     -- 'user_id'
+  p_ref_table  text,     -- 'app."User"'
+  p_ref_column text,     -- 'id'
+  p_on_delete  text,     -- 'SET NULL' | 'RESTRICT' | 'CASCADE' | 'NO ACTION'
+  p_max_rows   bigint DEFAULT 2000000
+) RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_rows     bigint;
+  v_orphans  boolean;
+BEGIN
+  IF p_on_delete NOT IN ('SET NULL', 'RESTRICT', 'CASCADE', 'NO ACTION') THEN
+    RAISE EXCEPTION 'ON DELETE no permitido: %', p_on_delete;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = p_constraint
+       AND conrelid = p_table::regclass
+  ) THEN
+    RETURN;  -- ya está
+  END IF;
+
+  SELECT GREATEST(reltuples, 0)::bigint INTO v_rows
+    FROM pg_class WHERE oid = p_table::regclass;
+
+  IF v_rows > p_max_rows THEN
+    RAISE NOTICE 'FK % omitida: % tiene ~% filas (> %). Aplicarla a mano con db/migrations/002_fks_user_id.sql en una ventana de mantenimiento.',
+      p_constraint, p_table, v_rows, p_max_rows;
+    RETURN;
+  END IF;
+
+  EXECUTE format(
+    'SELECT EXISTS (SELECT 1 FROM %s t LEFT JOIN %s r ON r.%I = t.%I
+                     WHERE t.%I IS NOT NULL AND r.%I IS NULL)',
+    p_table, p_ref_table, p_ref_column, p_column, p_column, p_ref_column
+  ) INTO v_orphans;
+
+  IF v_orphans THEN
+    RAISE NOTICE 'FK % omitida: % tiene valores de %.% que no existen en %. Ver db/migrations/002_fks_user_id.sql.',
+      p_constraint, p_table, p_table, p_column, p_ref_table;
+    RETURN;
+  END IF;
+
+  BEGIN
+    EXECUTE format(
+      'ALTER TABLE %s ADD CONSTRAINT %I FOREIGN KEY (%I) REFERENCES %s(%I) ON DELETE %s',
+      p_table, p_constraint, p_column, p_ref_table, p_ref_column, p_on_delete
+    );
+    RAISE NOTICE 'FK % creada sobre %.', p_constraint, p_table;
+  EXCEPTION WHEN OTHERS THEN
+    -- El bloque EXCEPTION abre una subtransacción: si el ALTER falla (una carrera
+    -- con otra instancia arrancando a la vez, por ejemplo) se deshace SOLO esto y
+    -- el resto del archivo sigue aplicándose.
+    RAISE NOTICE 'No se pudo crear la FK %: %', p_constraint, SQLERRM;
+  END;
+END
+$$;
+
+-- -----------------------------------------------------------------------------
+--  Ayudante 2: crear un índice ÚNICO solo si los datos ya lo cumplen.
+--  Si hay duplicados crea el índice NO único (que igual sirve para las búsquedas)
+--  y avisa qué hay que limpiar.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION app.ensure_unique_index(
+  p_index  text,          -- 'lines_number_key'
+  p_table  text,          -- 'crm.lines'
+  p_column text,          -- 'number'
+  p_where  text DEFAULT NULL   -- 'number IS NOT NULL'
+) RETURNS void
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_schema  text := split_part(p_table, '.', 1);
+  v_dupes   boolean;
+  v_clause  text := CASE WHEN p_where IS NULL THEN '' ELSE ' WHERE ' || p_where END;
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relname = p_index AND n.nspname = v_schema AND c.relkind = 'i'
+  ) THEN
+    RETURN;
+  END IF;
+
+  EXECUTE format(
+    'SELECT EXISTS (SELECT 1 FROM %s%s GROUP BY %I HAVING count(*) > 1)',
+    p_table, v_clause, p_column
+  ) INTO v_dupes;
+
+  BEGIN
+    IF v_dupes THEN
+      EXECUTE format('CREATE INDEX IF NOT EXISTS %I ON %s (%I)%s',
+                     p_index || '_nonuniq', p_table, p_column, v_clause);
+      -- Ojo: aquí NO se puede usar %I ni %s. RAISE usa `%` como marcador propio y
+      -- se comería la I o la s, dejando en el log una consulta que no se puede
+      -- copiar y pegar (era "SELECT numberI ... FROM crm.liness").
+      RAISE NOTICE 'UNIQUE % NO creado: % tiene valores repetidos en %. Se dejó un índice normal. Para limpiarlo: SELECT %, count(*) FROM % GROUP BY 1 HAVING count(*) > 1;',
+        p_index, p_table, p_column, p_column, p_table;
+    ELSE
+      EXECUTE format('CREATE UNIQUE INDEX %I ON %s (%I)%s',
+                     p_index, p_table, p_column, v_clause);
+      RAISE NOTICE 'Índice único % creado sobre %(%).', p_index, p_table, p_column;
+    END IF;
+  EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'No se pudo crear el índice %: %', p_index, SQLERRM;
+  END;
+END
+$$;
+
+
+-- -----------------------------------------------------------------------------
+--  1) app."User".subscription -> app."PlanLimit".plan_name
+--
+--  Por qué: get_user_message_usage hace LEFT JOIN + COALESCE(...,0). Si falta la
+--  fila del plan, el tope mensual es 0 y NADIE puede enviar un mensaje, sin ningún
+--  error visible. Hoy lo único que sostiene esas 5 filas es la semilla de arriba.
+--  Con la FK, borrar un plan en uso falla en vez de apagar los envíos en silencio.
+--
+--  Es 100% seguro aplicarla: el CHECK de la columna ya limita los valores a esos
+--  mismos 5 nombres, y la semilla que los inserta corre justo antes.
+-- -----------------------------------------------------------------------------
+SELECT app.ensure_fk('app."User"', 'user_subscription_fkey', 'subscription',
+                     'app."PlanLimit"', 'plan_name', 'RESTRICT');
+
+-- -----------------------------------------------------------------------------
+--  2) app.subscriptions.user_id: SET NULL -> RESTRICT
+--
+--  Es la tabla del dinero. Con SET NULL, borrar un usuario dejaba sus pagos sin
+--  dueño y, peor, activateUserPlan(null, ...) ejecuta `WHERE id = NULL`: no
+--  actualiza nada y NO falla. RESTRICT convierte eso en un error visible.
+--
+--  Riesgo de romper algo: ninguno hoy. En los tres repos no existe un solo
+--  `DELETE FROM app."User"` — admin.controller.ts:102 desactiva con
+--  `update({active:false})`, que es un borrado lógico y la FK no lo toca.
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_name text;
+BEGIN
+  SELECT conname INTO v_name
+    FROM pg_constraint
+   WHERE conrelid = 'app.subscriptions'::regclass
+     AND contype = 'f'
+     AND confdeltype = 'n'                                  -- 'n' = SET NULL
+     AND conkey = ARRAY[(SELECT attnum FROM pg_attribute
+                          WHERE attrelid = 'app.subscriptions'::regclass
+                            AND attname = 'user_id')];
+  IF v_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE app.subscriptions DROP CONSTRAINT %I', v_name);
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'No se pudo reemplazar la FK de subscriptions.user_id: %', SQLERRM;
+END
+$$;
+SELECT app.ensure_fk('app.subscriptions', 'subscriptions_user_id_fkey', 'user_id',
+                     'app."User"', 'id', 'RESTRICT');
+
+-- -----------------------------------------------------------------------------
+--  3) app."Agent"."ownerId": CASCADE -> SET NULL + trigger
+--
+--  El problema real: admin.controller.ts:38-43 crea los agentes GLOBALES con el
+--  ownerId de la cuenta de admin. Con ON DELETE CASCADE, borrar esa única cuenta
+--  borraba los agentes globales de TODOS los clientes.
+--
+--  SET NULL a secas no alcanza, porque entonces los agentes privados de un usuario
+--  borrado sobrevivirían como filas invisibles (user.controller.ts:226 filtra por
+--  `isGlobal OR ownerId = X`). Por eso además va un BEFORE DELETE en User que borra
+--  SUS agentes privados: el resultado neto es idéntico al de hoy para los privados
+--  y deja de ser catastrófico para los globales.
+-- -----------------------------------------------------------------------------
+DO $$
+DECLARE
+  v_name text;
+BEGIN
+  SELECT conname INTO v_name
+    FROM pg_constraint
+   WHERE conrelid = 'app."Agent"'::regclass
+     AND contype = 'f'
+     AND confdeltype = 'c'                                  -- 'c' = CASCADE
+     AND conkey = ARRAY[(SELECT attnum FROM pg_attribute
+                          WHERE attrelid = 'app."Agent"'::regclass
+                            AND attname = 'ownerId')];
+  IF v_name IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE app."Agent" DROP CONSTRAINT %I', v_name);
+  END IF;
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'No se pudo reemplazar la FK de Agent.ownerId: %', SQLERRM;
+END
+$$;
+SELECT app.ensure_fk('app."Agent"', 'agent_owner_fkey', 'ownerId',
+                     'app."User"', 'id', 'SET NULL');
+
+CREATE OR REPLACE FUNCTION app.delete_private_agents_of_user()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  DELETE FROM app."Agent"
+   WHERE "ownerId" = OLD.id
+     AND "isGlobal" = false;
+  RETURN OLD;
+END
+$$;
+
+DROP TRIGGER IF EXISTS user_delete_private_agents ON app."User";
+CREATE TRIGGER user_delete_private_agents
+  BEFORE DELETE ON app."User"
+  FOR EACH ROW EXECUTE FUNCTION app.delete_private_agents_of_user();
+
+-- -----------------------------------------------------------------------------
+--  4) UNIQUE en crm.lines(number)
+--
+--  dashboardService.ts:53 hace `.eq('number', ...).single()`. Con dos líneas del
+--  mismo número, `.single()` devuelve PGRST116 y el dashboard cae al bloque de
+--  respaldo con id:'unknown'. El índice único es lo que hace que ese `.single()`
+--  sea correcto, y de paso es el índice que esa consulta necesitaba.
+--  Parcial (number IS NOT NULL) porque la columna es nullable y varios NULL son
+--  legítimos: en un UNIQUE de Postgres los NULL no chocan entre sí de todos modos,
+--  pero el índice parcial además no los guarda.
+-- -----------------------------------------------------------------------------
+SELECT app.ensure_unique_index('lines_number_key', 'crm.lines', 'number', 'number IS NOT NULL');
+
+-- -----------------------------------------------------------------------------
+--  5) UNIQUE en app.subscriptions(invoice_id) — idempotencia del webhook de pagos
+--
+--  DLocal REINTENTA las notificaciones. handleNotification busca "la pendiente más
+--  reciente" y la marca PAID, así que un reintento podía marcar pagada una segunda
+--  fila y ejecutar activateUserPlan dos veces. Con este único, el segundo intento
+--  de escribir el mismo invoice_id falla de forma visible en vez de duplicar.
+--  Parcial: invoice_id es NULL mientras la fila está pendiente y eso no es un choque.
+-- -----------------------------------------------------------------------------
+SELECT app.ensure_unique_index('subscriptions_invoice_id_key', 'app.subscriptions',
+                               'invoice_id', 'invoice_id IS NOT NULL');
+
+-- -----------------------------------------------------------------------------
+--  6) Los ids de usuario que cruzan de esquema sin FK
+--
+--  app."User".id es serial y crm.* lo apunta como integer suelto. Están en LA MISMA
+--  BASE, así que la FK es posible; lo único que faltaba era declararla.
+--
+--  Van con ensure_fk y NO con un ALTER pelado porque crm.contacts.user_id y
+--  crm.conversations.user_id tienen DEFAULT 2: si el usuario 2 no existe en esta
+--  base, declarar la FK haría fallar TODO INSERT de contacto y de mensaje. El
+--  ayudante lo detecta antes (busca huérfanos) y en ese caso solo deja un NOTICE.
+--  ON DELETE SET NULL y no RESTRICT: un contacto o un mensaje sin dueño sigue
+--  siendo un dato válido; una suscripción sin dueño no.
+-- -----------------------------------------------------------------------------
+SELECT app.ensure_fk('crm.lines',         'lines_user_id_fkey',         'user_id',
+                     'app."User"', 'id', 'SET NULL');
+SELECT app.ensure_fk('crm.events',        'events_user_id_fkey',        'id_de_usuario',
+                     'app."User"', 'id', 'SET NULL');
+SELECT app.ensure_fk('crm.contacts',      'contacts_user_id_fkey',      'user_id',
+                     'app."User"', 'id', 'SET NULL');
+SELECT app.ensure_fk('crm.conversations', 'conversations_user_id_fkey', 'user_id',
+                     'app."User"', 'id', 'SET NULL');
+
+
+-- =============================================================================
+--  RETENCIÓN
+--
+--  app."Telemetry" crece sin freno: un INSERT por CADA request HTTP
+--  (telemetry.middleware.ts:69) y otro por CADA evento de socket
+--  (session.controller.ts:319, dentro de socket.onAny). Nada la borra nunca.
+--
+--  Qué se purga y qué NO:
+--    · Telemetry  -> SÍ. Es medición de infra para calcular el costo del mes;
+--                    stats.controller.ts nunca mira más atrás de 12 meses.
+--    · crm.events -> opcional (apagado por defecto). Bitácora por contacto.
+--    · crm.conversations -> opcional y APAGADO. Es el historial de conversación con
+--                    el cliente: dato de negocio, no basura. Solo se borra si
+--                    alguien lo pide explícitamente con un número de días.
+--
+--  Sin extensiones: no hay pg_cron. El disparo lo hace el backend al arrancar
+--  (src/lib/retention.ts) y también hay un endpoint de admin — ver el resumen.
+-- =============================================================================
+
+-- Marca de "cuándo corrió por última vez". Existe para que N instancias del
+-- servicio arrancando a la vez no repitan el borrado, y para poder responder
+-- "¿esto se está limpiando?" sin adivinar.
+CREATE TABLE IF NOT EXISTS app.maintenance_log (
+  job          text PRIMARY KEY,
+  last_run_at  timestamptz NOT NULL DEFAULT now(),
+  rows_deleted bigint NOT NULL DEFAULT 0
+);
+
+-- -----------------------------------------------------------------------------
+--  Borrado por antigüedad, EN LOTES.
+--  En lotes y no en un solo DELETE porque la primera corrida sobre una tabla que
+--  lleva meses creciendo puede tocar millones de filas: un DELETE único mantendría
+--  la transacción (y sus locks) abierta durante minutos y haría explotar el WAL.
+--  Con lotes de p_batch cada vuelta es corta y el trabajo se puede interrumpir sin
+--  dejar nada a medias — lo ya borrado, borrado está.
+--  p_max_batches es el freno de mano: si hay más para borrar, lo hará la próxima
+--  corrida. Así el arranque del servicio nunca se cuelga por esto.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION app.purge_by_age(
+  p_table       text,
+  p_ts_column   text,
+  p_days        integer,
+  p_batch       integer DEFAULT 10000,
+  p_max_batches integer DEFAULT 100
+) RETURNS bigint
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_total   bigint := 0;
+  v_deleted bigint;
+  v_cutoff  timestamptz := now() - make_interval(days => p_days);
+BEGIN
+  IF p_days IS NULL OR p_days <= 0 THEN
+    RETURN 0;   -- retención desactivada para esta tabla
+  END IF;
+
+  FOR i IN 1..p_max_batches LOOP
+    EXECUTE format(
+      'DELETE FROM %s WHERE ctid = ANY (ARRAY(
+         SELECT ctid FROM %s WHERE %I < $1 LIMIT %s))',
+      p_table, p_table, p_ts_column, p_batch
+    ) USING v_cutoff;
+
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    v_total := v_total + v_deleted;
+    EXIT WHEN v_deleted = 0;
+  END LOOP;
+
+  RETURN v_total;
+END
+$$;
+
+-- -----------------------------------------------------------------------------
+--  Punto de entrada único. Devuelve jsonb con lo que hizo, para poder loguearlo.
+--
+--  pg_try_advisory_xact_lock y no pg_advisory_lock: si otra instancia ya está
+--  purgando, esta se va sin esperar (devuelve skipped:'lock'), y el lock se suelta
+--  solo al terminar la transacción aunque el proceso muera a mitad.
+--
+--  p_min_interval evita que un servicio que se reinicia en bucle (deploy fallido,
+--  OOM) purgue veinte veces en una hora.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION app.run_retention(
+  p_telemetry_days     integer  DEFAULT 90,
+  p_events_days        integer  DEFAULT NULL,
+  p_conversations_days integer  DEFAULT NULL,
+  p_min_interval       interval DEFAULT '20 hours',
+  p_force              boolean  DEFAULT false
+) RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_last  timestamptz;
+  v_tel   bigint := 0;
+  v_ev    bigint := 0;
+  v_conv  bigint := 0;
+BEGIN
+  IF NOT pg_try_advisory_xact_lock(hashtext('app.run_retention')) THEN
+    RETURN jsonb_build_object('skipped', 'lock');
+  END IF;
+
+  SELECT last_run_at INTO v_last FROM app.maintenance_log WHERE job = 'retention';
+
+  IF NOT p_force AND v_last IS NOT NULL AND v_last > now() - p_min_interval THEN
+    RETURN jsonb_build_object('skipped', 'reciente', 'last_run_at', v_last);
+  END IF;
+
+  v_tel  := app.purge_by_age('app."Telemetry"',    'timeStamp',       p_telemetry_days);
+  v_ev   := app.purge_by_age('crm.events',         'marca_de_tiempo', p_events_days);
+  v_conv := app.purge_by_age('crm.conversations',  'created_at',      p_conversations_days);
+
+  INSERT INTO app.maintenance_log (job, last_run_at, rows_deleted)
+  VALUES ('retention', now(), v_tel + v_ev + v_conv)
+  ON CONFLICT (job) DO UPDATE
+    SET last_run_at  = EXCLUDED.last_run_at,
+        rows_deleted = EXCLUDED.rows_deleted;
+
+  RETURN jsonb_build_object(
+    'telemetry',     v_tel,
+    'events',        v_ev,
+    'conversations', v_conv,
+    'ran_at',        now()
+  );
+END
+$$;
+
+-- -----------------------------------------------------------------------------
+--  Contador de mensajes ATÓMICO.
+--
+--  El bucle leer-decidir-escribir de messages.controller.ts:61-115 pierde mensajes
+--  cuando llegan dos a la vez (los dos leen 10, los dos escriben 11) y revienta con
+--  23505 en el primer mensaje del mes si dos hilos intentan crear la misma fila.
+--  Esto es lo que cobra el sistema: no puede depender de la suerte.
+--
+--  Un solo INSERT ... ON CONFLICT DO UPDATE resuelve las dos cosas: el conflicto lo
+--  arbitra el índice único (userid, year, month) y el `+ 1` lo hace Postgres sobre
+--  la fila ya bloqueada.
+--
+--  Devuelve el uso DESPUÉS de incrementar y el tope del plan; el llamador decide.
+--  Si ya estaba en el tope no incrementa y devuelve allowed=false, así el chequeo y
+--  el incremento son la MISMA operación y no hay ventana entre uno y otro.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION app.increment_message_usage(p_user_id integer)
+RETURNS TABLE (
+  allowed       boolean,
+  current_usage integer,
+  message_limit integer
+)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_year  integer := EXTRACT(YEAR  FROM now())::int;
+  v_month integer := EXTRACT(MONTH FROM now())::int;
+  v_limit integer;
+  v_used  integer;
+BEGIN
+  SELECT COALESCE(pl.monthly_message_limit, 0) INTO v_limit
+    FROM app."User" u
+    LEFT JOIN app."PlanLimit" pl ON pl.plan_name = u.subscription
+   WHERE u.id = p_user_id;
+
+  IF v_limit IS NULL THEN
+    -- El usuario no existe: ni allowed ni contador.
+    RETURN QUERY SELECT false, 0, 0;
+    RETURN;
+  END IF;
+
+  -- Bloquea la fila del mes (o la crea) antes de decidir. FOR UPDATE es lo que
+  -- serializa a dos mensajes simultáneos del mismo usuario.
+  INSERT INTO app."UserMessageUsage" (userid, year, month, usedmessages, updatedat)
+  VALUES (p_user_id, v_year, v_month, 0, now())
+  ON CONFLICT (userid, year, month) DO NOTHING;
+
+  SELECT usedmessages INTO v_used
+    FROM app."UserMessageUsage"
+   WHERE userid = p_user_id AND year = v_year AND month = v_month
+     FOR UPDATE;
+
+  IF v_used >= v_limit THEN
+    RETURN QUERY SELECT false, v_used, v_limit;
+    RETURN;
+  END IF;
+
+  UPDATE app."UserMessageUsage"
+     SET usedmessages = usedmessages + 1,
+         updatedat    = now()
+   WHERE userid = p_user_id AND year = v_year AND month = v_month
+  RETURNING usedmessages INTO v_used;
+
+  RETURN QUERY SELECT true, v_used, v_limit;
+END
+$$;

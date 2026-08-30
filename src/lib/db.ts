@@ -20,12 +20,18 @@ const { Pool, Client, types } = pg
 const INT8_OID = 20
 types.setTypeParser(INT8_OID, (v: string) => Number(v))
 
-// numeric (OID 1700) también sale como string. subscriptions.amount se compara
-// con `!==` contra un número que viene de DLO (subscription.controller.ts:194):
-// si queda como string, esa comparación es siempre verdadera y dispara un warning
-// falso en cada webhook. Se convierte a number para igualar lo que hacía PostgREST.
-const NUMERIC_OID = 1700
-types.setTypeParser(NUMERIC_OID, (v: string) => Number(v))
+// numeric (OID 1700) NO se convierte. Aquí estaba
+//   types.setTypeParser(1700, Number)
+// y era el punto exacto donde se rompían los montos: `numeric` es decimal EXACTO
+// —por eso subscriptions.amount, amount_paid y amount_received son numeric— y
+// pasarlo por Number lo convierte en un double, donde 149900.10 ya no vale
+// 149900.10. La columna estaba bien; la conversión de salida la degradaba.
+//
+// Se dejó como string, que es lo que node-postgres hace por defecto justamente
+// para no perder precisión. La comparación que dependía de esto
+// (subscription.controller.ts, monto guardado contra monto que reporta DLO) pasó
+// a hacerse en centavos enteros con compararMontos(), que es exacta y además no
+// se rompe cuando DLO manda el monto como texto.
 
 // ---------------------------------------------------------------------------
 //  SSL

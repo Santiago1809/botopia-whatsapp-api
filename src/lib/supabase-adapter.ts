@@ -75,7 +75,19 @@ const RPCS: Record<string, { sql: string; params: string[]; kind: 'scalar' | 'se
     sql: 'app.get_user_message_usage',
     params: ['p_user_id'],
     kind: 'setof'
+  },
+  // Chequeo de tope + incremento en UNA sola operación atómica. Reemplaza al
+  // leer-decidir-escribir de incrementMessageUsage, que perdía mensajes cuando
+  // llegaban dos a la vez y reventaba con 23505 en el primero de cada mes.
+  increment_message_usage: {
+    sql: 'app.increment_message_usage',
+    params: ['p_user_id'],
+    kind: 'setof'
   }
+  // app.run_retention NO está aquí a propósito: este adaptador liga los
+  // parámetros por POSICIÓN, así que una función con argumentos opcionales
+  // recibiría NULL en los que no se pasan y perdería sus valores por defecto.
+  // Se llama con SQL directo y argumentos nombrados desde src/lib/retention.ts.
 }
 
 export interface PostgrestError {

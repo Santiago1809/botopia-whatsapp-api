@@ -4,6 +4,46 @@ import type { Request, Response } from 'express';
 import { supabase } from '../config/db.js';
 import type { CustomRequest } from '../interfaces/global.js';
 
+// ---------------------------------------------------------------------------
+//  Dinero
+//
+//  Las columnas de monto son `numeric` (decimal exacto) y node-postgres las
+//  entrega como STRING para no perder precisión — antes había un
+//  types.setTypeParser(1700, Number) en src/lib/db.ts que las degradaba a double,
+//  y sobre eso se comparaba con `!==`. Un monto como 149900.10 podía dejar de ser
+//  igual a sí mismo después de ir y volver de la base.
+//
+//  Las dos funciones de abajo son la forma correcta de tratarlo:
+//    · aCentavos    -> lleva cualquier representación (string, number) a un ENTERO
+//                      de centavos, que es exacto y se puede comparar con ===.
+//    · aNumeroParaJson -> convierte a number SOLO al serializar la respuesta, para
+//                      que el JSON que ve el front siga siendo idéntico al de hoy.
+// ---------------------------------------------------------------------------
+
+/** Monto -> entero de centavos. Devuelve null si no es un número reconocible. */
+function aCentavos(valor: unknown): number | null {
+    if (valor === null || valor === undefined || valor === '') return null;
+    const n = typeof valor === 'number' ? valor : Number(String(valor).trim());
+    if (!Number.isFinite(n)) return null;
+    // Math.round sobre el producto: 149900.10 * 100 da 14990009.999... en binario;
+    // redondear es lo que devuelve el entero exacto que se buscaba.
+    return Math.round(n * 100);
+}
+
+/** Compara dos montos de forma exacta, sin depender de la coma flotante. */
+function montosIguales(a: unknown, b: unknown): boolean {
+    const ca = aCentavos(a);
+    const cb = aCentavos(b);
+    return ca !== null && cb !== null && ca === cb;
+}
+
+/** Para la respuesta HTTP: mantiene el JSON como estaba (número, no string). */
+function aNumeroParaJson(valor: unknown): number | null {
+    if (valor === null || valor === undefined || valor === '') return null;
+    const n = typeof valor === 'number' ? valor : Number(valor);
+    return Number.isFinite(n) ? n : null;
+}
+
 
 export const createSubscription = async (req: CustomRequest, res: Response) => {
     try {
@@ -191,13 +231,21 @@ export const handleNotification = async (req: Request, res: Response) => {
         // Get the most recent subscription
         const subscription = subscriptions[0];
 
-        // Validación adicional
-        if (subscription.amount !== dloData.subscription.plan.amount) {
+        // Validación adicional. Antes era `subscription.amount !== dloData...amount`:
+        // una comparación estricta entre dos flotantes que, además, podían no ser
+        // del mismo tipo (la base entrega numeric como string). Ahora se comparan
+        // los dos en centavos enteros, que es exacto.
+        if (!montosIguales(subscription.amount, dloData.subscription.plan.amount)) {
+            const centavosGuardado = aCentavos(subscription.amount);
+            const centavosDlo = aCentavos(dloData.subscription.plan.amount);
             console.warn('⚠️ Diferencia en montos:', {
                 storedAmount: subscription.amount,
                 dloAmount: dloData.subscription.plan.amount,
                 subscriptionId: subscription.id,
-                difference: Math.abs(subscription.amount - dloData.subscription.plan.amount)
+                difference:
+                    centavosGuardado !== null && centavosDlo !== null
+                        ? Math.abs(centavosGuardado - centavosDlo) / 100
+                        : 'no comparable'
             });
         }
 
@@ -384,7 +432,11 @@ export const getUserSubscription = async (req: CustomRequest, res: Response) => 
             lastUpdated: userData.subscription_updated_at || userData.updatedAt,
             subscription: subscription ? {
                 planName: subscription.plan_name,
-                amount: subscription.amount_paid,
+                // Conversión explícita AQUÍ, al serializar, y no con un parser
+                // global del driver: así el JSON que recibe el front sigue siendo
+                // un número igual que siempre, pero el valor viaja exacto por
+                // dentro (ver el bloque de "Dinero" arriba).
+                amount: aNumeroParaJson(subscription.amount_paid),
                 currency: subscription.checkout_currency,
                 checkoutCurrency: subscription.checkout_currency,
                 balanceCurrency: subscription.balance_currency,

@@ -19,9 +19,31 @@ import {
 import { getCurrentUTCDate } from '../../lib/dateUtils.js'
 import { getAIResponse } from '../../services/ai.service.js'
 import { transporter } from '../../services/email.service.js'
+import {
+  emitirEscalamiento,
+  emitirMensajeEntrante,
+  emitirTopeAlcanzado
+} from '../../services/events/webjsEvents.js'
 import { clients } from '../../WhatsAppClients.js'
 
-// Helper function to handle message usage counting
+/**
+ * Consume un mensaje del cupo mensual del usuario.
+ *
+ * ESTO ES LO QUE SE COBRA, así que no puede depender de la suerte. La versión
+ * anterior hacía cuatro viajes a la base y, entre ellos, tenía dos carreras:
+ *
+ *   1. leer usedmessages -> decidir -> UPDATE usedmessages = leido + 1
+ *      Dos mensajes simultáneos leían el mismo 10 y los dos escribían 11: uno de
+ *      los dos se enviaba sin cobrarse.
+ *   2. si no había fila del mes, hacía un INSERT pelado. El índice único
+ *      (userid, year, month) hacía que el segundo mensaje del primer día del mes
+ *      chocara con 23505 y devolviera "Error registrando primer mensaje".
+ *
+ * Ahora es UNA llamada a app.increment_message_usage, que resuelve el conflicto
+ * con ON CONFLICT, bloquea la fila con FOR UPDATE y hace el chequeo del tope y el
+ * incremento dentro de la misma operación: no queda ventana entre comprobar y
+ * cobrar. Ver db/schema.sql, sección de endurecimiento.
+ */
 async function incrementMessageUsage(userId: number): Promise<{
   success: boolean
   message?: string
@@ -29,96 +51,39 @@ async function incrementMessageUsage(userId: number): Promise<{
   limit?: number
 }> {
   try {
-    // Get user subscription and plan limits
-    const { data: user, error: userError } = await supabase
-      .from('User')
-      .select('id, subscription')
-      .eq('id', userId)
-      .single()
+    const { data, error } = await supabase.rpc('increment_message_usage', {
+      p_user_id: userId
+    })
 
-    if (userError || !user) {
-      console.error('Error buscando en User:', userError)
-      return { success: false, message: 'Usuario no encontrado' }
-    }
-
-    const { data: plan, error: planError } = await supabase
-      .from('PlanLimit')
-      .select('monthly_message_limit')
-      .eq('plan_name', user.subscription)
-      .single()
-
-    if (planError || !plan) {
-      console.error('Error buscando en PlanLimit:', planError)
-      return { success: false, message: 'Plan no encontrado' }
-    }
-
-    const { monthly_message_limit } = plan
-    const now = new Date()
-    const year = now.getFullYear()
-    const month = now.getMonth() + 1
-
-    // Get current usage
-    const { data: usage, error } = await supabase
-      .from('UserMessageUsage')
-      .select('*')
-      .eq('userid', user.id)
-      .eq('year', year)
-      .eq('month', month)
-      .single()
-
-    if (error && error.code !== 'PGRST116') {
-      console.error('Error buscando en UserMessageUsage:', error)
+    if (error) {
+      console.error('Error en increment_message_usage:', error)
       return { success: false, message: 'Error consultando uso de mensajes' }
     }
 
-    const currentUsage = usage ? usage.usedmessages : 0
+    const fila = Array.isArray(data) ? data[0] : undefined
+    if (!fila) {
+      return { success: false, message: 'Usuario no encontrado' }
+    }
 
-    // Check if limit is reached
-    if (currentUsage >= monthly_message_limit) {
+    const currentUsage = Number(fila.current_usage ?? 0)
+    const limit = Number(fila.message_limit ?? 0)
+
+    if (!fila.allowed) {
+      // limit 0 significa que el usuario no tiene fila en PlanLimit para su plan.
+      // Antes ese caso se confundía con "límite alcanzado"; distinguirlo evita
+      // buscar durante media hora por qué "nadie puede enviar nada".
       return {
         success: false,
-        message: 'Límite mensual de mensajes alcanzado',
+        message:
+          limit === 0
+            ? 'El plan del usuario no tiene tope configurado en PlanLimit'
+            : 'Límite mensual de mensajes alcanzado',
         currentUsage,
-        limit: monthly_message_limit
+        limit
       }
     }
 
-    // Update or insert usage
-    if (!usage) {
-      const { error: insertError } = await supabase
-        .from('UserMessageUsage')
-        .insert({
-          userid: user.id,
-          year,
-          month,
-          usedmessages: 1
-        })
-      if (insertError) {
-        console.error('Error registrando primer mensaje:', insertError)
-        return { success: false, message: 'Error registrando uso de mensajes' }
-      }
-    } else {
-      const { error: updateError } = await supabase
-        .from('UserMessageUsage')
-        .update({
-          usedmessages: usage.usedmessages + 1,
-          updatedat: new Date().toISOString()
-        })
-        .eq('id', usage.id)
-      if (updateError) {
-        console.error('Error actualizando contador:', updateError)
-        return {
-          success: false,
-          message: 'Error actualizando contador de mensajes'
-        }
-      }
-    }
-
-    return {
-      success: true,
-      currentUsage: currentUsage + 1,
-      limit: monthly_message_limit
-    }
+    return { success: true, currentUsage, limit }
   } catch (error) {
     console.error('Error en incrementMessageUsage:', error)
     return { success: false, message: 'Error interno del servidor' }
@@ -238,30 +203,64 @@ export async function sendMessage(req: Request, res: Response) {
     // Normalizar wa_id y numberId para la consulta
     const waIdToCheck = (to || '').trim().toLowerCase()
     const numberIdNum = Number(numberid)
-    const { error: syncDbError } = await supabase
+    // Sin .single(). El índice único de la tabla es (numberId, wa_id, TYPE), y
+    // aquí no se filtra por type: un contacto y un grupo con el mismo wa_id
+    // devuelven DOS filas y .single() respondía PGRST116 — el mismo código que
+    // significa "no hay ninguna". Con .limit(1) la pregunta que se hace es la que
+    // de verdad importa: "¿existe alguna?".
+    const { data: syncFilas, error: syncDbError } = await supabase
       .from('SyncedContactOrGroup')
       .select('id, wa_id, type')
       .eq('numberId', numberIdNum)
       .eq('wa_id', waIdToCheck)
-      .single()
-    if (syncDbError && syncDbError.code !== 'PGRST116') {
-      // Buscar en Unsyncedcontact
-      const { data: unsynced, error: unsyncedError } = await supabase
+      .limit(1)
+
+    if (syncDbError) {
+      console.error('Error buscando en SyncedContactOrGroup:', syncDbError)
+      res.status(HttpStatusCode.InternalServerError).json({
+        message: 'Error consultando el estado de sincronización del chat'
+      })
+      return
+    }
+
+    // La condición estaba INVERTIDA: era `if (syncDbError && code !== 'PGRST116')`,
+    // o sea que solo entraba a validar cuando había un error REAL de base. Cuando
+    // el contacto simplemente no estaba sincronizado —PGRST116, el caso normal—
+    // se saltaba el bloque entero y la validación NUNCA se aplicaba.
+    //
+    // Arreglarla y activarla de golpe sería peligroso: lleva tanto tiempo muerta
+    // que cualquier flujo que hoy manda a un chat no registrado empezaría a
+    // recibir un 400 sin previo aviso. Por eso, por defecto AVISA en el log y deja
+    // pasar —exactamente lo que ocurre hoy— y solo rechaza con
+    // STRICT_CHAT_VALIDATION=true. Mirar los logs unos días, comprobar que el
+    // aviso no aparece, y entonces encenderlo.
+    if (!syncFilas || syncFilas.length === 0) {
+      const { data: unsyncedFilas, error: unsyncedError } = await supabase
         .from('Unsyncedcontact')
         .select('id')
         .eq('numberid', numberIdNum)
         .eq('wa_id', waIdToCheck)
-        .single()
-      if (unsyncedError && unsyncedError.code !== 'PGRST116') {
+        .limit(1)
+
+      if (unsyncedError) {
         console.error('Error buscando en Unsyncedcontact:', unsyncedError)
       }
-      if (!unsynced) {
-        res.status(HttpStatusCode.BadRequest).json({
-          message:
-            'El chat no está sincronizado ni registrado como no sincronizado para este número',
-          to
-        })
-        return
+      if (!unsyncedFilas || unsyncedFilas.length === 0) {
+        const estricto = process.env.STRICT_CHAT_VALIDATION === 'true'
+        console.warn(
+          `⚠️ Envío a un chat no registrado para el número ${numberIdNum}: ${waIdToCheck}. ` +
+            (estricto
+              ? 'Rechazado (STRICT_CHAT_VALIDATION=true).'
+              : 'Se deja pasar por compatibilidad; activar STRICT_CHAT_VALIDATION=true para rechazarlo.')
+        )
+        if (estricto) {
+          res.status(HttpStatusCode.BadRequest).json({
+            message:
+              'El chat no está sincronizado ni registrado como no sincronizado para este número',
+            to
+          })
+          return
+        }
       }
       // Si está en Unsyncedcontact, permite el envío (sin importar agentehabilitado)
     }
@@ -470,10 +469,17 @@ export async function handleIncomingMessage(
     return
   }
 
+  // El historial se saca del try para que los eventos puedan mirarlo: es el
+  // ÚNICO sitio del sistema donde se ve `m.fromMe`, o sea lo único que permite
+  // distinguir "el lead escribió" de "el lead CONTESTÓ". Volver a pedirlo sería
+  // repetir una llamada cara a WhatsApp.
+  let historialDelChat: Message[] = []
+
   // EMITIR ACTUALIZACIÓN DEL HISTORIAL DEL CHAT SIEMPRE QUE LLEGUE UN MENSAJE
   try {
     const messages = await chat.fetchMessages({ limit: 30 })
     messages.sort((a: Message, b: Message) => a.timestamp - b.timestamp)
+    historialDelChat = messages
 
     let lastMessageTimestamp: number | null = null
     if (messages && messages.length > 0) {
@@ -507,6 +513,12 @@ export async function handleIncomingMessage(
     console.error('Error obteniendo historial del chat:', historyError)
   }
 
+  // Entrada única de todo mensaje entrante de esta vía: aquí nace
+  // message.received (y contact.replied si procede). Va sin await a propósito —
+  // el mensaje del lead no puede esperar a que se guarde un evento, y mucho
+  // menos a que responda el webhook de nadie.
+  void emitirMensajeEntrante(msg, chat, numberId, historialDelChat)
+
   // Increment message usage for incoming message
   const { data: number, error: numberError } = await supabase
     .from('WhatsAppNumber')
@@ -521,6 +533,10 @@ export async function handleIncomingMessage(
         usageResult.message?.includes('Límite mensual de mensajes alcanzado')
       ) {
         await sendLimitReachedMessage(msg, chat, number)
+        // El correo de arriba tiene un control diario EN MEMORIA que se pierde
+        // en cada redespliegue; el evento lleva el periodo como clave de dedupe
+        // en la base, así que sale una sola vez al mes pase lo que pase.
+        void emitirTopeAlcanzado(number.userId)
       }
 
       // Continue processing the message even if usage increment fails
@@ -603,13 +619,23 @@ export async function handleIncomingMessage(
         // Extraer el número del wa_id (sin el @c.us)
         const numberFromWaId = waIdToCheck.split('@')[0]
 
-        // Preparar el objeto para insertar/actualizar
+        // OJO con lo que NO está aquí: `agentehabilitado`.
+        //
+        // El adaptador traduce el upsert a ON CONFLICT ... DO UPDATE SET con
+        // TODAS las columnas que no son de conflicto. Con agentehabilitado en el
+        // objeto, cada mensaje entrante lo devolvía a `true` — deshaciendo el
+        // apagado que hace el propio controlador cuando el cliente pide hablar
+        // con un asesor humano. Bastaba con que el cliente escribiera otra vez
+        // para que la IA volviera a contestarle.
+        //
+        // Quitándolo del objeto: en una fila NUEVA la columna toma su DEFAULT
+        // (true, en db/schema.sql) y en una fila EXISTENTE no se toca. Que es
+        // justo lo que se quería.
         const contactData = {
           numberid: numberId,
           wa_id: waIdToCheck,
           number: numberFromWaId,
           name: numberFromWaId, // Usar el número como nombre por defecto
-          agentehabilitado: true,
           lastmessagetimestamp: Date.now(),
           lastmessagepreview: msg.body || ''
         }
@@ -887,6 +913,26 @@ export async function handleIncomingMessage(
             .single()
           agent = agentResult.data
         }
+        // El evento se emite ANTES y con una condición más laxa que el correo de
+        // abajo: el escalamiento OCURRIÓ aunque el agente no tenga advisorEmail
+        // configurado y aunque no haya SMTP. El bloque de abajo se queda tal
+        // cual —es el aviso monotenant que ya existía— y este carril lleva el
+        // mismo hecho a los destinos que el cliente configuró en Conexiones.
+        if (
+          typeof aiResponse === 'string' &&
+          aiResponse.trim().toLowerCase() === fraseAsesorEspecial.toLowerCase() &&
+          agent &&
+          agent.allowAdvisor
+        ) {
+          void emitirEscalamiento({
+            numberId,
+            msg,
+            chat,
+            agente: { id: agent.id, title: agent.title },
+            ultimos: messages
+          })
+        }
+
         if (
           typeof aiResponse === 'string' &&
           aiResponse.trim().toLowerCase() ===

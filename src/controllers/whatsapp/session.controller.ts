@@ -9,6 +9,12 @@ import type { CustomRequest, StartWhatsApp } from '../../interfaces/global.js'
 const { Client, LocalAuth } = whatsappWeb
 import { supabase } from '../../config/db.js'
 import { clients } from '../../WhatsAppClients.js'
+import {
+  marcarLineaConectada,
+  marcarLineaDesconectada,
+  marcarQRPendiente,
+  olvidarLinea
+} from '../../services/events/lineEvents.js'
 import { handleIncomingMessage } from './messages.controller.js'
 
 export async function startWhatsApp(req: Request, res: Response) {
@@ -77,13 +83,30 @@ export async function startWhatsApp(req: Request, res: Response) {
       } catch (error) {
         console.error('❌ Error procesando el QR:', error)
       }
+      // El evento avisa de que HAY un QR esperando, para que el cliente pueda
+      // llamar a su operador. El código NO viaja: es una credencial de sesión y
+      // quien lo escanee se apodera de la línea.
+      void marcarQRPendiente(numberId)
     })
 
     client.on('ready', () => {
       io.to(numberId.toString()).emit('whatsapp-ready', { numberId })
+      // Único "línea conectada" que existe en esta vía.
+      void marcarLineaConectada(numberId, 'qr_scanned')
+    })
+
+    // No estaba registrado y es un fallo distinto de 'disconnected': aquí la
+    // sesión ni siquiera llegó a autenticarse. Solo emite el evento, no cambia
+    // nada del comportamiento existente.
+    client.on('auth_failure', () => {
+      void marcarLineaDesconectada(numberId, 'auth_failure')
     })
 
     client.on('disconnected', async () => {
+      // Se emite ANTES de destruir la sesión: si logout() o destroy() se cuelgan
+      // —que es exactamente lo que pasa cuando Chromium ya murió— el aviso ya
+      // salió y el cliente se entera igual de que su línea se cayó.
+      void marcarLineaDesconectada(numberId, 'logged_out')
       try {
         if (clients[numberId]) {
           const client = clients[numberId]
@@ -110,6 +133,9 @@ export async function startWhatsApp(req: Request, res: Response) {
     client.initialize().catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error)
       console.error('❌ No se pudo abrir el navegador de WhatsApp:', detail)
+      // Fallo de ARRANQUE, distinto de una caída: la línea nunca llegó a estar
+      // viva. Se distingue en el evento por reason='startup_failed'.
+      void marcarLineaDesconectada(numberId, 'startup_failed')
       delete clients[numberId]
       io.to(numberId.toString()).emit('whatsapp-error', {
         numberId,
@@ -146,6 +172,10 @@ export async function stopWhatsApp(req: CustomRequest, res: Response) {
     .eq('userId', user.id)
   try {
     for (const number of whatsappNumbers || []) {
+      // Baja DELIBERADA: el usuario paró la línea. No se emite
+      // line.disconnected —no es una caída— pero sí se olvida el estado, para
+      // que un arranque posterior vuelva a contar como transición real.
+      olvidarLinea(number.id)
       await supabase.from('WhatsAppNumber').delete().eq('id', number.id)
       if (clients[number.id]) {
         const client = clients[number.id]

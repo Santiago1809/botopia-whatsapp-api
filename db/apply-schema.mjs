@@ -41,10 +41,34 @@ function resolveSsl(url) {
 
 const client = new pg.Client({ connectionString, ssl: resolveSsl(connectionString) })
 
+// El endurecimiento del esquema (FKs, índices únicos) MIRA los datos antes de
+// actuar y, cuando no puede aplicar algo, lo dice con RAISE NOTICE en vez de
+// reventar. Sin este listener esos avisos se pierden y el despliegue diría "todo
+// bien" mientras la mitad de las restricciones quedó sin poner.
+//
+// Se filtra el ruido de los CREATE ... IF NOT EXISTS ("already exists") y de los
+// DROP ... IF EXISTS ("does not exist"): en un arranque normal son decenas y solo
+// tapan lo que sí importa leer.
+const RUIDO = /(already exists|does not exist), skipping/i
+const avisos = []
+client.on('notice', (n) => {
+  const msg = (n?.message ?? '').trim()
+  if (!msg || RUIDO.test(msg)) return
+  avisos.push(msg)
+  console.warn(`⚠️  ${msg}`)
+})
+
 try {
   await client.connect()
   await client.query(sql)
-  console.log('✅ schema.sql aplicado')
+  if (avisos.length === 0) {
+    console.log('✅ schema.sql aplicado (sin pendientes)')
+  } else {
+    console.log(
+      `✅ schema.sql aplicado, con ${avisos.length} aviso(s) arriba. ` +
+        'Los que hablen de FK o UNIQUE omitidos requieren limpiar datos: ver db/migrations/.'
+    )
+  }
 } catch (err) {
   console.error('❌ Error aplicando schema.sql:', err.message)
   process.exitCode = 1

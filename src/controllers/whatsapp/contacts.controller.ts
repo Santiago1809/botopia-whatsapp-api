@@ -72,36 +72,64 @@ export async function syncContactsToDB(req: Request, res: Response) {
       numberId: Number(numberId),
       type: 'contact',
       wa_id: c.id,
-      name: c.name,
-      agenteHabilitado: true
+      name: c.name
     })),
     ...(groups || []).map((g: Group) => ({
       numberId: Number(numberId),
       type: 'group',
       wa_id: g.id,
-      name: g.name,
-      agenteHabilitado: true
+      name: g.name
     }))
   ]
 
   if (toInsert.length > 0) {
+    // upsert y no insert. La tabla tiene UNIQUE (numberId, wa_id, type), así que
+    // un INSERT pelado hacía que la SEGUNDA sincronización sin clearAll fallara
+    // entera con 500 "Error insertando en la base de datos": bastaba con volver a
+    // sincronizar para que nada se guardara. Con ON CONFLICT, volver a sincronizar
+    // actualiza el nombre y deja el resto como estaba.
+    //
+    // agenteHabilitado NO va en el objeto a propósito, por lo mismo que en
+    // messages.controller: si fuera, el DO UPDATE SET lo devolvería a true en cada
+    // resincronización y desharía los interruptores que el usuario ya movió. En
+    // una fila nueva toma su DEFAULT (true).
     const { error } = await supabase
       .from('SyncedContactOrGroup')
-      .insert(toInsert)
+      .upsert(toInsert, { onConflict: 'numberId,wa_id,type' })
     if (error) {
-      console.error('SUPABASE INSERT ERROR:', error)
+      console.error('SUPABASE UPSERT ERROR:', error)
       res
         .status(500)
         .json({ message: 'Error insertando en la base de datos', error })
       return
     }
-    // ELIMINAR de Unsyncedcontact los que acaban de sincronizarse
+
+    // ELIMINAR de Unsyncedcontact los que acaban de sincronizarse.
+    // Antes esto era UNA consulta por contacto dentro de un for: 3.000 contactos
+    // eran 3.000 idas y vueltas a la base con la petición HTTP abierta. Ahora va
+    // en un solo DELETE por número, con la lista de wa_id de una vez.
+    const porNumero = new Map<number, string[]>()
     for (const item of toInsert) {
-      await supabase
-        .from('Unsyncedcontact')
-        .delete()
-        .eq('numberid', item.numberId)
-        .eq('wa_id', item.wa_id)
+      const lista = porNumero.get(item.numberId) ?? []
+      lista.push(item.wa_id)
+      porNumero.set(item.numberId, lista)
+    }
+    for (const [numId, waIds] of porNumero) {
+      // En lotes: una lista de miles de parámetros en un solo IN también es un
+      // problema, y 1.000 es un tamaño que Postgres maneja sin despeinarse.
+      for (let i = 0; i < waIds.length; i += 1000) {
+        const lote = waIds.slice(i, i + 1000)
+        const { error: delError } = await supabase
+          .from('Unsyncedcontact')
+          .delete()
+          .eq('numberid', numId)
+          .in('wa_id', lote)
+        if (delError) {
+          // No es motivo para fallar la sincronización: los contactos ya quedaron
+          // guardados. Solo queda algún duplicado en la lista de no sincronizados.
+          console.error('Error limpiando Unsyncedcontact:', delError)
+        }
+      }
     }
   }
 

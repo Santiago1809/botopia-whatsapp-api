@@ -53,7 +53,11 @@ export const sendEmail = async (options: {
 
   try {
     const mailOptions = {
-      from: process.env.SMTP_USER,
+      // MAIL_FROM separado de SMTP_USER: con un proveedor transaccional (Resend,
+      // SES, Postmark) y dominio verificado, la cuenta con la que uno se
+      // autentica deja de valer como remitente. Se conserva SMTP_USER como
+      // respaldo para no cambiar el comportamiento de quien no la configure.
+      from: process.env.MAIL_FROM || process.env.SMTP_USER,
       ...options
     }
     
