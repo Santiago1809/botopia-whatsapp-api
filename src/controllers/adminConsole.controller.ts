@@ -590,3 +590,69 @@ export async function getInfra(_req: CustomRequest, res: Response) {
     fallo(res, error, 'Error obteniendo la infraestructura')
   }
 }
+
+/**
+ * PATCH /api/admin/console/users/:id/plan — cambia el plan de una cuenta.
+ *
+ * Es la única escritura de esta consola. Existe porque el plan no se podía mover por
+ * ningún camino: la pantalla de pagos depende de dLocal (sin credenciales todavía) y el
+ * Postgres de Railway no expone puerto público, así que ni a mano. Un plan mal puesto deja
+ * a un cliente que ya pagó tope de FREE.
+ *
+ * El plan se valida contra app."PlanLimit", no contra una lista escrita acá: si mañana se
+ * agrega un plan a la tabla, este endpoint lo acepta sin tocar código. El CHECK de la
+ * columna sigue siendo la última palabra.
+ */
+export async function cambiarPlan(req: CustomRequest, res: Response) {
+  try {
+    const id = Number(req.params.id)
+    if (!Number.isInteger(id) || id <= 0) {
+      res.status(HttpStatusCode.BadRequest).json({ message: 'Id inválido' })
+      return
+    }
+    const plan = String(req.body?.plan ?? '').trim().toUpperCase()
+    if (!plan) {
+      res.status(HttpStatusCode.BadRequest).json({ message: 'Falta el plan.' })
+      return
+    }
+
+    const { rows: planes } = await query(
+      'SELECT plan_name, monthly_message_limit FROM app."PlanLimit" WHERE plan_name = $1',
+      [plan]
+    )
+    if (!planes.length) {
+      const { rows: validos } = await query(
+        'SELECT plan_name FROM app."PlanLimit" ORDER BY monthly_message_limit'
+      )
+      res.status(HttpStatusCode.BadRequest).json({
+        message: `Plan desconocido: ${plan}.`,
+        planes_validos: validos.map((p) => p.plan_name)
+      })
+      return
+    }
+
+    const { rows } = await query(
+      `UPDATE app."User"
+          SET subscription = $1, subscription_updated_at = now(), "updatedAt" = now()
+        WHERE id = $2
+        RETURNING id, email, subscription`,
+      [plan, id]
+    )
+    if (!rows.length) {
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Usuario no encontrado' })
+      return
+    }
+
+    console.log(
+      `[admin] plan de la cuenta ${id} cambiado a ${plan} por el admin ${req.user?.username ?? '?'}`
+    )
+    res.json({
+      ...rows[0],
+      tope_mensual: planes[0]?.monthly_message_limit ?? null
+    })
+  } catch (error) {
+    fallo(res, error, 'Error cambiando el plan')
+  }
+}

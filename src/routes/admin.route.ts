@@ -11,6 +11,7 @@ import {
   setUserTokenLimit
 } from '../controllers/admin.controller.js'
 import {
+  cambiarPlan,
   getActividad,
   getComercial,
   getFichaUsuario,
@@ -50,6 +51,12 @@ router.patch('/deactivate/:id', authenticateToken, isAdmin, deactivateUser)
 // ---------------------------------------------------------------------------
 router.get('/console/overview', authenticateToken, isAdmin, getOverview)
 router.get('/console/users', authenticateToken, isAdmin, getUsuarios)
+router.patch(
+  '/console/users/:id/plan',
+  authenticateToken,
+  isAdmin,
+  cambiarPlan
+)
 router.get('/console/users/:id', authenticateToken, isAdmin, getFichaUsuario)
 router.get('/console/activity', authenticateToken, isAdmin, getActividad)
 router.get('/console/health', authenticateToken, isAdmin, getSalud)
