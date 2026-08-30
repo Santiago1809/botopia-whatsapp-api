@@ -1845,3 +1845,332 @@ BEGIN
   RETURN QUERY SELECT true, v_used, v_limit;
 END
 $$;
+
+
+-- =============================================================================
+--  MEDICIÓN DE CONSUMO Y CONSOLA DE ADMIN
+--
+--  Todo lo de esta sección nace de una auditoría con una conclusión incómoda: la
+--  plataforma cobra por "mensajes" y gasta en tokens de IA, y de las dos cosas
+--  solo mide la primera —y a medias—. Aquí se añade lo que falta para que un
+--  panel de consumo pueda decir números REALES en vez de estimaciones.
+--
+--  Va al final del archivo porque referencia tablas de los dos esquemas
+--  (app."User", app."WhatsAppNumber", app."Agent", crm.lines, events.event) y
+--  todas tienen que existir ya.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+--  app.ai_usage — consumo de la IA, por llamada
+--
+--  QUÉ AGUJERO TAPA: hoy el dato existe y se tira a la basura.
+--  services/ai.service.ts recibe `response.usageMetadata` de Gemini en cada
+--  respuesta y devolvía solo `candidatesTokenCount`; los dos únicos llamadores
+--  (whatsapp/messages.controller.ts, la rama de contacto no sincronizado y la de
+--  handleIncomingMessageSynced) descartaban ese segundo elemento del array. O sea:
+--  el número que dice cuánto cuesta cada respuesta vivía un instante en memoria y
+--  se perdía. No había tabla, ni columna, ni log. Sin esto es IMPOSIBLE calcular
+--  el costo por cliente, y por tanto el margen.
+--
+--  Se guardan los tokens de ENTRADA además de los de salida: con `history` de 30
+--  mensajes + `systemInstruction` (el prompt del agente), el prompt es la parte
+--  cara de la factura y era justo la que no se miraba.
+--
+--  Se registra TAMBIÉN cuando la llamada falla (ok=false): una cuenta que quema
+--  cuota a base de errores es exactamente la que hay que poder ver.
+--
+--  Sin FK a app."User" NO: aquí sí conviene la FK con CASCADE, porque una fila de
+--  consumo de un usuario borrado no le sirve a nadie y no hay volumen de escritura
+--  extremo (una fila por respuesta de IA, no una por request HTTP).
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS app.ai_usage (
+  id             bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  user_id        integer NOT NULL REFERENCES app."User"(id)          ON DELETE CASCADE,
+  -- De qué número QR salió. NULL si la llamada no vino de un número concreto.
+  number_id      integer          REFERENCES app."WhatsAppNumber"(id) ON DELETE SET NULL,
+  -- Reservado para el carril Meta (CRM-ms). Hoy nadie lo escribe: ese carril no
+  -- pasa por ai.service.ts. Se deja la columna para no migrar la tabla después.
+  line_id        uuid             REFERENCES crm.lines(id)            ON DELETE SET NULL,
+  agent_id       integer          REFERENCES app."Agent"(id)          ON DELETE SET NULL,
+  model          text    NOT NULL,
+  -- promptTokenCount tal cual lo devuelve Gemini: es el prompt EFECTIVO COMPLETO
+  -- e INCLUYE los cacheados. No restarlos aquí; ver cached_tokens.
+  prompt_tokens  integer NOT NULL DEFAULT 0,
+  output_tokens  integer NOT NULL DEFAULT 0,
+  -- cachedContentTokenCount: SUBCONJUNTO de prompt_tokens, no un sumando aparte.
+  -- Google los cobra más baratos. Al valorar hay que hacer
+  --   (prompt_tokens - cached_tokens) * tarifa_entrada + cached_tokens * tarifa_cache
+  -- Sumar los tres campos por separado cuenta los cacheados dos veces.
+  cached_tokens  integer NOT NULL DEFAULT 0,
+  latency_ms     integer,
+  ok             boolean NOT NULL DEFAULT true,
+  error_kind     text,
+  occurred_at    timestamptz NOT NULL DEFAULT now()
+);
+-- El panel del cliente: "mi consumo de IA de este mes", siempre acotado a user_id
+-- y a una ventana de tiempo. Es la consulta que más se va a repetir.
+CREATE INDEX IF NOT EXISTS ai_usage_user_time_idx ON app.ai_usage (user_id, occurred_at DESC);
+-- La consola de admin agrega por mes SIN filtrar usuario, y la purga por
+-- retención borra por antigüedad: las dos necesitan el tiempo como primera columna.
+CREATE INDEX IF NOT EXISTS ai_usage_time_idx      ON app.ai_usage (occurred_at);
+
+-- -----------------------------------------------------------------------------
+--  app.ai_model_price — tarifa por modelo, CON VIGENCIA
+--
+--  valid_from forma parte de la PK a propósito. Si la tarifa fuera una sola fila
+--  por modelo, el día que Google cambie el precio se reescribiría la historia:
+--  los meses ya cerrados pasarían a costar lo que cuesta hoy. Con vigencia, cada
+--  fila de ai_usage se valora con la tarifa que regía EN SU FECHA.
+--
+--  NACE VACÍA A PROPÓSITO. No se siembra ningún precio porque no hay ninguna
+--  factura de Google en este repositorio de la que sacarlo, y un precio inventado
+--  convierte el número más importante del negocio (el margen) en ficción. Hasta
+--  que alguien cargue la tarifa real, las consultas de costo devuelven filas sin
+--  valorar y la UI dice "no disponible: falta cargar la tarifa del modelo X".
+--
+--  Para cargarla, con los precios de la factura real:
+--    INSERT INTO app.ai_model_price (model, valid_from, input_usd_per_1m, output_usd_per_1m)
+--    VALUES ('gemini-2.0-flash', '2026-01-01', <entrada>, <salida>);
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS app.ai_model_price (
+  model             text    NOT NULL,
+  valid_from        date    NOT NULL,
+  input_usd_per_1m  numeric NOT NULL,
+  output_usd_per_1m numeric NOT NULL,
+  -- Gemini factura el token cacheado más barato que el de entrada. NULL = "no se
+  -- sabe", y entonces el cacheado se valora como entrada normal (conservador).
+  cached_usd_per_1m numeric,
+  PRIMARY KEY (model, valid_from)
+);
+
+-- -----------------------------------------------------------------------------
+--  app.admin_actividad — el límite de privacidad, escrito como SQL
+--
+--  DECISIÓN DE PRODUCTO, no de implementación: un admin de la PLATAFORMA ve
+--  METADATOS (cuántos, cuándo, de qué tipo, si falló y por qué) y NUNCA CONTENIDO
+--  (qué se dijo, a quién, con qué prompt). Los mensajes que un cliente intercambia
+--  con SUS leads son del cliente.
+--
+--  Por qué hace falta una vista y no basta con "acordarse de no seleccionar el
+--  payload": events.capturar_conversacion() mete el mensaje ENTERO en el payload
+--  del evento —'body' y 'preview'— porque el carril de webhooks lo necesita (y
+--  solo lo entrega si el cliente marca include_message_body). Consecuencia: un
+--  `SELECT payload FROM events.event` en una consola de admin es leer las
+--  conversaciones de todos los clientes. Aquí las columnas prohibidas simplemente
+--  NO EXISTEN, así que ningún SELECT posterior puede sacarlas por descuido.
+--
+--  Qué se deja fuera y por qué:
+--    · payload->>'body' / 'preview'      -> el texto del mensaje
+--    · payload->'contact'->>'name'/'phone' -> la cartera de clientes del cliente
+--  Qué sí se deja y por qué:
+--    · largo_mensaje = length(body). Resuelve el caso de soporte real ("al lead le
+--      llegó un mensaje vacío") sin enseñar una sola palabra.
+--    · contacto_id — un uuid opaco. Permite correlacionar dos eventos del mismo
+--      hilo sin decir de quién es.
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW app.admin_actividad AS
+SELECT e.id,
+       e.occurred_at,
+       e.account_id,
+       u.username,
+       e.type,
+       e.payload->'line'->>'label'              AS linea,
+       e.payload->'contact'->>'id'              AS contacto_id,
+       e.payload->>'from_stage'                 AS etapa_anterior,
+       e.payload->>'to_stage'                   AS etapa_nueva,
+       length(COALESCE(e.payload->>'body', '')) AS largo_mensaje
+FROM events.event e
+LEFT JOIN app."User" u ON u.id = e.account_id;
+
+COMMENT ON VIEW app.admin_actividad IS
+  'Actividad para la consola de admin: SOLO metadatos. Sin texto de mensajes, sin nombre ni teléfono de contactos. La consola consulta esta vista y nunca events.event directamente.';
+
+
+-- -----------------------------------------------------------------------------
+--  ÍNDICES QUE PIDEN EL PANEL DE CONSUMO Y LA CONSOLA
+--
+--  Cada uno responde a una consulta concreta de usage.controller.ts o de
+--  adminConsole.controller.ts. Ninguno es "por si acaso".
+-- -----------------------------------------------------------------------------
+
+-- Resolver la cuenta a partir del username del token. Lo hace CADA request de
+-- /api/usage y /api/admin/console, y también el isAdmin endurecido (que relee el
+-- rol de la base en vez de creerle al token). Ya existe como UNIQUE de la columna
+-- username, así que no hace falta índice nuevo: se deja anotado para que nadie lo
+-- añada dos veces.
+
+-- La consola suma el consumo del MES EN CURSO de TODOS los usuarios (resumen de
+-- plataforma, distribución por plan, tabla maestra, lista de "al borde del tope").
+-- Sin esto es un scan completo de UserMessageUsage, que crece una fila por usuario
+-- y mes: a 12 meses son 12x el padrón. El índice único existente arranca por
+-- userid y no puede servir un filtro que solo conoce (year, month).
+-- El INCLUDE evita ir a la tabla: las dos columnas que se leen viajan en el índice.
+CREATE INDEX IF NOT EXISTS usermessageusage_periodo_idx
+  ON app."UserMessageUsage" (year, month) INCLUDE (userid, usedmessages);
+
+-- Todo el carril Meta del panel cuelga de "las líneas de este usuario":
+-- capacidad instalada, contactos del CRM y el gráfico de tráfico diario (que
+-- entra por contacts -> lines). crm.lines NO tenía ningún índice por user_id
+-- —solo por is_active—, así que cada tarjeta hacía un scan de la tabla.
+-- Sirve además a la consulta de datos rotos (WHERE user_id IS NULL): en un btree
+-- los NULL se indexan.
+CREATE INDEX IF NOT EXISTS lines_user_id_idx ON crm.lines (user_id);
+
+-- El resumen de plataforma cuenta los mensajes Meta del mes SIN filtrar por línea
+-- ni por contacto: count(*) FROM crm.conversations WHERE "timestamp" >= mes.
+-- Los índices que ya había arrancan por contact_id, por line_id o por created_at;
+-- ninguno puede resolver un rango sobre "timestamp", que es la columna que usa el
+-- carril Meta como hora del hecho. Hoy esa cifra es un scan de la tabla de
+-- mensajes entera, que es la más grande del sistema.
+CREATE INDEX IF NOT EXISTS conversations_timestamp_idx
+  ON crm.conversations ("timestamp" DESC);
+
+-- Pantalla de errores: entregas fallidas de los últimos 7 días. El índice de la
+-- cola (delivery_cola_idx) es parcial sobre pending/failed/delivering y ordena por
+-- next_attempt_at, así que no sirve para 'exhausted'/'blocked' ni para un rango de
+-- created_at. Este también es parcial —y por eso diminuto—: la inmensa mayoría de
+-- las filas de delivery acaban en 'succeeded' y no entran aquí.
+CREATE INDEX IF NOT EXISTS delivery_fallidas_idx
+  ON events.delivery (created_at DESC)
+  WHERE status IN ('failed', 'exhausted', 'blocked');
+
+-- Historial de pagos de la ficha de un usuario y "último pago" de la tabla
+-- maestra: ya lo sirve subscriptions_user_created_idx (user_id, created_at DESC),
+-- definido más arriba. Anotado para que no se duplique.
+
+
+-- =============================================================================
+--  MULTI-INQUILINO: LO QUE LA BASE APORTA A LA COMPROBACIÓN DE PROPIEDAD
+--
+--  El código ya no se fía del id que llega en la petición: cada endpoint
+--  comprueba que el recurso es del usuario del token (src/lib/propiedad.ts en los
+--  dos backends). Esta sección es lo que esa comprobación necesita de la base:
+--  los índices que la hacen barata y el diagnóstico de los datos que todavía no
+--  permiten aplicarla al 100%.
+-- =============================================================================
+
+-- -----------------------------------------------------------------------------
+--  Índice para el listado de no sincronizados, que ahora SIEMPRE va filtrado.
+--
+--  GET /api/unsyncedcontacts pasó de "toda la tabla" a "los números de este
+--  usuario", y ordena por el mensaje más reciente con LIMIT. Los índices que
+--  había —el único (numberid, wa_id)— resuelven el filtro pero no el orden, así
+--  que Postgres tenía que ordenar en memoria todas las filas del usuario para
+--  quedarse con 500. Con el timestamp como segunda columna, el LIMIT se sirve
+--  leyendo el índice hacia atrás y parando.
+-- -----------------------------------------------------------------------------
+CREATE INDEX IF NOT EXISTS unsynced_numberid_ultimo_idx
+  ON app."Unsyncedcontact" (numberid, lastmessagetimestamp DESC);
+
+-- -----------------------------------------------------------------------------
+--  LO QUE FALTA EN LOS DATOS: crm.lines.user_id
+--
+--  `user_id` es nullable y hay filas antiguas creadas antes de que existiera el
+--  concepto de dueño. Mientras queden, el CRM no puede saber de quién es esa
+--  línea, así que la deja pasar y avisa en el log (lib/propiedad.ts). La regla
+--  dura —"si TIENE dueño y no eres tú, 404"— se aplica siempre; lo único que
+--  queda abierto son las líneas sin dueño.
+--
+--  Para cerrarlo del todo:
+--
+--    1) Ver cuáles son:
+--         SELECT id, number, "NOMBRE_LINEA", created_at
+--           FROM crm.lines WHERE user_id IS NULL;
+--
+--    2) Asignarles su dueño real (una por una, mirando de qué cliente es cada
+--       número — NO hay forma automática de deducirlo y adivinar sería peor que
+--       dejarlo como está):
+--         UPDATE crm.lines SET user_id = <id de app."User"> WHERE id = '<uuid>';
+--
+--    3) Cuando la consulta del paso 1 no devuelva nada, poner
+--       CRM_STRICT_OWNERSHIP=true en el servicio del CRM. A partir de ahí, una
+--       línea sin dueño responde 404 en vez de pasar.
+--
+--    4) Con el paso 3 hecho y estable, se puede fijar en la base:
+--         ALTER TABLE crm.lines ALTER COLUMN user_id SET NOT NULL;
+--       No se hace aquí: este archivo corre en cada arranque contra la base viva
+--       y un NOT NULL con filas nulas aborta el despliegue entero.
+--
+--  El índice que necesita el filtro (lines_user_id_idx) ya está definido más
+--  arriba, en la sección del panel de consumo.
+-- -----------------------------------------------------------------------------
+
+
+-- =============================================================================
+--  RETENCIÓN DE app.ai_usage
+--
+--  ai_usage crece una fila por respuesta de IA y no la borraba nadie: es la
+--  cuarta tabla de la base que crece sin techo, después de Telemetry, crm.events
+--  y events.event/delivery (esas tres ya tienen purga).
+--
+--  NACE APAGADA, por la misma razón que crm.conversations: esta tabla es la
+--  prueba de cuánto costó cada mes. Borrarla es perder la contabilidad, así que
+--  tiene que ser una decisión explícita (AI_USAGE_RETENTION_DAYS), no un valor
+--  por defecto. Si algún día se activa, 400 días es un mínimo razonable: deja
+--  cerrar un ejercicio completo y comparar con el mismo mes del año anterior.
+--
+--  CADA CUÁNTO CORRER LA PURGA (vale para las tres tablas de app.run_retention):
+--    · Una vez al día es de sobra. El disparo está en el arranque del API
+--      (src/lib/retention.ts, 30 s después de levantar), así que cualquier
+--      despliegue ya la cubre, y app.maintenance_log impide que se repita antes
+--      de 20 horas aunque el servicio se reinicie en bucle.
+--    · Si el servicio pasara semanas sin reiniciarse: POST /api/stats/retention
+--      (endpoint de admin) la fuerza.
+--    · events.event / delivery / delivery_attempt van por su lado, en el worker
+--      de webhooks (events.purgar_retencion, una vez al día).
+--
+--  EL DROP ES OBLIGATORIO, NO COSMÉTICO. Añadir un parámetro a una función de
+--  Postgres NO la reemplaza: crea una SEGUNDA función con otra firma. Con las dos
+--  vivas, la llamada por argumentos nombrados de retention.ts pasaría a ser
+--  ambigua ("function app.run_retention(...) is not unique") y la purga dejaría
+--  de correr. Se borra la firma vieja explícitamente y se crea la nueva.
+-- =============================================================================
+DROP FUNCTION IF EXISTS app.run_retention(integer, integer, integer, interval, boolean);
+
+CREATE OR REPLACE FUNCTION app.run_retention(
+  p_telemetry_days     integer  DEFAULT 90,
+  p_events_days        integer  DEFAULT NULL,
+  p_conversations_days integer  DEFAULT NULL,
+  p_min_interval       interval DEFAULT '20 hours',
+  p_force              boolean  DEFAULT false,
+  p_ai_usage_days      integer  DEFAULT NULL
+) RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_last  timestamptz;
+  v_tel   bigint := 0;
+  v_ev    bigint := 0;
+  v_conv  bigint := 0;
+  v_ia    bigint := 0;
+BEGIN
+  IF NOT pg_try_advisory_xact_lock(hashtext('app.run_retention')) THEN
+    RETURN jsonb_build_object('skipped', 'lock');
+  END IF;
+
+  SELECT last_run_at INTO v_last FROM app.maintenance_log WHERE job = 'retention';
+
+  IF NOT p_force AND v_last IS NOT NULL AND v_last > now() - p_min_interval THEN
+    RETURN jsonb_build_object('skipped', 'reciente', 'last_run_at', v_last);
+  END IF;
+
+  v_tel  := app.purge_by_age('app."Telemetry"',    'timeStamp',       p_telemetry_days);
+  v_ev   := app.purge_by_age('crm.events',         'marca_de_tiempo', p_events_days);
+  v_conv := app.purge_by_age('crm.conversations',  'created_at',      p_conversations_days);
+  v_ia   := app.purge_by_age('app.ai_usage',       'occurred_at',     p_ai_usage_days);
+
+  INSERT INTO app.maintenance_log (job, last_run_at, rows_deleted)
+  VALUES ('retention', now(), v_tel + v_ev + v_conv + v_ia)
+  ON CONFLICT (job) DO UPDATE
+    SET last_run_at  = EXCLUDED.last_run_at,
+        rows_deleted = EXCLUDED.rows_deleted;
+
+  RETURN jsonb_build_object(
+    'telemetry',     v_tel,
+    'events',        v_ev,
+    'conversations', v_conv,
+    'ai_usage',      v_ia,
+    'ran_at',        now()
+  );
+END
+$$;

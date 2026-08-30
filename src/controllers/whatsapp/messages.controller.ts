@@ -18,6 +18,8 @@ import {
 } from '../../lib/constants.js'
 import { getCurrentUTCDate } from '../../lib/dateUtils.js'
 import { getAIResponse } from '../../services/ai.service.js'
+import { exigirNumeroPropio } from '../../lib/propiedad.js'
+import { clasificarErrorIA, registrarUsoIA } from '../../services/aiUsage.js'
 import { transporter } from '../../services/email.service.js'
 import {
   emitirEscalamiento,
@@ -175,7 +177,7 @@ async function sendLimitReachedMessage(
   }
 }
 
-export async function sendMessage(req: Request, res: Response) {
+export async function sendMessage(req: CustomRequest, res: Response) {
   try {
     const { content, to, numberId } = req.body as SendMessageBody
     const numberid = numberId // Usar numberid solo para la base de datos
@@ -200,6 +202,14 @@ export async function sendMessage(req: Request, res: Response) {
       })
       return
     }
+    // EL NÚMERO TIENE QUE SER DEL USUARIO DEL TOKEN.
+    //
+    // `numberId` llegaba del cuerpo y se usaba tal cual: se enviaba el WhatsApp
+    // desde la sesión de ese número —o sea, EN NOMBRE de otra empresa— y el
+    // consumo se cargaba contra el cupo mensual de su dueño, que es lo que se le
+    // factura. La comprobación va aquí arriba, antes de tocar nada.
+    if (!(await exigirNumeroPropio(req, res, { id: numberId }))) return
+
     // Normalizar wa_id y numberId para la consulta
     const waIdToCheck = (to || '').trim().toLowerCase()
     const numberIdNum = Number(numberid)
@@ -685,12 +695,38 @@ export async function handleIncomingMessage(
           updatedContact.agentehabilitado === true
         ) {
           // Lógica para evitar dos respuestas IA iguales seguidas
-          const aiResponse = await getAIResponse(
-            number.aiPrompt,
-            msg.body,
-            number.aiModel,
-            [] // Puedes pasar el historial si lo necesitas
-          )
+          const inicioIA = Date.now()
+          let aiResponse
+          try {
+            aiResponse = await getAIResponse(
+              number.aiPrompt,
+              msg.body,
+              number.aiModel,
+              [] // Puedes pasar el historial si lo necesitas
+            )
+          } catch (errorIA) {
+            // El fallo también se mide: una cuenta que quema cuota a base de
+            // errores es justo la que hay que poder ver en el panel. Se re-lanza
+            // para no cambiar el comportamiento que ya tenía este bloque.
+            void registrarUsoIA({
+              userId: number.userId,
+              numberId,
+              model: number.aiModel || 'gemini-2.0-flash',
+              latencyMs: Date.now() - inicioIA,
+              ok: false,
+              errorKind: clasificarErrorIA(errorIA)
+            })
+            throw errorIA
+          }
+          // Punto de escritura #1 del consumo de IA. Va sin await: la respuesta
+          // al lead no puede esperar a que se guarde una fila de medición.
+          void registrarUsoIA({
+            userId: number.userId,
+            numberId,
+            model: number.aiModel || 'gemini-2.0-flash',
+            uso: aiResponse[1],
+            latencyMs: Date.now() - inicioIA
+          })
           if (!aiResponse[0] || typeof aiResponse[0] !== 'string') {
             return
           }
@@ -885,12 +921,40 @@ export async function handleIncomingMessage(
           to: chat.id // Usar el ChatId original
         }))
 
-        const [aiResponse] = await getAIResponse(
-          number.aiPrompt,
-          msg.body,
-          number.aiModel,
-          aiChatHistory
-        )
+        // Punto de escritura #2 del consumo de IA. Esta es la rama CARA: manda
+        // hasta 30 mensajes de historial más el prompt del agente, así que los
+        // tokens de ENTRADA son casi siempre mayores que los de salida. Antes se
+        // descartaba hasta el conteo de salida.
+        const inicioIA = Date.now()
+        let respuestaIA
+        try {
+          respuestaIA = await getAIResponse(
+            number.aiPrompt,
+            msg.body,
+            number.aiModel,
+            aiChatHistory
+          )
+        } catch (errorIA) {
+          void registrarUsoIA({
+            userId: number.userId,
+            numberId,
+            agentId: agentId ?? null,
+            model: number.aiModel || 'gemini-2.0-flash',
+            latencyMs: Date.now() - inicioIA,
+            ok: false,
+            errorKind: clasificarErrorIA(errorIA)
+          })
+          throw errorIA
+        }
+        void registrarUsoIA({
+          userId: number.userId,
+          numberId,
+          agentId: agentId ?? null,
+          model: number.aiModel || 'gemini-2.0-flash',
+          uso: respuestaIA[1],
+          latencyMs: Date.now() - inicioIA
+        })
+        const [aiResponse] = respuestaIA
         const fraseAsesorEspecial =
           'Un momento, por favor. Un asesor especializado te atenderá en breve.'
         const finalResponse = aiResponse

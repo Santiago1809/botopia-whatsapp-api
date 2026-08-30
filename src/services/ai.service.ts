@@ -52,7 +52,19 @@ export async function getAIResponse(
       message: userMsg
     })
 
-    return [response.text, response.usageMetadata?.candidatesTokenCount]
+    // Se devuelve el usageMetadata ENTERO y no solo candidatesTokenCount.
+    //
+    // Por qué importa: con `history` de hasta 30 mensajes + `systemInstruction`
+    // (el prompt del agente), el PROMPT es la parte cara de la factura de Gemini,
+    // y era justo la que no se miraba: antes aquí salía únicamente el conteo de
+    // SALIDA y los dos llamadores tiraban hasta ese. El objeto trae
+    // promptTokenCount, candidatesTokenCount, cachedContentTokenCount y
+    // totalTokenCount; services/aiUsage.ts los persiste en app.ai_usage.
+    //
+    // La forma de tupla [texto, ...] se conserva a propósito: los llamadores
+    // existentes hacen `aiResponse[0]` y `const [aiResponse] = ...`, y así el
+    // cambio no toca ninguna de esas líneas.
+    return [response.text, response.usageMetadata] as const
   } catch (error) {
     console.error('Error in getAIResponse:', error)
     // Se conserva el motivo real: antes se sustituía por un texto fijo y en los

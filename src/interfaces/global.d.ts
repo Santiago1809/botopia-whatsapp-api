@@ -5,6 +5,12 @@ import type WAWebJS from 'whatsapp-web.js'
 
 export interface CustomRequest extends Request {
   user?: RequestUser
+  /**
+   * Id numérico del admin, resuelto por el middleware isAdmin al releer el rol
+   * de la base. El JWT solo lleva { username, role }, así que sin esto cada
+   * controlador de admin tendría que volver a buscar el usuario por username.
+   */
+  adminId?: number
 }
 
 export interface ChangePassword {

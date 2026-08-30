@@ -24,6 +24,7 @@ import { clients } from './src/WhatsAppClients.js'
 import paymentsRouter from './src/routes/payments.route.js'
 import subscriptionsRouter from './src/routes/subscriptions.route.js'
 import statsRoutes from './src/routes/stats.route.js'
+import usageRoutes from './src/routes/usage.route.js'
 import userRoutes from './src/routes/user.route.js'
 import whatsAppRoutes from './src/routes/whatsapp.route.js'
 import unsyncedContactRoutes from './src/routes/unsyncedcontact.route.js'
@@ -121,6 +122,9 @@ setupSocketEvents(io)
 
 app.use('/api/admin', adminRoutes)
 app.use('/api/stats', statsRoutes)
+// Panel de consumo del propio cliente. La sesión se exige dentro del router y el
+// id de la cuenta sale del token, nunca de la URL.
+app.use('/api/usage', usageRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/user', userRoutes)
 app.use('/api/whatsapp', whatsAppRoutes)

@@ -9,6 +9,7 @@ import type { CustomRequest, StartWhatsApp } from '../../interfaces/global.js'
 const { Client, LocalAuth } = whatsappWeb
 import { supabase } from '../../config/db.js'
 import { clients } from '../../WhatsAppClients.js'
+import { exigirNumeroPropio } from '../../lib/propiedad.js'
 import {
   marcarLineaConectada,
   marcarLineaDesconectada,
@@ -17,7 +18,7 @@ import {
 } from '../../services/events/lineEvents.js'
 import { handleIncomingMessage } from './messages.controller.js'
 
-export async function startWhatsApp(req: Request, res: Response) {
+export async function startWhatsApp(req: CustomRequest, res: Response) {
   const { numberId } = req.body as Partial<StartWhatsApp>
   if (!numberId) {
     res
@@ -27,17 +28,13 @@ export async function startWhatsApp(req: Request, res: Response) {
   }
 
   try {
-    const { data: number } = await supabase
-      .from('WhatsAppNumber')
-      .select('*')
-      .eq('id', numberId)
-      .single()
-    if (!number) {
-      res
-        .status(HttpStatusCode.NotFound)
-        .json({ message: 'Número no encontrado' })
-      return
-    }
+    // Con el numberId de otro cliente, este endpoint hacía DOS cosas graves:
+    // cerraba su sesión de WhatsApp en marcha (líneas de abajo: logout +
+    // destroy) y arrancaba una nueva emitiendo el QR de vinculación. Ahora el
+    // número tiene que ser del usuario del token.
+    const number = await exigirNumeroPropio(req, res, { id: numberId })
+    if (!number) return
+
     if (clients[numberId]) {
       const client = clients[numberId]
       await client.logout()

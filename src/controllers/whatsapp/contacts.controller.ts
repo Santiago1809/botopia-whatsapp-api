@@ -1,21 +1,43 @@
 // Maneja todo lo relacionado con contactos y grupos
 import { HttpStatusCode } from 'axios'
-import type { Request, Response } from 'express'
+import type { Response } from 'express'
 import { supabase } from '../../config/db.js'
 import { clients } from '../../WhatsAppClients.js'
+import type { CustomRequest } from '../../interfaces/global.js'
+import {
+  exigirNumeroPropio,
+  exigirUsuario,
+  sincronizadosDelUsuario
+} from '../../lib/propiedad.js'
 import type { Contact, Group } from '../../types/global.js'
+
+/**
+ * TODO ESTE ARCHIVO FILTRABA POR `numberId` O POR `id` A SECAS.
+ *
+ * Con ids seriales, eso significa que cualquier cuenta registrada podía listar,
+ * modificar y borrar los contactos de otra probando números del 1 en adelante.
+ * `syncContactsToDB` con `clearAll: true` era además destructivo: borraba la
+ * agenda entera del número indicado antes de escribir la nueva.
+ *
+ * La forma de comprobarlo es la misma en los siete endpoints y vive en
+ * lib/propiedad.ts. Aquí solo se llama.
+ */
 
 // Estructura en memoria para sincronizados por sesión
 const syncedContactsMemory: {
   [numberId: string]: { contacts: string[]; groups: string[] }
 } = {}
 
-export async function getContacts(req: Request, res: Response) {
+export async function getContacts(req: CustomRequest, res: Response) {
   const { numberId } = req.query
   if (!numberId) {
     res.status(HttpStatusCode.BadRequest).json({ message: 'Missing numberId' })
     return
   }
+  // Lee la agenda de WhatsApp desde la sesión abierta: sin esta comprobación era
+  // la libreta de contactos de otra empresa, nombres y teléfonos incluidos.
+  if (!(await exigirNumeroPropio(req, res, { id: numberId as string }))) return
+
   const client = clients[numberId as string]
   if (!client) {
     res
@@ -41,12 +63,14 @@ export async function getContacts(req: Request, res: Response) {
   }
 }
 
-export async function syncContacts(req: Request, res: Response) {
+export async function syncContacts(req: CustomRequest, res: Response) {
   const { numberId, contacts, groups } = req.body
   if (!numberId) {
     res.status(HttpStatusCode.BadRequest).json({ message: 'Missing numberId' })
     return
   }
+  if (!(await exigirNumeroPropio(req, res, { id: numberId }))) return
+
   // Guardar en memoria
   syncedContactsMemory[numberId] = {
     contacts: contacts || [],
@@ -55,12 +79,16 @@ export async function syncContacts(req: Request, res: Response) {
   res.status(HttpStatusCode.Ok).json({ message: 'Contacts and groups synced!' })
 }
 
-export async function syncContactsToDB(req: Request, res: Response) {
+export async function syncContactsToDB(req: CustomRequest, res: Response) {
   const { numberId, contacts, groups, clearAll } = req.body
   if (!numberId) {
     res.status(400).json({ message: 'Missing numberId' })
     return
   }
+
+  // `clearAll` BORRA la agenda del número antes de reescribirla. Con el numberId
+  // de otro cliente, era un botón de "vaciar los contactos de esa empresa".
+  if (!(await exigirNumeroPropio(req, res, { id: numberId }))) return
 
   if (clearAll) {
     await supabase.rpc('delete_contacts_by_numberid', { p_numberid: numberId })
@@ -137,12 +165,13 @@ export async function syncContactsToDB(req: Request, res: Response) {
   return
 }
 
-export async function getSyncedContacts(req: Request, res: Response) {
+export async function getSyncedContacts(req: CustomRequest, res: Response) {
   const { numberId } = req.query
   if (!numberId) {
     res.status(400).json({ message: 'Missing numberId' })
     return
   }
+  if (!(await exigirNumeroPropio(req, res, { id: numberId as string }))) return
 
   const { data, error } = await supabase
     .from('SyncedContactOrGroup')
@@ -158,12 +187,24 @@ export async function getSyncedContacts(req: Request, res: Response) {
   return
 }
 
-export async function deleteSynced(req: Request, res: Response) {
+export async function deleteSynced(req: CustomRequest, res: Response) {
   const { id } = req.body
   if (!id) {
     res.status(400).json({ message: 'Missing id' })
     return
   }
+
+  // El id es de SyncedContactOrGroup, que no lleva userId: el dueño se resuelve
+  // subiendo por numberId hasta WhatsAppNumber. Lo hace sincronizadosDelUsuario
+  // en UNA consulta con el JOIN, sin traerse la fila primero.
+  const usuario = await exigirUsuario(req, res)
+  if (!usuario) return
+  const propios = await sincronizadosDelUsuario(usuario.id, [id])
+  if (!propios.has(Number(id))) {
+    res.status(404).json({ message: 'Contacto no encontrado' })
+    return
+  }
+
   const { error } = await supabase
     .from('SyncedContactOrGroup')
     .delete()
@@ -175,10 +216,18 @@ export async function deleteSynced(req: Request, res: Response) {
   res.status(200).json({ message: 'Eliminado correctamente' })
 }
 
-export async function updateAgenteHabilitado(req: Request, res: Response) {
+export async function updateAgenteHabilitado(req: CustomRequest, res: Response) {
   const { id, agenteHabilitado } = req.body
   if (!id) {
     res.status(400).json({ message: 'Missing id' })
+    return
+  }
+
+  const usuario = await exigirUsuario(req, res)
+  if (!usuario) return
+  const propios = await sincronizadosDelUsuario(usuario.id, [id])
+  if (!propios.has(Number(id))) {
+    res.status(404).json({ message: 'Contacto no encontrado' })
     return
   }
 
@@ -195,19 +244,45 @@ export async function updateAgenteHabilitado(req: Request, res: Response) {
   return
 }
 
-export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
+export async function bulkUpdateAgenteHabilitado(req: CustomRequest, res: Response) {
   const { updates } = req.body // [{id, agenteHabilitado}]
   if (!Array.isArray(updates) || updates.length === 0) {
     res.status(400).json({ message: 'Missing or empty updates array' })
     return
   }
   try {
-    // Verifica si todos los valores son iguales (todo true o todo false)
-    const allSame = updates.every(
-      (u) => u.agenteHabilitado === updates[0].agenteHabilitado
+    // Este endpoint recibe CIENTOS de ids de una vez. Se resuelven todos con UNA
+    // consulta y se descartan los ajenos, en vez de comprobarlos de uno en uno
+    // (eso volvería a meter aquí el N+1 que ya se quitó de la sincronización).
+    //
+    // Los ajenos se ignoran en silencio y se informa cuántos en la respuesta:
+    // fallar entero por un id ajeno le diría a quien lo probó que existe.
+    const usuario = await exigirUsuario(req, res)
+    if (!usuario) return
+
+    const propios = await sincronizadosDelUsuario(
+      usuario.id,
+      updates.map((u) => u.id)
     )
-    const ids = updates.map((u) => u.id)
-    const value = updates[0].agenteHabilitado
+    const permitidos = updates.filter((u) => propios.has(Number(u.id)))
+    const descartados = updates.length - permitidos.length
+    if (descartados > 0) {
+      console.warn(
+        `⛔ ${usuario.username} mandó ${descartados} contacto(s) que no son de sus números en bulk-update-agente-habilitado.`
+      )
+    }
+    if (permitidos.length === 0) {
+      res.status(200).json({ success: true, updated: 0, ignored: descartados })
+      return
+    }
+    // A partir de aquí se trabaja SOLO con `permitidos`. Se usa una constante
+    // nueva en vez de reescribir `updates` para que no quede ninguna línea que
+    // pueda volver a leer la lista original sin filtrar.
+    const allSame = permitidos.every(
+      (u) => u.agenteHabilitado === permitidos[0].agenteHabilitado
+    )
+    const ids = permitidos.map((u) => u.id)
+    const value = permitidos[0].agenteHabilitado
     if (allSame) {
       // Update en lotes de 100
       const batchSize = 100
@@ -222,12 +297,12 @@ export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
           return
         }
       }
-      res.status(200).json({ success: true })
+      res.status(200).json({ success: true, updated: ids.length, ignored: descartados })
       return
     } else {
       // Mezcla de true/false: actualiza uno por uno
       const results = []
-      for (const upd of updates) {
+      for (const upd of permitidos) {
         if (!upd.id) {
           results.push({ id: upd.id, success: false, error: 'Missing id' })
           continue
@@ -242,7 +317,7 @@ export async function bulkUpdateAgenteHabilitado(req: Request, res: Response) {
           results.push({ id: upd.id, success: true })
         }
       }
-      res.status(200).json({ results })
+      res.status(200).json({ results, ignored: descartados })
       return
     }
   } catch (err) {

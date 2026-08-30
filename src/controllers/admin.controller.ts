@@ -134,12 +134,17 @@ export async function getAllUsers(req: Request, res: Response) {
   try {
     // Antes: .select('*,!password'), sintaxis inválida de PostgREST — devolvía 400
     // y el listado quedaba undefined. Se enumeran las columnas sin el hash.
+    //
+    // Y antes también terminaba en .eq('active', true). Eso dejaba a
+    // PATCH /api/admin/activate/:id INALCANZABLE desde cualquier UI: el usuario
+    // desactivado no salía en ningún listado, así que no había de dónde sacar su
+    // id para volver a activarlo. Se devuelven activos e inactivos y el filtro lo
+    // pone el front, que es donde toca.
     const { data: users } = await supabase
       .from('User')
       .select(
         'id, username, email, phoneNumber, countryCode, role, active, tokensPerResponse, subscription, subscription_updated_at, createdAt, updatedAt'
       )
-      .eq('active', true)
     res.status(HttpStatusCode.Ok).json(users)
   } catch (error) {
     console.error('Error fetching users:', error)

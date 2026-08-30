@@ -1,4 +1,4 @@
-import type { Request, Response } from 'express'
+import type { Response } from 'express'
 import { supabase } from '../config/db.js'
 import { query } from '../lib/db.js'
 import type {
@@ -8,21 +8,18 @@ import type {
 } from '../interfaces/global.js'
 import { HttpStatusCode } from 'axios'
 import { clients } from '../WhatsAppClients.js'
+import { exigirNumeroPropio } from '../lib/propiedad.js'
 
-export async function toggleAI(req: Request, res: Response) {
+export async function toggleAI(req: CustomRequest, res: Response) {
   const { number, enabled } = req.body as ToggleAIBody
   try {
-    const { data: num } = await supabase
-      .from('WhatsAppNumber')
-      .select('*')
-      .eq('number', number)
-      .single()
-    if (!num) {
-      res
-        .status(HttpStatusCode.NotFound)
-        .json({ message: 'Número no encontrado' })
-      return
-    }
+    // Buscaba el número SOLO por su teléfono, sin mirar de quién es: mandar el
+    // número de otro cliente le apagaba (o encendía) la IA a él. Ahora el
+    // "userId" va dentro de la misma consulta, así que no hay forma de resolver
+    // un número que no sea del usuario del token.
+    const num = await exigirNumeroPropio(req, res, { number })
+    if (!num) return
+
     await supabase
       .from('WhatsAppNumber')
       .update({ aiEnabled: enabled })
@@ -35,20 +32,12 @@ export async function toggleAI(req: Request, res: Response) {
   }
 }
 
-export async function toggleResponseGroups(req: Request, res: Response) {
+export async function toggleResponseGroups(req: CustomRequest, res: Response) {
   const { number, enabled } = req.body as ToggleAIBody
   try {
-    const { data: num } = await supabase
-      .from('WhatsAppNumber')
-      .select('*')
-      .eq('number', number)
-      .single()
-    if (!num) {
-      res
-        .status(HttpStatusCode.NotFound)
-        .json({ message: 'Número no encontrado' })
-      return
-    }
+    const num = await exigirNumeroPropio(req, res, { number })
+    if (!num) return
+
     await supabase
       .from('WhatsAppNumber')
       .update({ responseGroups: enabled })
@@ -134,7 +123,7 @@ export async function getWhatsAppNumbers(req: CustomRequest, res: Response) {
   }
 }
 
-export async function deleteWhatsAppNumer(req: Request, res: Response) {
+export async function deleteWhatsAppNumer(req: CustomRequest, res: Response) {
   // @types/express-serve-static-core 5.1+ tipa req.params como string | string[],
   // y `clients` se indexa por string. En una ruta con :numberId nunca llega un
   // array, así que normalizar aquí es equivalente y deja el build en verde.
@@ -147,18 +136,13 @@ export async function deleteWhatsAppNumer(req: Request, res: Response) {
       return
     }
 
-    const { data: num, error: findError } = await supabase
-      .from('WhatsAppNumber')
-      .select('*')
-      .eq('id', Number(numberId))
-      .single()
-
-    if (findError || !num) {
-      res
-        .status(HttpStatusCode.NotFound)
-        .json({ message: 'Número no encontrado' })
-      return
-    }
+    // EL PEOR DE LOS CINCO. Este endpoint borra el número y, por el
+    // ON DELETE CASCADE de app."SyncedContactOrGroup" y app."Unsyncedcontact",
+    // se lleva por delante TODA la agenda de contactos de ese número. Sin
+    // comprobar el dueño, cualquier cuenta registrada podía destruir los datos de
+    // otro cliente con un DELETE a /api/user/delete-number/1. No hay vuelta atrás.
+    const num = await exigirNumeroPropio(req, res, { id: numberId })
+    if (!num) return
 
     // Eliminar todos los sincronizados (contactos y grupos)
     await supabase
@@ -395,22 +379,15 @@ export async function deleteAgent(req: CustomRequest, res: Response) {
   }
 }
 
-export async function updateAgentNumber(req: Request, res: Response) {
+export async function updateAgentNumber(req: CustomRequest, res: Response) {
   const { numberId } = req.params
   const { aiPrompt } = req.body as { aiPrompt: string }
   try {
-    const { data: num, error: findError } = await supabase
-      .from('WhatsAppNumber')
-      .select('*')
-      .eq('id', Number(numberId))
-      .single()
-
-    if (findError || !num) {
-      res
-        .status(HttpStatusCode.NotFound)
-        .json({ message: 'Número no encontrado' })
-      return
-    }
+    // El prompt es LO QUE EL BOT LE DICE A LOS CLIENTES DE ESA EMPRESA.
+    // Reescribírselo a otro es poder hacer hablar a su bot como uno quiera; con
+    // ids seriales, probar del 1 en adelante bastaba.
+    const num = await exigirNumeroPropio(req, res, { id: numberId as string })
+    if (!num) return
 
     const { error: updateError } = await supabase
       .from('WhatsAppNumber')
@@ -430,18 +407,12 @@ export async function updateAgentNumber(req: Request, res: Response) {
   }
 }
 
-export async function toggleUnknownAi(req: Request, res: Response) {
+export async function toggleUnknownAi(req: CustomRequest, res: Response) {
   const { number, enabled } = req.body as { number: string; enabled: boolean };
   try {
-    const { data: num } = await supabase
-      .from('WhatsAppNumber')
-      .select('*')
-      .eq('number', number)
-      .single();
-    if (!num) {
-      res.status(HttpStatusCode.NotFound).json({ message: 'Número no encontrado' });
-      return;
-    }
+    const num = await exigirNumeroPropio(req, res, { number });
+    if (!num) return;
+
     await supabase
       .from('WhatsAppNumber')
       .update({ aiUnknownEnabled: enabled })
