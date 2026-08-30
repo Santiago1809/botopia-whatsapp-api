@@ -1,0 +1,20 @@
+# Qué NO se sube a Railway.
+#
+# `railway up` empaqueta este directorio y lo manda al builder. Sin esta lista se subían
+# 195 MB de node_modules, y —lo importante— el `COPY . /app` de nixpacks corre DESPUÉS de
+# `npm run build`, así que el `out/` de la máquina local pisaba el que el contenedor acababa
+# de compilar. Lo que corría en producción era el compilado de un Mac, no el del build.
+#
+# Todo lo de aquí se reconstruye en el contenedor (npm install + npm run build).
+node_modules
+out
+
+# Sesión de WhatsApp: son credenciales de una vinculación local y no tienen nada que hacer
+# en producción, que mantiene la suya en el disco del contenedor.
+.wwebjs_auth
+.wwebjs_cache
+
+.git
+.env
+.DS_Store
+*.log

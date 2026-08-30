@@ -49,6 +49,24 @@ export async function startWhatsApp(req: CustomRequest, res: Response) {
       delete clients[numberId]
     }
     const client = new Client({
+      // VERSIÓN DE WHATSAPP WEB, FIJADA A PROPÓSITO.
+      //
+      // whatsapp-web.js habla con el WhatsApp Web real dentro del navegador. Cuando Meta
+      // publica una versión nueva, los selectores internos de la librería dejan de
+      // encajar y las llamadas al store fallan con un error opaco —literalmente "r: r"—
+      // que no dice nada. El síntoma en la app no parece un error: los mensajes entrantes
+      // se descartan en silencio (handleIncomingMessage sale si no hay chat) y el chat se
+      // queda en "Sin mensajes" con el agente mudo.
+      //
+      // Fijando la versión, la librería carga el WhatsApp Web que sí conoce en vez del que
+      // Meta esté sirviendo hoy. Se puede mover con WWEB_VERSION sin desplegar, que es lo
+      // que hará falta cuando esta versión quede vieja.
+      webVersionCache: {
+        type: 'remote',
+        remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${
+          process.env.WWEB_VERSION || '2.3000.1023204200'
+        }.html`
+      },
       authStrategy: new LocalAuth({ clientId: numberId.toString() }),
       puppeteer: {
         headless: true,
@@ -124,9 +142,32 @@ export async function startWhatsApp(req: CustomRequest, res: Response) {
       }
     })
 
+    // El handler es async y no tenía try/catch: cualquier fallo dentro se convertía en un
+    // "Unhandled Rejection" que solo se imprimía en el log del servidor, con un stack de
+    // puppeteer que no dice de qué mensaje ni de qué línea venía. El síntoma visible era
+    // que el mensaje entrante NO se guardaba y el agente NO respondía, sin ningún error a
+    // la vista: en la app el chat se quedaba en "Sin mensajes".
+    //
+    // `msg.getChat()` es la parte frágil —hace una llamada al WhatsApp Web de dentro del
+    // navegador, y falla con un opaco "r: r" cuando el store todavía no está listo—. Se
+    // reintenta una vez tras un respiro; si vuelve a fallar se registra QUÉ mensaje se
+    // perdió y de qué línea, que es justo lo que el stack de puppeteer no decía.
     client.on('message', async (msg) => {
-      const chat = await msg.getChat()
-      await handleIncomingMessage(msg, chat, numberId, io)
+      try {
+        let chat
+        try {
+          chat = await msg.getChat()
+        } catch {
+          await new Promise((r) => setTimeout(r, 1500))
+          chat = await msg.getChat()
+        }
+        await handleIncomingMessage(msg, chat, numberId, io)
+      } catch (error) {
+        console.error(
+          `❌ Mensaje entrante PERDIDO en la línea ${numberId} (de ${msg?.from ?? '?'}):`,
+          error instanceof Error ? error.message : error
+        )
+      }
     })
 
     // initialize() se lanzaba sin await y sin catch: si Chromium no arranca (es lo
@@ -463,6 +504,24 @@ export function setupSocketEvents(io: Server) {
             .single()
           if (number) {
             client = new Client({
+              // VERSIÓN DE WHATSAPP WEB, FIJADA A PROPÓSITO.
+              //
+              // whatsapp-web.js habla con el WhatsApp Web real dentro del navegador. Cuando Meta
+              // publica una versión nueva, los selectores internos de la librería dejan de
+              // encajar y las llamadas al store fallan con un error opaco —literalmente "r: r"—
+              // que no dice nada. El síntoma en la app no parece un error: los mensajes entrantes
+              // se descartan en silencio (handleIncomingMessage sale si no hay chat) y el chat se
+              // queda en "Sin mensajes" con el agente mudo.
+              //
+              // Fijando la versión, la librería carga el WhatsApp Web que sí conoce en vez del que
+              // Meta esté sirviendo hoy. Se puede mover con WWEB_VERSION sin desplegar, que es lo
+              // que hará falta cuando esta versión quede vieja.
+              webVersionCache: {
+                type: 'remote',
+                remotePath: `https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/${
+                  process.env.WWEB_VERSION || '2.3000.1023204200'
+                }.html`
+              },
               authStrategy: new LocalAuth({ clientId: numberId.toString() }),
               puppeteer: {
                 headless: true,
