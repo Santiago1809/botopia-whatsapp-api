@@ -5,12 +5,22 @@ import { config } from 'dotenv'
 config()
 const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_GENAI_API_KEY })
 
+/** Mensaje único para la falta de clave: lo lee el controlador para avisar por socket. */
+export const AI_KEY_MISSING_MESSAGE =
+  'El agente de IA no está configurado: falta la variable GOOGLE_GENAI_API_KEY en el servidor.'
+
 export async function getAIResponse(
   prompt: string,
   userMsg: string,
   model = 'gemini-2.0-flash',
   chatHistory: Message[] = [],
 ) {
+  // Sin clave, el SDK falla con un error de red genérico y el chat mostraba un
+  // "Failed to get AI response" que no dice nada. Se corta antes y se nombra
+  // exactamente lo que falta.
+  if (!process.env.GOOGLE_GENAI_API_KEY) {
+    throw new Error(AI_KEY_MISSING_MESSAGE)
+  }
   try {
     let messages = chatHistory.map((msg) => ({
       role: msg.role === 'assistant' ? 'model' : 'user',
@@ -45,6 +55,12 @@ export async function getAIResponse(
     return [response.text, response.usageMetadata?.candidatesTokenCount]
   } catch (error) {
     console.error('Error in getAIResponse:', error)
-    throw new Error('Failed to get AI response')
+    // Se conserva el motivo real: antes se sustituía por un texto fijo y en los
+    // logs no quedaba rastro de si era la clave, la cuota o el modelo.
+    throw new Error(
+      `No se pudo obtener respuesta de la IA: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    )
   }
 }

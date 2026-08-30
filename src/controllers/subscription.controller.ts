@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
-import fetch from 'node-fetch';
+// Se quitó `import fetch from 'node-fetch'`: el paquete no estaba declarado en
+// package.json y solo resolvía como dependencia transitiva. Node 20 trae fetch.
 import { supabase } from '../config/db.js';
 import type { CustomRequest } from '../interfaces/global.js';
 

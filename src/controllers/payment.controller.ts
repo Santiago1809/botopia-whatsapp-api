@@ -1,5 +1,27 @@
+import { HttpStatusCode } from 'axios';
 import type { Request, Response } from 'express';
-import fetch from 'node-fetch';
+import { supabase } from '../config/db.js';
+import type { CustomRequest } from '../interfaces/global.js';
+
+// `node-fetch` se importaba sin estar declarado en package.json: hoy resuelve de
+// pura casualidad como dependencia transitiva, y el primer `npm install` que la
+// pierda tumba el arranque del API entero. Node 20 trae fetch nativo.
+
+// Antes esta URL era siempre la de sandbox, incluso en producción: los cobros
+// reales nunca se consultaban contra el entorno real. subscription.controller.ts
+// ya conmutaba por NODE_ENV; aquí se hace igual para que los dos coincidan.
+const DLOCAL_API_BASE =
+  process.env.NODE_ENV === 'production'
+    ? 'https://api.dlocalgo.com'
+    : 'https://api-sbx.dlocalgo.com';
+
+/** Respuesta de DLocal Go: fetch nativo devuelve `unknown`, se acota aquí. */
+interface DlocalPaymentResponse {
+  status?: string;
+  message?: string;
+  order_id?: string;
+  [key: string]: unknown;
+}
 
 export const createPayment = async (req: Request, res: Response): Promise<void> => {
   const { amount, currency, country, order_id, description, success_url, back_url, notification_url } = req.body;
@@ -12,7 +34,7 @@ export const createPayment = async (req: Request, res: Response): Promise<void> 
   const auth = `${process.env.API_KEY}:${process.env.API_SECRET}`
 
   try {
-    const response = await fetch('https://api-sbx.dlocalgo.com/v1/payments', {
+    const response = await fetch(`${DLOCAL_API_BASE}/v1/payments`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -30,7 +52,7 @@ export const createPayment = async (req: Request, res: Response): Promise<void> 
       }),
     });
 
-    const data = await response.json();
+    const data = (await response.json()) as DlocalPaymentResponse;
 
     if (!response.ok) {
       res.status(response.status).json({ message: data.message || 'Error en DLocalGo' });
@@ -56,7 +78,7 @@ export const handleNotification = async (req: Request, res: Response) => {
 
   try {
     // 1. Consultar DLocalGo por el estado real del pago
-    const response = await fetch(`https://api-sbx.dlocalgo.com/v1/payments/${payment_id}`, {
+    const response = await fetch(`${DLOCAL_API_BASE}/v1/payments/${payment_id}`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${auth}`,
@@ -64,7 +86,7 @@ export const handleNotification = async (req: Request, res: Response) => {
       },
     });
 
-    const data = await response.json();
+    const data = (await response.json()) as DlocalPaymentResponse;
 
     if (!response.ok) {
       console.error("Error al consultar el estado del pago:", data);
@@ -98,7 +120,7 @@ export const confirmPayment = async (req: Request, res: Response) => {
   }
 
   const auth = `${process.env.API_KEY}:${process.env.API_SECRET}`;
-  const url = `https://api-sbx.dlocalgo.com/v1/payments/${payment_id}`;
+  const url = `${DLOCAL_API_BASE}/v1/payments/${payment_id}`;
 
   try {
     const response = await fetch(url, {
@@ -109,7 +131,7 @@ export const confirmPayment = async (req: Request, res: Response) => {
       },
     });
 
-    const data = await response.json();
+    const data = (await response.json()) as DlocalPaymentResponse;
 
     if (!response.ok || !data.status) {
       console.error('❌ [confirmPayment] Fallo al verificar pago:', data.message || data);
@@ -134,3 +156,70 @@ export const confirmPayment = async (req: Request, res: Response) => {
   }
 };
 
+
+/**
+ * GET /api/payments/latest-success
+ *
+ * La pantalla /billing/processing la consultaba en bucle cada 3 segundos y siempre
+ * recibía 404 (nunca existió), así que el usuario se quedaba mirando un spinner
+ * hasta que caducaba la sesión. Lee el estado de la ÚLTIMA suscripción del usuario
+ * autenticado en nuestra propia base: no necesita claves de DLocal, porque quien
+ * escribe esa fila es el webhook /api/subscriptions/notification.
+ */
+export const latestSuccess = async (req: CustomRequest, res: Response) => {
+  try {
+    if (!req.user?.username) {
+      res
+        .status(HttpStatusCode.Unauthorized)
+        .json({ message: 'Sesión no válida' });
+      return;
+    }
+
+    const { data: user } = await supabase
+      .from('User')
+      .select('id')
+      .eq('username', req.user.username)
+      .single();
+
+    if (!user) {
+      res
+        .status(HttpStatusCode.NotFound)
+        .json({ message: 'Usuario no encontrado' });
+      return;
+    }
+
+    const { data: subscription } = await supabase
+      .from('subscriptions')
+      .select('id, status, invoice_id, external_id, plan_name, updated_at, created_at')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!subscription) {
+      // No hay ningún intento de cobro: el front deja de esperar y lo dice.
+      res.status(200).json({
+        status: 'none',
+        message: 'Todavía no hemos recibido ningún pago tuyo.'
+      });
+      return;
+    }
+
+    // DLocal usa PAID/PENDING/REJECTED y la fila nace en 'pending' (minúscula).
+    const raw = String(subscription.status ?? '').toUpperCase();
+    const status =
+      raw === 'PAID' ? 'paid' : raw === 'REJECTED' || raw === 'CANCELLED' ? 'rejected' : 'pending';
+
+    res.status(200).json({
+      status,
+      payment_id: subscription.invoice_id ?? subscription.external_id ?? null,
+      plan_name: subscription.plan_name ?? null,
+      updated_at: subscription.updated_at ?? subscription.created_at
+    });
+  } catch (error) {
+    console.error('Error consultando el último pago:', error);
+    res
+      .status(HttpStatusCode.InternalServerError)
+      .json({ message: 'No pudimos consultar el estado de tu pago' });
+  }
+};

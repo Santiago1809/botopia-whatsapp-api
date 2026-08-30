@@ -11,6 +11,7 @@ import http from 'http'
 import { Server } from 'socket.io'
 import { setupSocketEvents } from './src/controllers/whatsapp.controller.js'
 import { telemetryMiddleware } from './src/middleware/telemetry.middleware.js'
+import { APP_URL } from './src/lib/app-url.js'
 import adminRoutes from './src/routes/admin.route.js'
 import authRoutes from './src/routes/auth.route.js'
 
@@ -25,6 +26,17 @@ const app = express()
 const server = http.createServer(app)
 
 // Configurar CORS PRIMERO - antes de otros middlewares
+// El día que el front deje de vivir en *.vercel.app (por ejemplo en un dominio
+// propio) el comodín de abajo deja de cubrirlo y CORS lo rechaza en silencio. Por
+// eso la lista se puede ampliar sin tocar código: ALLOWED_ORIGINS con los orígenes
+// separados por coma, más APP_URL, que ya apunta al front en los correos.
+const extraOrigins = [
+  ...(process.env.ALLOWED_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean),
+  ...(APP_URL ? [APP_URL] : [])
+]
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3002',
@@ -33,7 +45,8 @@ const allowedOrigins = [
   'https://baruc-whatsapp-frontend.vercel.app',
   'https://app.botopia.online',
   'https://www.botopia.online',
-  'https://botopia-whatsapp-git-featureavataria-santiago1809s-projects.vercel.app'
+  'https://botopia-whatsapp-git-featureavataria-santiago1809s-projects.vercel.app',
+  ...extraOrigins
 ]
 const corsOptions: CorsOptions = {
   origin: function (origin: string | undefined, callback) {

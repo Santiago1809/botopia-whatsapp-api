@@ -10,6 +10,8 @@ export interface CustomRequest extends Request {
 export interface ChangePassword {
   email: string
   newPassword: string
+  // Lo emite verify-code al acertar el OTP; sin él no se cambia ninguna contraseña.
+  resetToken?: string
 }
 export interface RequestUser {
   username: string

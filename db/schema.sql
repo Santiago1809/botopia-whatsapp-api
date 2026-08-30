@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS app."User" (
   "createdAt"             timestamptz NOT NULL DEFAULT now(),
   "updatedAt"             timestamptz NOT NULL DEFAULT now()
 );
+-- Sello de "este correo existe de verdad", que pone /api/auth/activate al abrir el
+-- enlace del correo de bienvenida. Va en un ALTER aparte para que las bases que ya
+-- tienen la tabla creada también lo reciban. NO bloquea el login: `active` sigue
+-- siendo true por defecto y nadie queda encerrado si el SMTP no está configurado.
+ALTER TABLE app."User" ADD COLUMN IF NOT EXISTS email_verified_at timestamptz;
 
 -- Número de WhatsApp conectado por un usuario, con su configuración de IA.
 CREATE TABLE IF NOT EXISTS app."WhatsAppNumber" (
@@ -204,6 +209,25 @@ CREATE INDEX IF NOT EXISTS subscriptions_token_email_status_idx
 -- subscription.controller.ts:344-351 (última pagada del usuario).
 CREATE INDEX IF NOT EXISTS subscriptions_user_status_idx
   ON app.subscriptions (user_id, status, created_at DESC);
+
+-- Código de un solo uso para recuperar contraseña. Vive en la base y no en memoria
+-- del proceso porque un redespliegue de Railway (o una segunda instancia) borraba
+-- el otpStore y dejaba al usuario con un código que el servidor ya no reconocía.
+CREATE TABLE IF NOT EXISTS app."PasswordReset" (
+  id          bigserial PRIMARY KEY,
+  email       text NOT NULL,
+  -- hash bcrypt del OTP: si alguien lee la tabla no puede usar el código.
+  otp_hash    text NOT NULL,
+  expires_at  timestamptz NOT NULL,
+  -- se marca al acertar el OTP; change-password exige que esté marcada.
+  verified_at timestamptz,
+  -- se marca al cambiar la contraseña; impide reutilizar el mismo código.
+  used_at     timestamptz,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+-- auth.controller.ts busca siempre el código vivo más reciente de un email.
+CREATE INDEX IF NOT EXISTS passwordreset_email_created_idx
+  ON app."PasswordReset" (email, created_at DESC);
 
 
 -- =============================================================================

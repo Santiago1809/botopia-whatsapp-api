@@ -102,7 +102,22 @@ export async function startWhatsApp(req: Request, res: Response) {
       await handleIncomingMessage(msg, chat, numberId, io)
     })
 
-    client.initialize()
+    // initialize() se lanzaba sin await y sin catch: si Chromium no arranca (es lo
+    // que pasa cuando faltan sus librerías del sistema en el contenedor), el error
+    // se perdía como unhandled rejection, el front recibía "WhatsApp iniciado" y se
+    // quedaba esperando para siempre un QR que nunca iba a llegar. Ahora el fallo
+    // viaja por socket a la misma pantalla que espera el QR.
+    client.initialize().catch((error: unknown) => {
+      const detail = error instanceof Error ? error.message : String(error)
+      console.error('❌ No se pudo abrir el navegador de WhatsApp:', detail)
+      delete clients[numberId]
+      io.to(numberId.toString()).emit('whatsapp-error', {
+        numberId,
+        message:
+          'No pudimos abrir el navegador que genera el código QR. Al servidor le falta Chromium o alguna de sus librerías del sistema.',
+        detail
+      })
+    })
     res.status(HttpStatusCode.Ok).json({ message: 'WhatsApp iniciado' })
   } catch (error) {
     console.error('❌ Error al iniciar WhatsApp:', error)
@@ -211,6 +226,11 @@ export function setupSocketEvents(io: Server) {
   io.on('connection', (socket) => {
     socket.on('join-room', (roomId) => {
       socket.join(roomId)
+    })
+    // El front emite 'leave-room' al cambiar de número y nadie lo escuchaba: el
+    // socket seguía en la sala del número anterior y recibía su QR y su historial.
+    socket.on('leave-room', (roomId) => {
+      socket.leave(roomId)
     })
     socket.on('get-chat-history', async ({ numberId, to }) => {
       try {

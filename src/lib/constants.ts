@@ -1,3 +1,5 @@
+import { APP_URL } from './app-url.js'
+
 export const PRICE_PER_GB_RAM = 0.000231 // USD por GB
 export const PRICE_PER_VCPU = 0.000463 // USD por vCPU
 export const PRICE_PER_MB_NETWORK = 0.0054
@@ -240,7 +242,9 @@ export const resetPasswordTemplate = (otp: string | number) => `
 </html>
 `
 
-export const welcomeUserTemplate = (name: string) => `
+// activationUrl es opcional: si el servidor no tiene APP_URL configurada, el correo
+// sale sin botón en vez de con un enlace que no lleva a ninguna parte.
+export const welcomeUserTemplate = (name: string, activationUrl?: string | null) => `
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -367,7 +371,13 @@ export const welcomeUserTemplate = (name: string) => `
       </div>
 
       <p>Con tu registro, tienes 10,000 créditos gratis para que conozcas nuestro potencial y te animes a adquirir nuestros planes y juntos construir el futuro ⚡.</p>
-      
+      ${
+        activationUrl
+          ? `<div style="text-align: center; margin: 25px 0;">
+        <a href="${activationUrl}" class="btn">Confirmar mi correo</a>
+      </div>`
+          : ''
+      }
       <p>Si tienes alguna duda o necesitas ayuda, no dudes en contactarnos.</p>
     </div>
     <div class="footer">Powered by <a href="https://lumintik.com" class="btn">Lumintik</a></div>
@@ -567,9 +577,13 @@ export const limitReachedEmailTemplate = (
 
       ${upgradeContent}
 
-      <div style="text-align: center; margin: 30px 0;">
-        <a href="https://app.botopia.online/billing" class="btn">Ver Planes</a>
-      </div>
+      ${
+        APP_URL
+          ? `<div style="text-align: center; margin: 30px 0;">
+        <a href="${APP_URL}/billing" class="btn">Ver Planes</a>
+      </div>`
+          : ''
+      }
 
       <p>Si tienes alguna duda o necesitas asistencia, nuestro equipo de soporte está disponible para ayudarte.</p>
       
