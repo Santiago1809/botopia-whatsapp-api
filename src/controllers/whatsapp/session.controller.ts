@@ -832,13 +832,32 @@ export function setupSocketEvents(io: Server) {
             lastMessageTimestamp = lastMsg.timestamp * 1000
           }
         }
-        const chatHistory = messages.map((m: { fromMe: boolean; body: string; timestamp: number }) => ({
-          role: m.fromMe ? 'assistant' : 'user',
-          content: m.body,
-          timestamp: m.timestamp * 1000,
-          to: chat.id,
-          fromMe: m.fromMe
-        }))
+        const chatHistory = messages.map(
+          (m: {
+            fromMe: boolean
+            body: string
+            timestamp: number
+            ack?: number
+            author?: string
+            _data?: { notifyName?: string }
+          }) => ({
+            role: m.fromMe ? 'assistant' : 'user',
+            content: m.body,
+            timestamp: m.timestamp * 1000,
+            to: chat.id,
+            fromMe: m.fromMe,
+            // Estado de entrega, para pintar los palomitas como en WhatsApp:
+            // -1 error · 0 pendiente (reloj) · 1 enviado (✓) · 2 entregado (✓✓)
+            // · 3 leído (✓✓ azul) · 4 reproducido (nota de voz escuchada).
+            ack: m.ack,
+            // Quién habló. En un grupo cada mensaje puede ser de alguien distinto, y
+            // sin esto todos se veían iguales. `notifyName` es el nombre que la
+            // persona tiene puesto en su WhatsApp; si no viene, queda su número.
+            autor: m.fromMe
+              ? undefined
+              : m._data?.notifyName || m.author || undefined
+          })
+        )
         const respuesta = {
           numberId,
           chatHistory,
