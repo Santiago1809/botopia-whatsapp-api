@@ -500,21 +500,39 @@ export async function handleIncomingMessage(
    */
   const traza = (etapa: string, detalle = '') =>
     console.log(
-      `[msg] ${etapa} · línea ${numberId} · de ${msg?.from ?? '?'} · id ${msg?.id?._serialized ?? '?'}${detalle ? ` · ${detalle}` : ''}`
+      `[msg] ${etapa} · línea ${numberId} · de ${msg?.from ?? '?'}${detalle ? ` · ${detalle}` : ''}`
     )
   const descartar = (motivo: string) => {
     console.warn(
-      `[msg] DESCARTADO (${motivo}) · línea ${numberId} · de ${msg?.from ?? '?'} · id ${msg?.id?._serialized ?? '?'}`
+      `[msg] DESCARTADO (${motivo}) · línea ${numberId} · de ${msg?.from ?? '?'}`
     )
   }
+
+  /**
+   * IDENTIFICADOR DEL MENSAJE, TOLERANTE.
+   *
+   * Se usa solo para no procesar dos veces el mismo mensaje. Venía de
+   * `msg.id._serialized`, y con los remitentes @lid ese campo llega vacío: el mensaje se
+   * descartaba entero con "el mensaje no trae id" —comprobado en producción con un
+   * "Holalalas" que sí había llegado—. Tirar un mensaje real por no poder deduplicarlo es
+   * el peor intercambio posible.
+   *
+   * Se cae en cascada al id crudo y, en último caso, a remitente+hora+texto, que para
+   * detectar el duplicado de un reintento es igual de bueno.
+   */
+  const idBruto = msg?.id as { _serialized?: string; id?: string } | undefined
+  const idMensaje =
+    idBruto?._serialized ||
+    idBruto?.id ||
+    `${msg?.from ?? '?'}_${msg?.timestamp ?? 0}_${(msg?.body ?? '').slice(0, 40)}`
 
   traza('RECIBIDO', `${msg?.hasMedia ? 'con adjunto' : `"${(msg?.body ?? '').slice(0, 60)}"`}`)
 
   // Validaciones básicas para evitar errores de serialización
   try {
     // Verificar que el mensaje tiene las propiedades básicas
-    if (!msg || !msg.id || !msg.id._serialized) {
-      descartar('el mensaje no trae id')
+    if (!msg) {
+      descartar('no llegó el mensaje')
       return
     }
 
@@ -558,11 +576,11 @@ export async function handleIncomingMessage(
   }
 
   // --- CONTROL DE DUPLICADOS EN MEMORIA ---
-  if (respondedMessages.has(msg.id._serialized)) {
+  if (respondedMessages.has(idMensaje)) {
     descartar('duplicado: ya se procesó este mismo id')
     return
   }
-  respondedMessages.set(msg.id._serialized, Date.now()) // Log SIEMPRE que se reciba un mensaje
+  respondedMessages.set(idMensaje, Date.now()) // Log SIEMPRE que se reciba un mensaje
   const idToCheck = chat.id._serialized
   const isGroup = chat.id.server === 'g.us'
   if (msg.isStatus) {
@@ -715,6 +733,7 @@ export async function handleIncomingMessage(
         `❌ Mensaje entrante DESCARTADO: no existe la línea ${numberId} en WhatsAppNumber.`,
         numberError
       )
+      descartar('punto 1: condición no cumplida más adelante en el flujo')
       return
     }
 
@@ -725,11 +744,13 @@ export async function handleIncomingMessage(
       try {
         // Validar que el mensaje y el chat están correctamente formateados
         if (!msg || !msg.from || !msg.body) {
+          descartar('punto 2: condición no cumplida más adelante en el flujo')
           return
         }
 
         // Validar que el chat está disponible
         if (!chat || !chat.id || !chat.id._serialized) {
+          descartar('punto 3: condición no cumplida más adelante en el flujo')
           return
         }
 
@@ -770,6 +791,7 @@ export async function handleIncomingMessage(
             'Error al guardar contacto no sincronizado:',
             upsertError
           )
+          descartar('punto 4: condición no cumplida más adelante en el flujo')
           return
         }
 
@@ -791,6 +813,7 @@ export async function handleIncomingMessage(
             'Error al consultar contacto no sincronizado:',
             queryError
           )
+          descartar('punto 5: condición no cumplida más adelante en el flujo')
           return
         }
 
@@ -835,6 +858,7 @@ export async function handleIncomingMessage(
             latencyMs: Date.now() - inicioIA
           })
           if (!aiResponse[0] || typeof aiResponse[0] !== 'string') {
+            descartar('punto 6: condición no cumplida más adelante en el flujo')
             return
           }
           const lastReply = lastUnsyncedReplies.get(waIdToCheck)
@@ -847,6 +871,7 @@ export async function handleIncomingMessage(
             aiResponse[0] === lastAIResponse
           ) {
             // Es el mismo mensaje recibido y la misma respuesta IA, no respondas
+            descartar('punto 7: condición no cumplida más adelante en el flujo')
             return
           }
           // Si vas a responder, guarda el mensaje recibido y la respuesta IA
@@ -860,6 +885,7 @@ export async function handleIncomingMessage(
               console.error(
                 'Chat no disponible para responder a contacto no sincronizado'
               )
+              descartar('punto 8: condición no cumplida más adelante en el flujo')
               return
             }
 
@@ -930,6 +956,7 @@ export async function handleIncomingMessage(
             }
             // No hacer nada más - los errores de serialización son normales
           }
+          descartar('punto 9: condición no cumplida más adelante en el flujo')
           return
         }
       } catch (error) {
@@ -939,6 +966,7 @@ export async function handleIncomingMessage(
           console.error('Error stack:', error.stack)
         }
       }
+      descartar('punto 10: condición no cumplida más adelante en el flujo')
       return
     }
 
@@ -962,6 +990,7 @@ export async function handleIncomingMessage(
     }
 
     // Si no, no responde
+    descartar('punto 11: condición no cumplida más adelante en el flujo')
     return
   }
 
@@ -979,6 +1008,7 @@ export async function handleIncomingMessage(
       // Validaciones de seguridad
       if (!chat || !chat.id) {
         console.error('Chat no válido en handleIncomingMessageSynced')
+        descartar('punto 12: condición no cumplida más adelante en el flujo')
         return
       }
 
