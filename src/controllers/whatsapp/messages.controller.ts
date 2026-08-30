@@ -795,6 +795,13 @@ export async function handleIncomingMessage(
           return
         }
 
+        // Sin esta traza no se distinguía "el contacto no se guardó" de "se guardó pero
+        // la lista de la derecha no lo pinta", que son dos arreglos muy distintos.
+        console.log(
+          `[msg] CONTACTO NO AGENDADO GUARDADO · línea ${numberId} · wa_id ${waIdToCheck} · ` +
+            `número ${numberFromWaId} · aviso enviado a la sala ${numberId}`
+        )
+
         // EMITIR EVENTO SOCKET para refrescar lista en frontend SIEMPRE
         io.to(numberId.toString()).emit('unsynced-contacts-updated', {
           numberid: numberId
