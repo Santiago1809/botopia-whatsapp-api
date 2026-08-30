@@ -598,6 +598,7 @@ export async function handleIncomingMessage(
 
   // EMITIR ACTUALIZACIÓN DEL HISTORIAL DEL CHAT SIEMPRE QUE LLEGUE UN MENSAJE
   try {
+    traza('LEYENDO HISTORIAL', `chat ${idToCheck}`)
     const messages = await traerMensajes(chat, 30, `${idToCheck} (línea ${numberId})`)
     messages.sort((a: Message, b: Message) => a.timestamp - b.timestamp)
     historialDelChat = messages
@@ -770,7 +771,49 @@ export async function handleIncomingMessage(
         }
 
         // Extraer el número del wa_id (sin el @c.us)
-        const numberFromWaId = waIdToCheck.split('@')[0]
+        /**
+         * EL NÚMERO DE VERDAD, NO EL IDENTIFICADOR INTERNO.
+         *
+         * Con los remitentes nuevos (@lid) la parte de delante de la arroba NO es un
+         * teléfono: es un identificador interno de WhatsApp. En la lista de contactos
+         * salía "101692108443891", que no le dice nada a nadie y no se puede marcar.
+         *
+         * `getContactLidAndPhone` traduce ese identificador al teléfono real. Va por un
+         * camino distinto al que está roto, así que funciona donde getChatById falla.
+         * Si no lo consigue, se queda el identificador: es preferible a inventarse un
+         * número.
+         *
+         * También se guarda el nombre que la persona tiene puesto en su WhatsApp, que
+         * es mucho más útil que cualquier número.
+         */
+        let numberFromWaId = waIdToCheck.split('@')[0] ?? waIdToCheck
+        let nombreVisible = numberFromWaId
+        if (waIdToCheck.endsWith('@lid')) {
+          try {
+            const cliente = clients[numberId]
+            const [par] = ((await cliente?.getContactLidAndPhone([waIdToCheck])) ??
+              []) as Array<{ pn?: string }>
+            const telefono = par?.pn?.split('@')[0]
+            if (telefono) {
+              numberFromWaId = telefono
+              nombreVisible = telefono
+              console.log(
+                `[msg] IDENTIFICADOR TRADUCIDO · ${waIdToCheck} -> ${telefono}`
+              )
+            }
+          } catch (e) {
+            console.warn(
+              `⚠️ No se pudo traducir ${waIdToCheck} a un número: ${
+                e instanceof Error ? e.message : String(e)
+              }. Se guarda el identificador tal cual.`
+            )
+          }
+        }
+        // El nombre que la persona tiene en su WhatsApp gana a cualquier número.
+        const nombreDeWhatsApp = (
+          msg as unknown as { _data?: { notifyName?: string } }
+        )._data?.notifyName
+        if (nombreDeWhatsApp) nombreVisible = nombreDeWhatsApp
 
         // OJO con lo que NO está aquí: `agentehabilitado`.
         //
@@ -788,7 +831,7 @@ export async function handleIncomingMessage(
           numberid: numberId,
           wa_id: waIdToCheck,
           number: numberFromWaId,
-          name: numberFromWaId, // Usar el número como nombre por defecto
+          name: nombreVisible,
           lastmessagetimestamp: Date.now(),
           lastmessagepreview: msg.body || ''
         }
@@ -876,6 +919,9 @@ export async function handleIncomingMessage(
           )
         }
         if (puedeResponderDesconocido) {
+          console.log(
+            `[msg] IA PENSANDO (chat sin sincronizar) · línea ${numberId} · chat ${idToCheck}`
+          )
           // Lógica para evitar dos respuestas IA iguales seguidas
           const inicioIA = Date.now()
           let aiResponse
@@ -898,6 +944,10 @@ export async function handleIncomingMessage(
               ok: false,
               errorKind: clasificarErrorIA(errorIA)
             })
+            console.error(
+              `[msg] LA IA FALLÓ · línea ${numberId} · chat ${idToCheck} · ` +
+                `${errorIA instanceof Error ? errorIA.message : String(errorIA)}`
+            )
             throw errorIA
           }
           // Punto de escritura #1 del consumo de IA. Va sin await: la respuesta
