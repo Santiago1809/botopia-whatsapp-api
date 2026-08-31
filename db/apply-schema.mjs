@@ -102,6 +102,53 @@ try {
       )
     }
   }
+
+  // ---------------------------------------------------------------------------
+  //  PLAN DE ARRANQUE PARA CUENTAS CONCRETAS
+  //
+  //  Mismo motivo que ADMIN_EMAILS: el plan solo se puede mover desde la consola de
+  //  admin o pagando, y hay cuentas —la del dueño de la plataforma, las de prueba—
+  //  que tienen que nacer con el plan bueno sin dar ese rodeo. Sin esto, funciones
+  //  enteras quedan invisibles: los grupos, por ejemplo, solo responden en PRO e
+  //  INDUSTRIAL, y desde fuera parece que el agente está roto.
+  //
+  //  Formato: PLAN_POR_CORREO="alguien@dominio.com:INDUSTRIAL,otro@x.com:PRO".
+  //  Solo SUBE de plan: nunca degrada a nadie por editar una variable, y la fecha
+  //  solo se toca si el plan cambia de verdad.
+  // ---------------------------------------------------------------------------
+  const planPorCorreo = (process.env.PLAN_POR_CORREO ?? '')
+    .split(',')
+    .map((par) => par.trim())
+    .filter(Boolean)
+    .map((par) => {
+      const [correo, plan] = par.split(':').map((x) => (x ?? '').trim())
+      return { correo: (correo ?? '').toLowerCase(), plan: (plan ?? '').toUpperCase() }
+    })
+    .filter((x) => x.correo && x.plan)
+
+  for (const { correo, plan } of planPorCorreo) {
+    try {
+      const { rows } = await client.query(
+        `UPDATE app."User" u
+            SET subscription = $2, subscription_updated_at = now(), "updatedAt" = now()
+          FROM app."PlanLimit" pl
+          WHERE lower(u.email) = $1
+            AND pl.plan_name = $2
+            AND u.subscription IS DISTINCT FROM $2
+          RETURNING u.email, pl.monthly_message_limit`,
+        [correo, plan]
+      )
+      if (rows.length > 0) {
+        console.log(
+          `✅ plan: ${rows[0].email} -> ${plan} (${rows[0].monthly_message_limit} mensajes/mes)`
+        )
+      } else {
+        console.log(`✅ plan: ${correo} ya estaba en ${plan}, o no tiene cuenta todavía`)
+      }
+    } catch (e) {
+      console.error(`❌ No se pudo poner el plan ${plan} a ${correo}:`, e.message)
+    }
+  }
 } catch (err) {
   console.error('❌ Error aplicando schema.sql:', err.message)
   process.exitCode = 1
