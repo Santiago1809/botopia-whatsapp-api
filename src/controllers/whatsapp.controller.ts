@@ -18,3 +18,4 @@ export const { sendMessage, getMessageUsage, syncAllHistoriesBatch } =
 
 export const { startWhatsApp, stopWhatsApp, setupSocketEvents } =
   sessionController
+export { restaurarSesionesGuardadas } from './whatsapp/session.controller.js'

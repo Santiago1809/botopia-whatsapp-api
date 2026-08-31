@@ -93,3 +93,35 @@ export function borrarPerfilDeSesion(numberId: string | number): void {
     )
   }
 }
+
+/**
+ * Qué líneas tienen una sesión de WhatsApp guardada en el disco.
+ *
+ * LocalAuth deja cada sesión en `.wwebjs_auth/session-<id>`. Como esa carpeta vive en
+ * el volumen de Railway, sobrevive a los despliegues: es la lista de líneas que estaban
+ * vinculadas antes del último reinicio.
+ *
+ * Se comprueba que la carpeta tenga contenido real (`Default/`, que es donde Chromium
+ * guarda el perfil). Una carpeta vacía es de un intento que nunca llegó a vincularse, y
+ * levantar un navegador para ella solo consumiría memoria y acabaría pidiendo un QR que
+ * nadie está mirando.
+ */
+export function lineasConSesionGuardada(): number[] {
+  try {
+    if (!fs.existsSync(RAIZ)) return []
+    return fs
+      .readdirSync(RAIZ, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && /^session-\d+$/.test(e.name))
+      .map((e) => Number(e.name.slice('session-'.length)))
+      .filter((id) => Number.isInteger(id) && id > 0)
+      .filter((id) => fs.existsSync(path.join(carpetaDeSesion(id), 'Default')))
+      .sort((a, b) => a - b)
+  } catch (e) {
+    console.warn(
+      `⚠️ No se pudieron listar las sesiones guardadas: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    )
+    return []
+  }
+}

@@ -26,7 +26,10 @@ import {
   clients,
   marcarArranque
 } from '../../WhatsAppClients.js'
-import { soltarCerrojoDeSesion } from '../../lib/perfilChromium.js'
+import {
+  lineasConSesionGuardada,
+  soltarCerrojoDeSesion
+} from '../../lib/perfilChromium.js'
 import { JWT_SECRET } from '../../middleware/jwt.middleware.js'
 import {
   exigirNumeroPropio,
@@ -1095,4 +1098,48 @@ export function setupSocketEvents(io: Server) {
       }
     })
   })
+}
+
+
+/**
+ * RESTAURA LAS SESIONES DE WHATSAPP AL ARRANCAR EL PROCESO.
+ *
+ * Hasta ahora la ÚNICA forma de levantar un cliente era que alguien abriera la pantalla
+ * y pulsara conectar: no había nada que lo hiciera al arrancar. Consecuencia: cada
+ * despliegue —o cada reinicio del contenedor— dejaba WhatsApp mudo hasta que un humano
+ * entraba a la app. Los mensajes que llegaban en ese hueco se perdían sin dejar rastro,
+ * porque no había ningún `client.on('message')` escuchando.
+ *
+ * Las sesiones están en el volumen, así que se pueden reabrir sin pedir un QR nuevo. Se
+ * levantan de una en una y no en paralelo: cada línea abre su propio Chromium, y
+ * arrancar cinco a la vez es la forma más rápida de quedarse sin memoria en el
+ * contenedor.
+ *
+ * Los fallos no detienen al resto ni tumban el arranque del servidor: una línea cuya
+ * sesión caducó pedirá su QR cuando alguien abra su pantalla, que es exactamente lo que
+ * pasaba antes para todas.
+ */
+export async function restaurarSesionesGuardadas(io: Server): Promise<void> {
+  const lineas = lineasConSesionGuardada()
+  if (lineas.length === 0) {
+    console.log('ℹ️ No hay sesiones de WhatsApp guardadas que restaurar.')
+    return
+  }
+
+  console.log(
+    `🔄 Restaurando ${lineas.length} sesión(es) de WhatsApp guardada(s): ${lineas.join(', ')}`
+  )
+
+  for (const numberId of lineas) {
+    try {
+      await arrancarLinea(numberId, io)
+      console.log(`✅ Línea ${numberId} restaurada y escuchando mensajes.`)
+    } catch (e) {
+      console.warn(
+        `⚠️ No se pudo restaurar la línea ${numberId}: ${
+          e instanceof Error ? e.message : String(e)
+        }. Pedirá QR cuando alguien abra su pantalla.`
+      )
+    }
+  }
 }

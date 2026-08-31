@@ -9,7 +9,10 @@ import rateLimit from 'express-rate-limit'
 import helmet from 'helmet'
 import http from 'http'
 import { Server } from 'socket.io'
-import { setupSocketEvents } from './src/controllers/whatsapp.controller.js'
+import {
+  restaurarSesionesGuardadas,
+  setupSocketEvents
+} from './src/controllers/whatsapp.controller.js'
 import { telemetryMiddleware } from './src/middleware/telemetry.middleware.js'
 import { scheduleRetentionOnBoot } from './src/lib/retention.js'
 import { APP_URL } from './src/lib/app-url.js'
@@ -172,6 +175,23 @@ server.listen(port, host, () => {
   // motivo y nada más se rompe.
   iniciarWorkerDeEntregas()
   iniciarResumenDiario()
+
+  // Vuelve a abrir las sesiones de WhatsApp que quedaron guardadas en el volumen.
+  //
+  // Sin esto, un reinicio dejaba WhatsApp MUDO hasta que un humano abría la pantalla y
+  // pulsaba conectar: no había ningún `client.on('message')` escuchando, así que los
+  // mensajes que llegaran en ese hueco se perdían sin dejar ni una línea en el log. Y
+  // como cada despliegue reinicia el contenedor, eso pasaba varias veces al día.
+  //
+  // Va después de `listen` y sin await: levantar los navegadores tarda, y el servidor
+  // tiene que estar respondiendo al healthcheck mientras tanto o Railway da el
+  // despliegue por fallido.
+  void restaurarSesionesGuardadas(io).catch((e) => {
+    console.error(
+      '❌ Fallo restaurando las sesiones de WhatsApp:',
+      e instanceof Error ? e.message : e
+    )
+  })
 })
 
 /**
