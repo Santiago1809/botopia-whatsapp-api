@@ -329,3 +329,63 @@ export async function bulkUpdateAgenteHabilitado(req: CustomRequest, res: Respon
     res.status(500).json({ error: 'Error actualizando agentes' })
   }
 }
+
+/**
+ * GET /api/whatsapp/fotos?numberId=N&ids=a@c.us,b@g.us
+ *
+ * Devuelve la foto de perfil de varios chats de una sola vez: { "a@c.us": "https://..." }.
+ *
+ * Va por aquí y no por la tabla porque `SyncedContactOrGroup` no guarda la foto, y añadir
+ * una columna significaría además mantenerla al día: la gente cambia su foto y los enlaces
+ * que da WhatsApp caducan. Pedirlas en el momento siempre da la actual.
+ *
+ * Se piden en paralelo, se ignoran las que fallen —mucha gente restringe su foto a sus
+ * contactos, y eso no es un error— y se limita el lote para no lanzar cien llamadas al
+ * navegador de golpe.
+ */
+export async function fotosDeChats(req: CustomRequest, res: Response) {
+  try {
+    const numberId = String(req.query?.numberId ?? '')
+    const idsCrudos = String(req.query?.ids ?? '')
+    if (!numberId || !idsCrudos) {
+      res.status(HttpStatusCode.BadRequest).json({ message: 'Faltan numberId o ids' })
+      return
+    }
+
+    const numero = await exigirNumeroPropio(req, res, { id: numberId })
+    if (!numero) return
+
+    const ids = idsCrudos
+      .split(',')
+      .map((x) => x.trim())
+      .filter((x) => x.includes('@'))
+      .slice(0, 60)
+
+    // `clienteVivo` y no `clients[...]`: comprueba que el navegador exista de verdad y
+    // retira del mapa al que esté muerto, en vez de reventar al usarlo.
+    const cliente = clienteVivo(numberId)
+    if (!cliente) {
+      // Sin navegador vivo no hay fotos que pedir. No es un error: la pantalla se
+      // queda con las iniciales, que es exactamente lo que hace WhatsApp.
+      res.json({})
+      return
+    }
+
+    const fotos: Record<string, string> = {}
+    await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const url = await cliente.getProfilePicUrl(id)
+          if (url) fotos[id] = url
+        } catch {
+          /* sin foto pública */
+        }
+      })
+    )
+
+    res.json(fotos)
+  } catch (error) {
+    console.error('❌ Error obteniendo fotos de perfil:', error)
+    res.status(HttpStatusCode.InternalServerError).json({ message: 'Error obteniendo fotos' })
+  }
+}

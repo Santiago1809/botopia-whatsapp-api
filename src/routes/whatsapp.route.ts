@@ -11,12 +11,14 @@ import {
   updateAgenteHabilitado,
   bulkUpdateAgenteHabilitado,
   getSyncedContacts,
-  deleteSynced
+  deleteSynced,
+  fotosDeChats
 } from '../controllers/whatsapp.controller.js'
 import { toggleUnknownAi } from '../controllers/user.controller.js'
 
 const router = express.Router()
 
+router.get('/fotos', authenticateToken, fotosDeChats)
 router.post('/start-whatsapp', authenticateToken, startWhatsApp)
 router.post('/send-message', authenticateToken, sendMessage)
 router.get('/message-usage', authenticateToken, getMessageUsage)

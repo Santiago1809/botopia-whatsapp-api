@@ -1421,6 +1421,18 @@ export async function handleIncomingMessage(
 
               // Intentar enviar el mensaje usando chat.sendMessage()
               await chat.sendMessage(finalResponse as string)
+              console.log(
+                `[msg] RESPUESTA ENVIADA · línea ${numberId} · chat ${idToCheck} · ` +
+                  `"${String(finalResponse ?? '').slice(0, 60)}"`
+              )
+              // Apagar el "escribiendo…". Esta rama lo encendía y NO lo apagaba nunca,
+              // así que los tres puntos se quedaban pegados para siempre después de la
+              // primera respuesta en un grupo.
+              io.to(numberId.toString()).emit('agente-escribiendo', {
+                numberId,
+                to: idToCheck,
+                escribiendo: false
+              })
 
               // EMITIR INMEDIATAMENTE la actualización del historial después de enviar
               chatHistory.push({
