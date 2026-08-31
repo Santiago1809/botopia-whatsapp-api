@@ -690,8 +690,15 @@ export async function handleIncomingMessage(
       return
     }
 
-    // Only allow group messages for PRO or INDUSTRIAL plans
+    // Los grupos son de pago: solo PRO e INDUSTRIAL. No es un fallo, es una regla de
+    // negocio — pero el `return` era mudo, así que desde fuera era indistinguible de un
+    // bug: el interruptor "Grupos" encendido, el mensaje entrando, y el agente callado
+    // sin que nada dijera por qué. Costó horas de búsqueda.
     if (user.subscription !== 'PRO' && user.subscription !== 'INDUSTRIAL') {
+      console.log(
+        `[msg] SIN RESPUESTA (los grupos requieren plan PRO o INDUSTRIAL) · línea ${numberId} · ` +
+          `chat ${idToCheck} · plan actual: ${user.subscription}`
+      )
       return
     }
   }
