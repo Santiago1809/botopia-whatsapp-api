@@ -1120,9 +1120,38 @@ export function setupSocketEvents(io: Server) {
  * pasaba antes para todas.
  */
 export async function restaurarSesionesGuardadas(io: Server): Promise<void> {
-  const lineas = lineasConSesionGuardada()
-  if (lineas.length === 0) {
+  const enDisco = lineasConSesionGuardada()
+  if (enDisco.length === 0) {
     console.log('ℹ️ No hay sesiones de WhatsApp guardadas que restaurar.')
+    return
+  }
+
+  /**
+   * Solo las líneas que SIGUEN EXISTIENDO en la base.
+   *
+   * El volumen acumula la carpeta de toda línea que alguna vez se vinculó, incluidas las
+   * que el usuario ya borró. Sin este filtro se levantaban siete Chromium de golpe —uno
+   * por carpeta— y eso agota la memoria del contenedor: el remedio sería peor que la
+   * enfermedad que viene a curar.
+   */
+  const { data: filas } = await supabase
+    .from('WhatsAppNumber')
+    .select('id')
+    .in('id', enDisco)
+
+  const vivas = new Set((filas ?? []).map((f: { id: number }) => Number(f.id)))
+  const lineas = enDisco.filter((id) => vivas.has(id))
+  const huerfanas = enDisco.filter((id) => !vivas.has(id))
+
+  if (huerfanas.length > 0) {
+    console.log(
+      `ℹ️ ${huerfanas.length} perfil(es) de Chromium sin línea en la base, no se levantan: ${huerfanas.join(', ')}. ` +
+        'Ocupan sitio en el volumen y se pueden borrar.'
+    )
+  }
+
+  if (lineas.length === 0) {
+    console.log('ℹ️ Ninguna sesión guardada corresponde a una línea existente.')
     return
   }
 
