@@ -2,6 +2,7 @@ import type { Request, Response } from 'express';
 // Se quitó `import fetch from 'node-fetch'`: el paquete no estaba declarado en
 // package.json y solo resolvía como dependencia transitiva. Node 20 trae fetch.
 import { supabase } from '../config/db.js';
+import { topesDelPlan } from '../lib/planLimits.js';
 import type { CustomRequest } from '../interfaces/global.js';
 
 // ---------------------------------------------------------------------------
@@ -468,31 +469,43 @@ export const getUserSubscription = async (req: CustomRequest, res: Response) => 
     }
 };
 
-// Funciones auxiliares para límites y características por plan
+// Funciones auxiliares para límites y características por plan.
+//
+// maxWhatsappNumbers y maxAgents SALEN de topesDelPlan (src/lib/planLimits.ts),
+// que es la misma tabla que APLICA los topes en addWhatsAppNumber y addAgent:
+// tenerlos aquí duplicados es como se llegó a mostrar un límite que nadie
+// cobraba. maxMessages se queda literal porque su fuente de verdad es
+// app."PlanLimit" en la base (que es la que cobra); estos números son la copia
+// para pintar en pantalla y coinciden con la semilla de db/schema.sql.
 function getPlanLimits(plan: SubscriptionType | null): Record<string, number | boolean> {
+    const topes = topesDelPlan(plan);
     switch (plan) {
         case 'BASIC':
             return {
-                maxWhatsappNumbers: 1,
+                maxWhatsappNumbers: topes.maxLineas,
+                maxAgents: topes.maxAgentes,
                 maxMessages: 1000,
                 aiEnabled: false
             };
         case 'PRO':
             return {
-                maxWhatsappNumbers: 3,
+                maxWhatsappNumbers: topes.maxLineas,
+                maxAgents: topes.maxAgentes,
                 maxMessages: 5000,
                 aiEnabled: true
             };
         case 'INDUSTRIAL':
             return {
-                maxWhatsappNumbers: 10,
+                maxWhatsappNumbers: topes.maxLineas,
+                maxAgents: topes.maxAgentes,
                 maxMessages: 50000,
                 aiEnabled: true
             };
         case 'FREE':
         default:
             return {
-                maxWhatsappNumbers: 1,
+                maxWhatsappNumbers: topes.maxLineas,
+                maxAgents: topes.maxAgentes,
                 maxMessages: 100,
                 aiEnabled: false
             };
@@ -512,7 +525,11 @@ function getPlanFeatures(plan: SubscriptionType | null): Record<string, boolean>
             return {
                 canAddWhatsapp: true,
                 canSendMessages: true,
-                canUseAI: false,
+                // Decía false y contradecía a getPlanLimits (PRO aiEnabled=true)
+                // y al comportamiento real: los grupos con IA piden justamente
+                // plan PRO o INDUSTRIAL (messages.controller.ts). La pantalla de
+                // facturación mostraba "Usar IA" tachado a quien sí la tiene.
+                canUseAI: true,
                 canCreateTemplates: true
             };
         case 'INDUSTRIAL':

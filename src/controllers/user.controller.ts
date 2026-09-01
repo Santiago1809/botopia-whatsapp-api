@@ -9,6 +9,7 @@ import type {
 import { HttpStatusCode } from 'axios'
 import { clients } from '../WhatsAppClients.js'
 import { exigirNumeroPropio, exigirUsuario } from '../lib/propiedad.js'
+import { topesDelPlan } from '../lib/planLimits.js'
 import { comparablePorTelefono } from '../lib/telefono.js'
 import { borrarPerfilDeSesion } from '../lib/perfilChromium.js'
 import { olvidarQR } from './whatsapp/session.controller.js'
@@ -115,6 +116,39 @@ export async function addWhatsAppNumber(req: CustomRequest, res: Response) {
         message: 'Esta línea ya estaba: se reutiliza',
         numberId: yaExiste.id,
         reutilizado: true
+      })
+      return
+    }
+
+    // EL TOPE DE LÍNEAS DEL PLAN, APLICADO DONDE SE CREA LA LÍNEA.
+    //
+    // Hasta aquí el tope solo se MOSTRABA en la pantalla de suscripción
+    // (getPlanLimits) y nada lo aplicaba: cualquier cuenta FREE podía abrir
+    // líneas sin fin, y cada línea es un Chromium corriendo en el contenedor.
+    //
+    // Va DESPUÉS del chequeo de reutilización a propósito: reconectar una línea
+    // que ya se tiene no crea nada y tiene que funcionar siempre, incluso para
+    // una cuenta que quedó por encima del tope tras bajar de plan (las líneas
+    // existentes no se tocan; solo se frena crear MÁS).
+    //
+    // `suyos` ya está leído dos líneas arriba, así que contar no cuesta ninguna
+    // consulta extra. Entre contar e insertar no hay transacción: un doble clic
+    // simultáneo podría colar una línea de más, pero el botón del front ya tiene
+    // guarda de reentrada y el exceso sería de 1 — no vale un FOR UPDATE aquí.
+    const { rows: planFilas } = await query<{ subscription: string | null }>(
+      'SELECT subscription FROM app."User" WHERE id = $1',
+      [usuario.id]
+    )
+    const plan = planFilas[0]?.subscription ?? 'FREE'
+    const { maxLineas } = topesDelPlan(plan)
+    if (suyos.length >= maxLineas) {
+      console.warn(
+        `⛔ ${usuario.username} (plan ${plan}) pidió otra línea con ${suyos.length}/${maxLineas} usadas: rechazada.`
+      )
+      res.status(HttpStatusCode.Forbidden).json({
+        message: `Tu plan ${plan} permite ${maxLineas} línea(s) de WhatsApp y ya tienes ${suyos.length}. Mejora tu plan para añadir más.`,
+        limit: maxLineas,
+        current: suyos.length
       })
       return
     }
@@ -324,6 +358,28 @@ export async function addAgent(req: CustomRequest, res: Response) {
       res
         .status(HttpStatusCode.NotFound)
         .json({ message: 'Usuario no encontrado' })
+      return
+    }
+
+    // EL TOPE DE AGENTES DEL PLAN. Mismo motivo que el de líneas en
+    // addWhatsAppNumber: existía el concepto de límite pero nada lo aplicaba.
+    // Solo cuentan los agentes PROPIOS (isGlobal=false): los globales los pone
+    // la plataforma y no deben comerse el cupo de nadie.
+    const { maxAgentes } = topesDelPlan(user.subscription)
+    const { rows: cuenta } = await query<{ total: string }>(
+      'SELECT count(*)::text AS total FROM app."Agent" WHERE "ownerId" = $1 AND "isGlobal" = false',
+      [user.id]
+    )
+    const actuales = Number(cuenta[0]?.total ?? 0)
+    if (actuales >= maxAgentes) {
+      console.warn(
+        `⛔ ${user.username} (plan ${user.subscription}) pidió otro agente con ${actuales}/${maxAgentes} usados: rechazado.`
+      )
+      res.status(HttpStatusCode.Forbidden).json({
+        message: `Tu plan ${user.subscription ?? 'FREE'} permite ${maxAgentes} agente(s) de IA y ya tienes ${actuales}. Mejora tu plan para crear más.`,
+        limit: maxAgentes,
+        current: actuales
+      })
       return
     }
 
