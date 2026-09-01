@@ -10,7 +10,8 @@ export const {
   getSyncedContacts,
   deleteSynced,
   updateAgenteHabilitado,
-  bulkUpdateAgenteHabilitado
+  bulkUpdateAgenteHabilitado,
+  updateCustomContact
 } = contactsController
 
 export const { sendMessage, getMessageUsage, syncAllHistoriesBatch } =

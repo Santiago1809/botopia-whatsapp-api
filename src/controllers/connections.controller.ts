@@ -59,6 +59,40 @@ function tiposPedidos(bruto: unknown): { tipos: string[]; invalido?: string } {
   return { tipos }
 }
 
+/**
+ * Valida la lista de orígenes (chats de WhatsApp) del filtro de un webhook.
+ * A diferencia de los eventos, la lista VACÍA es válida: significa "todos".
+ */
+function origenesPedidos(bruto: unknown): { origenes: string[]; invalido?: string } {
+  if (!Array.isArray(bruto)) {
+    return { origenes: [], invalido: 'La lista de orígenes debe ser un arreglo de identificadores.' }
+  }
+  const origenes = Array.from(new Set(bruto.map((o) => String(o).trim()).filter(Boolean)))
+  // Tope de cordura: por encima de esto el cliente no está filtrando, está
+  // replicando su agenda, y el fan-out pagaría esa lista en cada mensaje.
+  if (origenes.length > 500) {
+    return { origenes: [], invalido: 'Demasiados orígenes: el máximo es 500 chats por webhook.' }
+  }
+  return { origenes }
+}
+
+/**
+ * Convierte wa_ids/teléfonos crudos a su clave canónica. La normalización vive
+ * en events.origen_clave (db/schema.sql) y NO se replica aquí: es la misma
+ * función que usa el fan-out al comparar, así que guardar lo que ella devuelve
+ * garantiza que la comparación nunca falle por criterios distintos.
+ */
+async function clavesDeOrigenes(origenes: string[]): Promise<string[]> {
+  if (origenes.length === 0) return []
+  const res = await query<{ clave: string }>(
+    `SELECT DISTINCT events.origen_clave(o) AS clave
+       FROM unnest($1::text[]) AS o
+      WHERE events.origen_clave(o) IS NOT NULL`,
+    [origenes]
+  )
+  return res.rows.map((r) => r.clave)
+}
+
 // ---------------------------------------------------------------------------
 //  Catálogo
 // ---------------------------------------------------------------------------
@@ -92,6 +126,12 @@ export async function listarWebhooks(req: CustomRequest, res: Response): Promise
                    FROM events.webhook_endpoint_event s WHERE s.endpoint_id = e.id),
                 ARRAY[]::text[]
               ) AS events,
+              -- Arreglo vacío = recibe de todos los chats (el contrato de la tabla).
+              COALESCE(
+                (SELECT array_agg(o.origin_key ORDER BY o.origin_key)
+                   FROM events.webhook_endpoint_origin o WHERE o.endpoint_id = e.id),
+                ARRAY[]::text[]
+              ) AS origins,
               (SELECT COUNT(*)::int FROM events.delivery d
                 WHERE d.endpoint_id = e.id AND d.status = 'succeeded') AS entregas_ok,
               (SELECT COUNT(*)::int FROM events.delivery d
@@ -124,6 +164,18 @@ export async function crearWebhook(req: CustomRequest, res: Response): Promise<v
     if (invalido) {
       res.status(HttpStatusCode.BadRequest).json({ message: invalido })
       return
+    }
+
+    // Se valida ANTES de insertar nada: un filtro mal formado no puede dejar
+    // creado un webhook a medias. Omitir `origins` (o mandarlo vacío) = todos.
+    let origenes: string[] = []
+    if (req.body?.origins !== undefined) {
+      const pedido = origenesPedidos(req.body.origins)
+      if (pedido.invalido) {
+        res.status(HttpStatusCode.BadRequest).json({ message: pedido.invalido })
+        return
+      }
+      origenes = pedido.origenes
     }
 
     // Validación completa (forma + DNS) YA al guardar, para poder dar el motivo
@@ -175,6 +227,16 @@ export async function crearWebhook(req: CustomRequest, res: Response): Promise<v
       [id, tipos]
     )
 
+    const claves = await clavesDeOrigenes(origenes)
+    if (claves.length > 0) {
+      await query(
+        `INSERT INTO events.webhook_endpoint_origin (endpoint_id, origin_key)
+         SELECT $1, unnest($2::text[])
+         ON CONFLICT DO NOTHING`,
+        [id, claves]
+      )
+    }
+
     // El secreto se devuelve UNA sola vez. A partir de aquí solo existe cifrado
     // en la base: si el cliente lo pierde, la salida es rotarlo, no recuperarlo.
     res.status(HttpStatusCode.Created).json({
@@ -182,6 +244,7 @@ export async function crearWebhook(req: CustomRequest, res: Response): Promise<v
       secret: secreto,
       secret_prefix: prefijoDeSecreto(secreto),
       events: tipos,
+      origins: claves,
       aviso:
         'Guarda este secreto ahora: no se vuelve a mostrar. Con él se verifica la firma de cada webhook.'
     })
@@ -268,6 +331,38 @@ export async function actualizarWebhook(req: CustomRequest, res: Response): Prom
       )
     }
 
+    // La selección de orígenes se REEMPLAZA entera, igual que la de eventos:
+    // mandar [] la vacía y el webhook vuelve a recibir de todos los chats.
+    if (req.body?.origins !== undefined) {
+      const { origenes, invalido } = origenesPedidos(req.body.origins)
+      if (invalido) {
+        res.status(HttpStatusCode.BadRequest).json({ message: invalido })
+        return
+      }
+      // Misma comprobación de pertenencia que la de eventos: sin ella se podría
+      // vaciar el filtro de un endpoint ajeno pasando su id.
+      const propio = await query(
+        'SELECT 1 FROM events.webhook_endpoint WHERE id = $1 AND account_id = $2',
+        [id, cuenta.id]
+      )
+      if (propio.rowCount === 0) {
+        res.status(HttpStatusCode.NotFound).json({ message: 'Webhook no encontrado.' })
+        return
+      }
+      const claves = await clavesDeOrigenes(origenes)
+      await query(
+        'DELETE FROM events.webhook_endpoint_origin WHERE endpoint_id = $1 AND origin_key <> ALL($2::text[])',
+        [id, claves]
+      )
+      if (claves.length > 0) {
+        await query(
+          `INSERT INTO events.webhook_endpoint_origin (endpoint_id, origin_key)
+           SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING`,
+          [id, claves]
+        )
+      }
+    }
+
     res.json({ ok: true })
   } catch (error) {
     fallo(res, error, 'Error actualizando el webhook')
@@ -289,6 +384,75 @@ export async function borrarWebhook(req: CustomRequest, res: Response): Promise<
     res.json({ ok: true })
   } catch (error) {
     fallo(res, error, 'Error borrando el webhook')
+  }
+}
+
+/**
+ * Los chats entre los que se puede filtrar un webhook: los contactos y grupos
+ * sincronizados (app."SyncedContactOrGroup") y los que escribieron sin estar
+ * agendados (app."Unsyncedcontact"), de TODAS las líneas del usuario. Son las
+ * dos tablas donde el sistema ya conoce chats de WhatsApp; no se inventa otra.
+ *
+ * Cada opción viaja con su `key` canónica (events.origen_clave): es lo que el
+ * front manda en `origins` y lo único que se guarda, así el selector y el
+ * fan-out hablan exactamente el mismo idioma.
+ */
+export async function listarOrigenes(req: CustomRequest, res: Response): Promise<void> {
+  try {
+    const cuenta = await cuentaDe(req)
+    if (!cuenta) return sinCuenta(res)
+
+    const filas = await query(
+      `SELECT key, wa_id, name, phone, es_grupo, linea
+         FROM (
+           -- DISTINCT ON por clave: el mismo chat puede estar sincronizado Y
+           -- haber escrito sin agendar (o vivir en dos líneas); prioridad 0 hace
+           -- que gane la ficha sincronizada, que es la que tiene mejor nombre.
+           SELECT DISTINCT ON (t.key) t.*
+             FROM (
+               SELECT events.origen_clave(s.wa_id) AS key,
+                      lower(btrim(s.wa_id)) AS wa_id,
+                      NULLIF(btrim(s.name), '') AS name,
+                      -- El teléfono solo se afirma cuando el id ES un teléfono
+                      -- (@c.us); un @lid o un grupo no tienen número que mostrar.
+                      CASE WHEN s.wa_id ~* '@(c\\.us|s\\.whatsapp\\.net)\\s*$'
+                           THEN NULLIF(regexp_replace(split_part(btrim(s.wa_id), '@', 1), '[^0-9]', '', 'g'), '')
+                           ELSE NULL END AS phone,
+                      (s.type = 'group' OR s.wa_id ~* '@g\\.us\\s*$') AS es_grupo,
+                      COALESCE(NULLIF(n.name, ''), n.number) AS linea,
+                      0 AS prioridad
+                 FROM app."SyncedContactOrGroup" s
+                 JOIN app."WhatsAppNumber" n ON n.id = s."numberId"
+                WHERE n."userId" = $1
+                UNION ALL
+                SELECT events.origen_clave(u.wa_id),
+                       lower(btrim(u.wa_id)),
+                       NULLIF(btrim(u.name), ''),
+                       COALESCE(
+                         NULLIF(regexp_replace(COALESCE(u.number, ''), '[^0-9]', '', 'g'), ''),
+                         CASE WHEN u.wa_id ~* '@(c\\.us|s\\.whatsapp\\.net)\\s*$'
+                              THEN NULLIF(regexp_replace(split_part(btrim(u.wa_id), '@', 1), '[^0-9]', '', 'g'), '')
+                              ELSE NULL END
+                       ),
+                       u.wa_id ~* '@g\\.us\\s*$',
+                       COALESCE(NULLIF(n.name, ''), n.number),
+                       1
+                  FROM app."Unsyncedcontact" u
+                  JOIN app."WhatsAppNumber" n ON n.id = u.numberid
+                 WHERE n."userId" = $1
+             ) t
+            WHERE t.key IS NOT NULL
+            ORDER BY t.key, t.prioridad
+         ) elegidos
+        ORDER BY es_grupo, lower(COALESCE(name, phone, wa_id))
+        -- Válvula de seguridad, no paginación: por encima de esto el selector
+        -- deja de ser usable y el buscador del front sigue funcionando igual.
+        LIMIT 5000`,
+      [cuenta.id]
+    )
+    res.json({ origins: filas.rows })
+  } catch (error) {
+    fallo(res, error, 'Error listando los chats disponibles')
   }
 }
 

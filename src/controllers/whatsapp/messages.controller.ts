@@ -585,6 +585,39 @@ export async function handleIncomingMessage(
   }
   respondedMessages.set(idMensaje, Date.now()) // Log SIEMPRE que se reciba un mensaje
   const idToCheck = chat.id._serialized
+  /**
+   * EL ID CLÁSICO DEL CHAT, RESUELTO ANTES DE DECIDIR NADA.
+   *
+   * WhatsApp sirve algunos chats con el identificador nuevo @lid. El contacto
+   * sincronizado está guardado con el clásico (teléfono@c.us), así que comparar
+   * con el @lid crudo daba "SIN sincronizar" para gente que SÍ estaba en la
+   * agenda: el sistema le creaba una ficha duplicada sin nombre ni foto y la
+   * ficha real se quedaba en "Sin mensajes" para siempre (pasó con un contacto
+   * agregado la noche del 1-sep).
+   *
+   * La traducción ya existía (getContactLidAndPhone) pero se usaba DESPUÉS de
+   * decidir que el contacto era desconocido, solo para mostrar un número
+   * legible. Izarla aquí hace que la decisión misma la aproveche.
+   */
+  let idCanonico = idToCheck
+  if (idToCheck.endsWith('@lid')) {
+    try {
+      const clienteLid = clienteVivo(numberId)
+      const [par] = ((await clienteLid?.getContactLidAndPhone([idToCheck])) ??
+        []) as Array<{ pn?: string }>
+      const telefonoLid = par?.pn?.split('@')[0]
+      if (telefonoLid && /^\d{6,15}$/.test(telefonoLid)) {
+        idCanonico = `${telefonoLid}@c.us`
+        console.log(`[msg] LID RESUELTO TEMPRANO · ${idToCheck} -> ${idCanonico}`)
+      }
+    } catch (e) {
+      console.warn(
+        `⚠️ No se pudo resolver ${idToCheck} antes del pareo: ${
+          e instanceof Error ? e.message : String(e)
+        }. Se sigue con el identificador crudo.`
+      )
+    }
+  }
   const isGroup = chat.id.server === 'g.us'
   if (msg.isStatus) {
     descartar('es un estado, no un mensaje de chat')
@@ -618,14 +651,16 @@ export async function handleIncomingMessage(
       role: m.fromMe ? 'assistant' : 'user',
       content: m.body,
       timestamp: m.timestamp * 1000,
-      to: chat.id._serialized,
+      // El id CLÁSICO, no el @lid crudo: el front cuelga el historial del
+      // contacto buscándolo por wa_id, y la agenda guarda el clásico.
+      to: idCanonico,
       fromMe: m.fromMe
     }))
 
     io.to(numberId.toString()).emit('chat-history', {
       numberid: numberId,
       chatHistory,
-      to: chat.id._serialized,
+      to: idCanonico,
       lastMessageTimestamp
     })
     console.log(
@@ -703,18 +738,37 @@ export async function handleIncomingMessage(
     }
   }
   // Busca en la base de datos si está sincronizado y habilitado
-  const { data: syncDb, error: syncDbError } = await supabase
+  // Los DOS ids: el crudo del chat y el clásico resuelto. Con solo el crudo, un
+  // chat servido como @lid nunca coincidía con la agenda (guardada como @c.us).
+  const idsDelChat =
+    idCanonico === idToCheck ? [idToCheck] : [idToCheck, idCanonico]
+  const { data: syncRows, error: syncDbError } = await supabase
     .from('SyncedContactOrGroup')
     .select('agenteHabilitado')
     .eq('numberId', numberId)
-    .eq('wa_id', idToCheck)
+    .in('wa_id', idsDelChat)
     .eq('type', isGroup ? 'group' : 'contact')
-    .single()
+    .limit(1)
+  const syncDb = syncRows?.[0] ?? null
 
-  // Solo hago return si el error es diferente a PGRST116 (no hay filas)
-  if (syncDbError && syncDbError.code !== 'PGRST116') {
+  if (syncDbError) {
     console.error('Error buscando en SyncedContactOrGroup:', syncDbError)
     return
+  }
+
+  // El chat resolvió a un contacto sincronizado por su id clásico: si la vía
+  // @lid alcanzó a crear una ficha duplicada "sin sincronizar", se limpia —
+  // es la fila fantasma sin nombre ni foto que confundía la bandeja.
+  if (syncDb && idCanonico !== idToCheck) {
+    void supabase
+      .from('Unsyncedcontact')
+      .delete()
+      .eq('numberid', numberId)
+      .in('wa_id', idsDelChat)
+      .then(({ error }) => {
+        if (error)
+          console.warn('No se pudo limpiar la ficha duplicada del lid:', error.message)
+      })
   }
   // Punto ciego: entre "VALIDADO" y la respuesta no había ninguna traza, así que un
   // mensaje que se paraba aquí desaparecía sin dejar rastro. Esta línea dice por qué
@@ -841,7 +895,13 @@ export async function handleIncomingMessage(
         // justo lo que se quería.
         const contactData = {
           numberid: numberId,
-          wa_id: waIdToCheck,
+          // El id CLÁSICO como llave cuando se pudo traducir: así la limpieza de
+          // la sincronización (que borra por el wa_id de la agenda) encuentra la
+          // fila, y no quedan fantasmas @lid imposibles de reconciliar.
+          wa_id:
+            waIdToCheck.endsWith('@lid') && /^\d{6,15}$/.test(numberFromWaId)
+              ? `${numberFromWaId}@c.us`
+              : waIdToCheck,
           number: numberFromWaId,
           name: nombreVisible,
           lastmessagetimestamp: Date.now(),

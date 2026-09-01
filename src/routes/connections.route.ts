@@ -10,6 +10,7 @@ import {
   listarAvisos,
   listarEntregas,
   listarEventos,
+  listarOrigenes,
   listarWebhooks,
   probarWebhook,
   reenviarEntrega,
@@ -24,6 +25,8 @@ const router = express.Router()
 router.use(authenticateToken)
 
 router.get('/catalog', getCatalogo)
+// Los chats (contactos y grupos) entre los que un webhook puede filtrar origen.
+router.get('/origins', listarOrigenes)
 
 router.get('/webhooks', listarWebhooks)
 router.post('/webhooks', crearWebhook)

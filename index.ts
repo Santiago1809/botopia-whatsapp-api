@@ -31,6 +31,7 @@ import usageRoutes from './src/routes/usage.route.js'
 import userRoutes from './src/routes/user.route.js'
 import whatsAppRoutes from './src/routes/whatsapp.route.js'
 import unsyncedContactRoutes from './src/routes/unsyncedcontact.route.js'
+import integrationsRoutes from './src/routes/integrations.route.js'
 import { authenticateToken } from './src/middleware/jwt.middleware.js'
 
 const app = express()
@@ -139,6 +140,11 @@ app.use('/api/subscriptions', subscriptionsRouter)
 // cualquier número. Era la única de las nueve montada sin autenticación.
 app.use('/api/unsyncedcontacts', authenticateToken, unsyncedContactRoutes)
 app.use('/api/connections', connectionsRoutes)
+
+// Puente server-to-server (máquina de Piebald y similares). SIN authenticateToken:
+// no hay usuario de sesión — la ruta valida su propio Bearer estático
+// (INTEGRATION_TOKEN) en tiempo constante, ver integrations.route.ts.
+app.use('/api/integrations', integrationsRoutes)
 
 // Health check endpoint para Railway
 app.get('/health', (_req, res) => {

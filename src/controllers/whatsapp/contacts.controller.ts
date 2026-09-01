@@ -7,8 +7,10 @@ import type { CustomRequest } from '../../interfaces/global.js'
 import {
   exigirNumeroPropio,
   exigirUsuario,
+  sincronizadoPropio,
   sincronizadosDelUsuario
 } from '../../lib/propiedad.js'
+import { validarCamposCustom } from '../../lib/contactoCustom.js'
 import type { Contact, Group } from '../../types/global.js'
 
 /**
@@ -246,6 +248,63 @@ export async function updateAgenteHabilitado(req: CustomRequest, res: Response) 
   }
   res.status(200).json({ message: 'Actualizado correctamente' })
   return
+}
+
+/**
+ * POST /api/whatsapp/update-custom — { id, custom_name?, custom_photo? }
+ *
+ * Nombre y foto PERSONALIZADOS de un contacto o grupo sincronizado. Son datos
+ * del usuario, no de WhatsApp: la resincronización no los toca porque el upsert
+ * de syncContactsToDB no lleva estas columnas en el objeto (mismo mecanismo que
+ * protege agenteHabilitado, explicado allí arriba).
+ *
+ * Semántica: campo ausente = no se toca; null o '' = se limpia (el front vuelve
+ * a mostrar el dato de WhatsApp); texto = se guarda. Reglas y topes en
+ * lib/contactoCustom.ts, compartidos con la ruta de no sincronizados.
+ */
+export async function updateCustomContact(req: CustomRequest, res: Response) {
+  const { id } = req.body
+  if (!id) {
+    res.status(400).json({ message: 'Missing id' })
+    return
+  }
+
+  const validacion = validarCamposCustom(req.body)
+  if (!validacion.ok) {
+    res.status(400).json({ message: validacion.error })
+    return
+  }
+
+  // Misma comprobación de propiedad que el resto del archivo: el id es de
+  // SyncedContactOrGroup y el dueño se resuelve subiendo por numberId. Se usa la
+  // variante de UN id porque además hace falta el numberId para el socket.
+  const usuario = await exigirUsuario(req, res)
+  if (!usuario) return
+  const propio = await sincronizadoPropio(usuario.id, id)
+  if (!propio) {
+    res.status(404).json({ message: 'Contacto no encontrado' })
+    return
+  }
+
+  const { error } = await supabase
+    .from('SyncedContactOrGroup')
+    .update(validacion.cambios)
+    .eq('id', propio.id)
+  if (error) {
+    console.error('Error guardando nombre/foto personalizados:', error)
+    res.status(500).json({ message: 'Error actualizando' })
+    return
+  }
+
+  // El mismo evento que ya escucha la pantalla de chats para refrescar la
+  // lista: así el cambio se ve sin recargar y sin inventar un canal nuevo.
+  const io = req.app.get('io')
+  if (io && typeof io.to === 'function') {
+    io.to(propio.numberId.toString()).emit('synced-contacts-updated', {
+      numberid: propio.numberId
+    })
+  }
+  res.status(200).json({ message: 'Actualizado correctamente' })
 }
 
 export async function bulkUpdateAgenteHabilitado(req: CustomRequest, res: Response) {

@@ -8,6 +8,7 @@ import {
   noSincronizadoPropio,
   numerosDelUsuario
 } from '../lib/propiedad.js';
+import { validarCamposCustom } from '../lib/contactoCustom.js';
 
 const router = Router();
 
@@ -66,6 +67,52 @@ router.get('/', async (req: CustomRequest, res: Response) => {
 
   // Se responde el array pelado, como siempre: el front lo consume así.
   res.json(data);
+});
+
+/**
+ * PATCH /api/unsyncedcontacts/:id/custom — { custom_name?, custom_photo? }
+ *
+ * Nombre y foto personalizados de un contacto no sincronizado. Semántica y
+ * topes en lib/contactoCustom.ts (compartidos con /api/whatsapp/update-custom).
+ * El upsert que hace messages.controller.ts con cada mensaje entrante no lleva
+ * estas columnas en el objeto —igual que agentehabilitado, ver el comentario de
+ * allí— así que un mensaje nuevo jamás pisa lo que el usuario puso aquí.
+ */
+router.patch('/:id/custom', async (req: CustomRequest, res: Response) => {
+  const { id } = req.params;
+
+  const validacion = validarCamposCustom(req.body);
+  if (!validacion.ok) {
+    res.status(400).json({ error: validacion.error });
+    return;
+  }
+
+  // Misma comprobación de propiedad que el resto de la ruta: el contacto tiene
+  // que colgar de un número del usuario del token.
+  const usuario = await exigirUsuario(req, res);
+  if (!usuario) return;
+  const propio = await noSincronizadoPropio(usuario.id, id as string);
+  if (!propio) {
+    res.status(404).json({ error: 'Contacto no encontrado' });
+    return;
+  }
+
+  const { error } = await supabase
+    .from('Unsyncedcontact')
+    .update(validacion.cambios)
+    .eq('id', id);
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  // Mismo evento que el PATCH de agentehabilitado: la pantalla ya lo escucha
+  // para releer la lista, así el cambio se ve al instante.
+  const io = req.app.get('io');
+  if (io && typeof io.to === 'function') {
+    io.to(propio.numberid.toString()).emit('unsynced-contacts-updated', { numberid: propio.numberid });
+  }
+  res.json({ success: true });
 });
 
 router.patch('/:id', async (req: CustomRequest, res: Response) => {

@@ -155,6 +155,27 @@ CREATE TABLE IF NOT EXISTS app."Unsyncedcontact" (
   CONSTRAINT unsynced_numberid_waid_key UNIQUE (numberid, wa_id)
 );
 
+-- -----------------------------------------------------------------------------
+--  Nombre y foto PERSONALIZADOS de un contacto, puestos por el usuario en el
+--  panel. Van en ALTER aparte (patrón email_verified_at) para que las bases que
+--  ya tienen las tablas también los reciban.
+--
+--  Son del usuario, no de WhatsApp: la sincronización NUNCA los escribe. Los
+--  upserts de contacts.controller.ts (SyncedContactOrGroup) y de
+--  messages.controller.ts (Unsyncedcontact) no llevan estas columnas en el
+--  objeto a propósito —el mismo mecanismo que protege agenteHabilitado—, así
+--  que un DO UPDATE SET jamás las pisa: en fila nueva quedan NULL y en fila
+--  existente no se tocan. Solo las escriben los endpoints de edición.
+--
+--  custom_photo guarda una dataURL comprimida (o una URL); el tope de ~200KB lo
+--  valida la API (src/lib/contactoCustom.ts), no la base, para poder responder
+--  400 con un mensaje claro en vez de un error de constraint.
+-- -----------------------------------------------------------------------------
+ALTER TABLE app."SyncedContactOrGroup" ADD COLUMN IF NOT EXISTS custom_name  text;
+ALTER TABLE app."SyncedContactOrGroup" ADD COLUMN IF NOT EXISTS custom_photo text;
+ALTER TABLE app."Unsyncedcontact"      ADD COLUMN IF NOT EXISTS custom_name  text;
+ALTER TABLE app."Unsyncedcontact"      ADD COLUMN IF NOT EXISTS custom_photo text;
+
 -- Medición de consumo por request (CPU/RAM/egress) para calcular el costo de infra.
 CREATE TABLE IF NOT EXISTS app."Telemetry" (
   id                bigserial PRIMARY KEY,
@@ -765,6 +786,56 @@ CREATE INDEX IF NOT EXISTS webhook_endpoint_event_type_idx
   ON events.webhook_endpoint_event (event_type, endpoint_id);
 
 -- -----------------------------------------------------------------------------
+--  events.origen_clave() — la forma canónica del identificador de un chat
+--
+--  Existe porque el MISMO chat tiene tres escrituras según quién lo mire:
+--  la vía QR guarda "573001234567@c.us" (o "...@lid"), la vía Meta guarda el
+--  teléfono pelado ("+573001234567"), y el front compara con el criterio de
+--  waIdDeChat (botopia-whatsapp/src/lib/waId.ts). Si cada lado normalizara por
+--  su cuenta, el filtro por origen fallaría justo en el cruce de vías. Una sola
+--  función, en la base, y TODOS (fan-out, API de /connections) pasan por aquí.
+--
+--  La regla, calcada de waIdDeChat:
+--    · @c.us / @s.whatsapp.net → el teléfono en dígitos (así casa con Meta)
+--    · @g.us / @lid / @broadcast / @newsletter → el id ENTERO en minúsculas
+--      (un @lid NO es un teléfono: reducirlo a dígitos inventaría un número)
+--    · sin sufijo (teléfono de la vía Meta) → solo dígitos
+-- -----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION events.origen_clave(p_bruto text)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT CASE
+    WHEN v IS NULL OR v = '' THEN NULL
+    WHEN v ~ '@(c\.us|s\.whatsapp\.net)$'
+      THEN COALESCE(NULLIF(regexp_replace(split_part(v, '@', 1), '[^0-9]', '', 'g'), ''), v)
+    WHEN v ~ '@(g\.us|lid|broadcast|newsletter)$' THEN v
+    ELSE COALESCE(NULLIF(regexp_replace(v, '[^0-9]', '', 'g'), ''), v)
+  END
+  FROM (SELECT lower(btrim(p_bruto))) AS t(v);
+$$;
+
+-- -----------------------------------------------------------------------------
+--  events.webhook_endpoint_origin — de qué chats quiere recibir cada destino
+--
+--  SIN FILAS = TODOS los orígenes. Esa ausencia es el contrato de compatibilidad:
+--  los webhooks creados antes de que existiera esta tabla no tienen filas aquí y
+--  siguen recibiendo todo, sin migración de datos ni columna que rellenar.
+--
+--  Se guarda la CLAVE canónica (events.origen_clave), no el wa_id crudo: el
+--  fan-out compara con un `=` simple y el mismo contacto elegido desde la vía QR
+--  filtra también sus eventos de la vía Meta. Fila por origen y no un array, por
+--  el mismo motivo que webhook_endpoint_event: el fan-out pregunta por igualdad
+--  y la PK compuesta hace imposible duplicar un origen.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS events.webhook_endpoint_origin (
+  endpoint_id uuid NOT NULL REFERENCES events.webhook_endpoint(id) ON DELETE CASCADE,
+  origin_key  text NOT NULL,
+  PRIMARY KEY (endpoint_id, origin_key)
+);
+
+-- -----------------------------------------------------------------------------
 --  events.email_preference — los interruptores de aviso por correo
 --
 --  timezone es COLUMNA y no constante porque hoy 'America/Bogota' está escrito a
@@ -908,6 +979,7 @@ DECLARE
   v_event_id    bigint;
   v_deliveries  integer := 0;
   v_n           integer;
+  v_origen      text;
 BEGIN
   INSERT INTO events.event (account_id, type, occurred_at, payload, dedupe_key)
   VALUES (p_account_id, p_type, p_occurred_at, p_payload, p_dedupe_key)
@@ -925,6 +997,25 @@ BEGIN
     RETURN v_event_id;
   END IF;
 
+  -- Origen del evento: el chat de WhatsApp del que nace la notificación. SOLO
+  -- los eventos de mensajes se filtran por origen; el resto (escalamiento, tope
+  -- de plan, líneas caídas) llega SIEMPRE a todos los destinos suscritos — un
+  -- cliente que filtra por tres chats sigue necesitando enterarse de que su
+  -- línea se cayó o de que se le acabó el cupo del mes.
+  --
+  -- El origen se saca del payload y no de un parámetro nuevo: los triggers y el
+  -- código emiten por esta MISMA función con la firma de siempre, y un parámetro
+  -- extra crearía una segunda sobrecarga de events.emitir a la que los llamadores
+  -- viejos no llegarían. group_id manda sobre wa_id (en un grupo el contacto ES
+  -- el grupo); phone es la forma de la vía Meta, que no tiene wa_id.
+  IF p_type IN ('message.received', 'message.sent', 'contact.replied') THEN
+    v_origen := events.origen_clave(COALESCE(
+      p_payload->'contact'->>'group_id',
+      p_payload->'contact'->>'wa_id',
+      p_payload->'contact'->>'phone'
+    ));
+  END IF;
+
   INSERT INTO events.delivery (event_id, channel, endpoint_id)
   SELECT v_event_id, 'webhook', e.id
   FROM events.webhook_endpoint e
@@ -932,6 +1023,19 @@ BEGIN
   WHERE e.account_id = p_account_id
     AND e.is_active
     AND s.event_type = p_type
+    -- Filtro por origen. Un endpoint sin filas en webhook_endpoint_origin
+    -- recibe todo (compatibilidad hacia atrás); con filas, solo los eventos
+    -- cuyo chat de origen esté en su lista. Un evento sin origen no se filtra.
+    AND (
+      v_origen IS NULL
+      OR NOT EXISTS (
+        SELECT 1 FROM events.webhook_endpoint_origin o WHERE o.endpoint_id = e.id
+      )
+      OR EXISTS (
+        SELECT 1 FROM events.webhook_endpoint_origin o
+        WHERE o.endpoint_id = e.id AND o.origin_key = v_origen
+      )
+    )
   ON CONFLICT DO NOTHING;
   GET DIAGNOSTICS v_n = ROW_COUNT;
   v_deliveries := v_deliveries + v_n;

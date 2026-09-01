@@ -10,6 +10,7 @@ import {
   syncContactsToDB,
   updateAgenteHabilitado,
   bulkUpdateAgenteHabilitado,
+  updateCustomContact,
   getSyncedContacts,
   deleteSynced,
   fotosDeChats
@@ -36,6 +37,8 @@ router.post(
   authenticateToken,
   bulkUpdateAgenteHabilitado
 )
+// Nombre y foto personalizados de un contacto/grupo sincronizado.
+router.post('/update-custom', authenticateToken, updateCustomContact)
 router.get('/synced-contacts', authenticateToken, getSyncedContacts)
 router.post('/delete-synced', authenticateToken, deleteSynced)
 router.post('/toggle-unknown-ai', authenticateToken, toggleUnknownAi)

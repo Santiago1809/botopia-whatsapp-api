@@ -239,6 +239,30 @@ export async function sincronizadosDelUsuario(
 }
 
 /**
+ * Un solo contacto de `SyncedContactOrGroup`, si cuelga de un número del
+ * usuario. Existe junto a `sincronizadosDelUsuario` (que resuelve LISTAS)
+ * porque el endpoint de edición de nombre/foto necesita además el `numberId`
+ * para emitir el evento de socket, y pedir la lista para un solo id obligaba a
+ * una segunda consulta solo para leer ese campo.
+ */
+export async function sincronizadoPropio(
+  userId: number,
+  id: number | string
+): Promise<{ id: number; numberId: number } | null> {
+  const numerico = Number(id)
+  if (!Number.isInteger(numerico)) return null
+
+  const { rows } = await query<{ id: number; numberId: number }>(
+    `SELECT s.id, s."numberId"
+       FROM app."SyncedContactOrGroup" s
+       JOIN app."WhatsAppNumber" w ON w.id = s."numberId"
+      WHERE s.id = $1 AND w."userId" = $2`,
+    [numerico, userId]
+  )
+  return rows[0] ?? null
+}
+
+/**
  * Igual, para `Unsyncedcontact` (la tabla de quienes escribieron sin estar
  * sincronizados). Devuelve la fila —no solo el id— porque los endpoints que la
  * tocan necesitan después el `numberid` para emitir el evento de socket.
