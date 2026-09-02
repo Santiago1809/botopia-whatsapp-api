@@ -46,6 +46,63 @@ function aNumeroParaJson(valor: unknown): number | null {
 }
 
 
+// ---------------------------------------------------------------------------
+//  Catálogo servidor de planes de dLocal Go
+//
+//  El plan que se activa NO puede salir del body: createSubscription guarda el
+//  planName/amount que mande el cliente, y antes activateUserPlan usaba ese
+//  plan_name tal cual — pagar el plan más barato con planName "INDUSTRIAL"
+//  activaba INDUSTRIAL. La única fuente confiable es lo que dLocal devuelve del
+//  pago real (plan_token y amount), cruzado contra ESTA tabla del servidor.
+//
+//  PENDIENTE_LLENAR: los plan_token reales no aparecen en este código (viven en
+//  el panel de dLocal Go / en el front). Hay que reemplazar las claves
+//  'PENDIENTE_TOKEN_*' por los tokens reales y poner el precio de cada plan en
+//  `amount` (misma moneda que reporta dLocal). Mientras el catálogo esté vacío,
+//  todo pago COMPLETED activa BASIC (el plan más bajo de pago) y deja log.error:
+//  degradar es reversible; regalar INDUSTRIAL no.
+// ---------------------------------------------------------------------------
+const CATALOGO_PLANES_DLOCAL: Record<
+    string,
+    { plan: SubscriptionType; amount: number | null }
+> = {
+    // PENDIENTE_LLENAR — sustituir claves por los plan_token reales de dLocal Go
+    // y `amount: null` por el precio exacto del plan:
+    PENDIENTE_TOKEN_BASIC: { plan: 'BASIC', amount: null },
+    PENDIENTE_TOKEN_PRO: { plan: 'PRO', amount: null },
+    PENDIENTE_TOKEN_INDUSTRIAL: { plan: 'INDUSTRIAL', amount: null }
+};
+
+/** Plan de pago más bajo: a lo que se degrada cualquier pago que no cuadre. */
+const PLAN_MAS_BAJO: SubscriptionType = 'BASIC';
+
+/**
+ * Deriva el plan efectivo del PAGO (datos de dLocal), nunca del body.
+ * Token fuera del catálogo o monto que no cuadra => plan más bajo + log.error.
+ */
+function planEfectivoDelPago(
+    planTokenPago: unknown,
+    amountPago: unknown
+): SubscriptionType {
+    const token = typeof planTokenPago === 'string' ? planTokenPago : '';
+    const entrada = CATALOGO_PLANES_DLOCAL[token];
+    if (!entrada) {
+        console.error(
+            '❌ plan_token del pago no está en CATALOGO_PLANES_DLOCAL: se activa el plan más bajo. Llenar el catálogo (PENDIENTE_LLENAR) con los tokens reales.',
+            { planTokenPago, amountPago }
+        );
+        return PLAN_MAS_BAJO;
+    }
+    if (entrada.amount !== null && !montosIguales(entrada.amount, amountPago)) {
+        console.error(
+            '❌ El monto del pago no cuadra con el precio del catálogo: se activa el plan más bajo.',
+            { token, esperado: entrada.amount, pagado: amountPago }
+        );
+        return PLAN_MAS_BAJO;
+    }
+    return entrada.plan;
+}
+
 export const createSubscription = async (req: CustomRequest, res: Response) => {
     try {
         const { planToken, amount, planName } = req.body;
@@ -232,14 +289,21 @@ export const handleNotification = async (req: Request, res: Response) => {
         // Get the most recent subscription
         const subscription = subscriptions[0];
 
-        // Validación adicional. Antes era `subscription.amount !== dloData...amount`:
-        // una comparación estricta entre dos flotantes que, además, podían no ser
-        // del mismo tipo (la base entrega numeric como string). Ahora se comparan
-        // los dos en centavos enteros, que es exacto.
+        // El plan que se va a activar sale del PAGO (plan_token + amount que
+        // reporta dLocal, cruzados con el catálogo del servidor), jamás del
+        // plan_name/amount que el cliente escribió en el body al crear la fila.
+        let planEfectivo = planEfectivoDelPago(
+            dloData.subscription.plan.plan_token,
+            dloData.subscription.plan.amount
+        );
+
+        // Antes esta diferencia solo se avisaba (console.warn) y se activaba
+        // igual el plan_name del body. Si el monto guardado no cuadra con lo que
+        // dLocal cobró de verdad, el body mintió: se degrada al plan más bajo.
         if (!montosIguales(subscription.amount, dloData.subscription.plan.amount)) {
             const centavosGuardado = aCentavos(subscription.amount);
             const centavosDlo = aCentavos(dloData.subscription.plan.amount);
-            console.warn('⚠️ Diferencia en montos:', {
+            console.error('❌ Diferencia en montos: se degrada al plan más bajo.', {
                 storedAmount: subscription.amount,
                 dloAmount: dloData.subscription.plan.amount,
                 subscriptionId: subscription.id,
@@ -248,6 +312,7 @@ export const handleNotification = async (req: Request, res: Response) => {
                         ? Math.abs(centavosGuardado - centavosDlo) / 100
                         : 'no comparable'
             });
+            planEfectivo = PLAN_MAS_BAJO;
         }
 
         // 3. Actualizar con todos los datos de DLO
@@ -281,9 +346,10 @@ export const handleNotification = async (req: Request, res: Response) => {
             return;
         }
 
-        // 4. Si el pago fue completado, activar el plan
+        // 4. Si el pago fue completado, activar el plan DERIVADO DEL PAGO
+        // (nunca subscription.plan_name, que vino del body del cliente).
         if (dloData.status === 'COMPLETED') {
-            await activateUserPlan(subscription.user_id, subscription.plan_name);
+            await activateUserPlan(subscription.user_id, planEfectivo);
         }
 
         res.status(200).json({ success: true });
@@ -295,40 +361,11 @@ export const handleNotification = async (req: Request, res: Response) => {
 
 type SubscriptionType = 'FREE' | 'BASIC' | 'PRO' | 'INDUSTRIAL' | 'EXPIRED';
 
-async function activateUserPlan(userId: string, planName: string) {
-    // Normalize plan name: remove special chars, convert to uppercase, and trim
-    const normalizedPlanName = planName
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
-        .replace(/[^a-zA-Z0-9\s]/g, '') // Remove special characters
-        .toUpperCase()
-        .trim();
-
-    // Convert the plan name to the subscription type
-    let subscription: SubscriptionType;
-    switch (true) {
-        case /PLAN\s*BASIC/.test(normalizedPlanName):
-        case /BASICO/.test(normalizedPlanName):
-        case /BÁSICO/.test(normalizedPlanName):
-            subscription = 'BASIC';
-            break;
-        case /PLAN\s*PRO/.test(normalizedPlanName):
-        case /PRO/.test(normalizedPlanName):
-            subscription = 'PRO';
-            break;
-        case /PLAN\s*INDUSTRIAL/.test(normalizedPlanName):
-        case /INDUSTRIAL/.test(normalizedPlanName):
-            subscription = 'INDUSTRIAL';
-            break;
-        default:
-            console.error('Plan no reconocido:', {
-                original: planName,
-                normalized: normalizedPlanName
-            });
-            // Instead of throwing, we could set a default plan
-            subscription = 'BASIC';
-            console.warn(`⚠️ Plan no reconocido, usando BASIC como valor por defecto para: ${planName}`);
-    }
+// Antes recibía un `planName: string` (el plan_name que el CLIENTE escribió en
+// el body de createSubscription) y lo parseaba con regex: pagar el plan barato
+// mandando planName "INDUSTRIAL" activaba INDUSTRIAL. Ahora recibe el plan ya
+// derivado del pago real via planEfectivoDelPago(); aquí no se interpreta nada.
+async function activateUserPlan(userId: string, subscription: SubscriptionType) {
 
     const { error } = await supabase
         .from('User')

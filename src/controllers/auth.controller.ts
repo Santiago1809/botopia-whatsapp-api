@@ -57,10 +57,12 @@ async function usernameLibreDesde(email: string): Promise<string> {
 
 export const registerUser = async (req: Request, res: Response) => {
   try {
+    // OJO: aquí NO se lee `role` (ni active, subscription, plan o id) del body.
+    // El registro es público y el adaptador de supabase persiste toda clave que
+    // llegue al INSERT: aceptar `role` permitía crear un admin con un POST.
     const {
       username: usernamePedido,
       password,
-      role,
       email,
       phoneNumber,
       countryCode
@@ -102,6 +104,9 @@ export const registerUser = async (req: Request, res: Response) => {
       return
     }
     const hashedPassword = await bcrypt.hash(password, 10)
+    // Lista blanca explícita de columnas que el registro puede escribir. Nada
+    // más del body llega a la base, y el rol se fuerza SIEMPRE a 'user': subir
+    // a admin solo puede hacerlo un admin ya existente, nunca el propio registro.
     const { data: user } = await supabase
       .from('User')
       .insert({
@@ -110,12 +115,14 @@ export const registerUser = async (req: Request, res: Response) => {
         email,
         phoneNumber,
         countryCode,
-        role: role ?? Role.user
+        role: Role.user
       })
       .select()
       .single()
+    // El rol del token se fija aquí (no se lee de `user`): la firma es la
+    // credencial y no debe depender de lo que haya vuelto de la base.
     const token = jwt.sign(
-      { username: user.username, role: user.role },
+      { username: user.username, role: Role.user },
       JWT_SECRET,
       { expiresIn: '5h' }
     )
@@ -141,7 +148,7 @@ export const registerUser = async (req: Request, res: Response) => {
       console.error('Error al enviar email de bienvenida:', err)
       // No fallar el registro si el email falla
     })
-    res.json({ token, user: { id: user.id, username: user.username, role: user.role, email: user.email } })
+    res.json({ token, user: { id: user.id, username: user.username, role: Role.user, email: user.email } })
   } catch (error) {
     res
       .status(HttpStatusCode.InternalServerError)
