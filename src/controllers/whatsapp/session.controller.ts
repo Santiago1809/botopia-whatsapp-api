@@ -1482,32 +1482,32 @@ export async function restaurarSesionesGuardadas(io: Server): Promise<void> {
     `🔄 Restaurando ${lineas.length} sesión(es) de WhatsApp guardada(s): ${lineas.join(', ')}`
   )
 
-  // EN PARALELO y con TIMEOUT POR LÍNEA. En serie con `await` a secas, la primera
-  // sesión guardada que ya no valía (pide QR y nunca llega a 'ready') colgaba el
-  // bucle para siempre y las demás líneas quedaban mudas tras el reinicio — el
-  // arranque de una línea solo resuelve al llegar 'ready', no al pintar el QR.
-  // `conLimite` corta a los ESPERA_RESTAURACION_MS (esa línea pedirá QR cuando
-  // alguien abra su pantalla) y `allSettled` deja que cada una falle sola sin
-  // arrastrar a las otras.
-  const resultados = await Promise.allSettled(
-    lineas.map((numberId) =>
-      conLimite(
+  // SECUENCIAL, pero con TIMEOUT POR LÍNEA. Dos problemas que hay que resolver a la vez:
+  //
+  //   · En serie con `await` a secas, la primera sesión que ya no valía (pide QR y nunca
+  //     llega a 'ready') colgaba el bucle para siempre y las demás quedaban mudas.
+  //   · En PARALELO (Promise.allSettled) se lanzan TODOS los Chromium a la vez al arrancar,
+  //     y varios navegadores despertando juntos revientan la memoria del contenedor: el
+  //     arranque se cae con OOM y el deploy entero falla. (Pasó: el deploy del 1-sep murió
+  //     así hasta que se volvió a secuencial.)
+  //
+  // La respuesta correcta es UNA a la vez —sin pico de memoria— pero con `conLimite`, para
+  // que una línea trabada en el QR se rinda a los ESPERA_RESTAURACION_MS y deje pasar a la
+  // siguiente (pedirá QR cuando alguien abra su pantalla) en vez de bloquear a todas.
+  for (const numberId of lineas) {
+    try {
+      await conLimite(
         arrancarLinea(numberId, io),
         ESPERA_RESTAURACION_MS,
         `restaurar línea ${numberId}`
       )
-    )
-  )
-  resultados.forEach((r, i) => {
-    const numberId = lineas[i]
-    if (r.status === 'fulfilled') {
       console.log(`✅ Línea ${numberId} restaurada y escuchando mensajes.`)
-    } else {
+    } catch (e) {
       console.warn(
         `⚠️ No se pudo restaurar la línea ${numberId}: ${
-          r.reason instanceof Error ? r.reason.message : String(r.reason)
+          e instanceof Error ? e.message : String(e)
         }. Pedirá QR cuando alguien abra su pantalla.`
       )
     }
-  })
+  }
 }
