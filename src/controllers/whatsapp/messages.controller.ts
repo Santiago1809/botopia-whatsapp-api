@@ -1128,6 +1128,39 @@ export async function handleIncomingMessage(
     }
   }
 
+  /**
+   * TEXTO QUE VE LA IA. Un sticker, una foto o una nota de voz llegan con
+   * `msg.body` vacío: hasta hoy esos mensajes se descartaban y el agente ni
+   * respondía (el cliente mandó un sticker y no pasó nada — bug reportado). No
+   * podemos leer el contenido del sticker, pero SÍ podemos decirle a la IA qué
+   * llegó, para que responda con naturalidad ("¡jaja, buen sticker!" / "recibí
+   * tu foto, ¿me cuentas de qué se trata?") en vez de quedarse muda. Si hay
+   * caption o texto, ese manda; si no, una descripción por tipo. Nunca vacío
+   * cuando hubo adjunto.
+   */
+  const textoParaIA = (() => {
+    const cuerpo = (msg.body ?? '').trim()
+    if (cuerpo) return cuerpo
+    if (!msg.hasMedia) return cuerpo
+    switch (msg.type) {
+      case 'sticker':
+        return '[el cliente envió un sticker]'
+      case 'image':
+        return '[el cliente envió una imagen sin texto]'
+      case 'video':
+        return '[el cliente envió un video sin texto]'
+      case 'ptt':
+      case 'audio':
+        return '[el cliente envió una nota de voz]'
+      case 'document':
+        return '[el cliente envió un documento]'
+      case 'location':
+        return '[el cliente compartió una ubicación]'
+      default:
+        return '[el cliente envió un adjunto]'
+    }
+  })()
+
   // El historial se saca del try para que los eventos puedan mirarlo: es el
   // ÚNICO sitio del sistema donde se ve `m.fromMe`, o sea lo único que permite
   // distinguir "el lead escribió" de "el lead CONTESTÓ". Volver a pedirlo sería
@@ -1310,7 +1343,9 @@ export async function handleIncomingMessage(
     if (!syncDb) {
       try {
         // Validar que el mensaje y el chat están correctamente formateados
-        if (!msg || !msg.from || !msg.body) {
+        // Antes exigía msg.body y mataba el sticker/foto/nota de voz. Ahora basta
+        // con que haya texto PARA LA IA (que ya describe el adjunto si no hay caption).
+        if (!msg || !msg.from || !textoParaIA) {
           descartar('punto 2: condición no cumplida más adelante en el flujo')
           return
         }
@@ -1392,7 +1427,7 @@ export async function handleIncomingMessage(
           number: numberFromWaId,
           name: nombreVisible,
           lastmessagetimestamp: Date.now(),
-          lastmessagepreview: msg.body || ''
+          lastmessagepreview: textoParaIA || ''
         }
 
         // Intentar insertar o actualizar
@@ -1502,7 +1537,7 @@ export async function handleIncomingMessage(
           try {
             aiResponse = await getAIResponse(
               number.aiPrompt,
-              msg.body,
+              textoParaIA,
               number.aiModel,
               [] // Puedes pasar el historial si lo necesitas
             )
@@ -1549,7 +1584,7 @@ export async function handleIncomingMessage(
           // Lógica: solo bloquear si el mensaje recibido es igual al anterior Y la respuesta IA también es igual a la anterior
           if (
             lastReply &&
-            lastReply === msg.body &&
+            lastReply === textoParaIA &&
             lastAIResponse &&
             aiResponse[0] === lastAIResponse
           ) {
@@ -1558,7 +1593,7 @@ export async function handleIncomingMessage(
             return
           }
           // Si vas a responder, guarda el mensaje recibido y la respuesta IA
-          lastUnsyncedReplies.set(waIdToCheck, msg.body)
+          lastUnsyncedReplies.set(waIdToCheck, textoParaIA)
           lastUnsyncedAIResponse.set(waIdToCheck, aiResponse[0])
 
           // La respuesta de la IA es un mensaje SALIENTE: se cobra y se respeta
@@ -1806,7 +1841,7 @@ export async function handleIncomingMessage(
         try {
           respuestaIA = await getAIResponse(
             number.aiPrompt,
-            msg.body,
+            textoParaIA,
             number.aiModel,
             aiChatHistory
           )
