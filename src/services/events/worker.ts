@@ -26,7 +26,7 @@ import { API_VERSION, depurarPayload } from './catalog.js'
 import { plantillaDeEvento, plantillaWebhookDeshabilitado } from './emailTemplates.js'
 import { descifrar } from './secretbox.js'
 import { cabeceras } from './signature.js'
-import { lookupFijado, validarDestino, type DireccionValidada } from './ssrf.js'
+import { lookupFijado, validarDestino, validarFormaDeUrl, type DireccionValidada } from './ssrf.js'
 
 // ---------------------------------------------------------------------------
 //  Parámetros. Cada número tiene un motivo, no son redondeos.
@@ -67,8 +67,22 @@ const LOTE = 50
 const POLL_MS = 2_000
 /** Máximo en vuelo por endpoint: un receptor lento no puede comerse el pool. */
 const CONCURRENCIA_POR_DESTINO = 4
-/** Arriendo de la reclamación: si el worker muere, la fila revive sola. */
-const ARRIENDO = "interval '2 minutes'"
+/**
+ * Arriendo de la reclamación: si el worker muere, la fila revive sola.
+ *
+ * 10 minutos y no 2: el arriendo tiene que superar lo que puede durar una
+ * entrega desde que se reclama hasta que se escribe su resultado, INCLUYENDO la
+ * espera en cola dentro del propio lote (50 filas a un mismo destino con 4
+ * carriles y ~40 s el peor intento son ~9 min de espera para las últimas). Con
+ * 2 minutos el arriendo vencía con la entrega en curso: otro worker reclamaba
+ * la misma fila, el receptor recibía el evento DOS veces y el 'succeeded' de
+ * uno pisaba el resultado del otro. El precio es que tras una muerte súbita del
+ * proceso una fila en vuelo tarda hasta 10 min en revivir — mejor eso que
+ * duplicar entregas. Además, cada fila renueva su arriendo justo antes de
+ * empezar (renovarArriendo), así el reloj de la entrega arranca de cero.
+ */
+const ARRIENDO_SEG = 10 * 60
+const ARRIENDO = `interval '${ARRIENDO_SEG} seconds'`
 
 /**
  * Tipo del evento de prueba. NO está en el catálogo a propósito: no se puede
@@ -154,11 +168,36 @@ async function enviarWebhook(fila: FilaEntrega): Promise<Resultado> {
   // 10.0.0.5 — eso es DNS rebinding y la única defensa es revalidar aquí.
   const destino = await validarDestino(fila.url)
   if (!destino.ok || !destino.ips || destino.ips.length === 0) {
+    // No todo rechazo de aquí es definitivo. Son tres casos distintos:
+    //   · URL mal formada / puerto prohibido / nombre de red interna: eso no
+    //     cambia solo — 'blocked' definitivo es lo correcto.
+    //   · El nombre resuelve a una IP privada: rechazo de seguridad (rebinding),
+    //     también definitivo — reintentar solo repetiría el rechazo.
+    //   · El DNS falló al resolver (EAI_AGAIN, resolvedor caído): tropiezo
+    //     TRANSITORIO. Antes esto caía en 'blocked' y la entrega se perdía para
+    //     siempre por un parpadeo de red; ahora va al calendario de reintentos.
+    // SUPUESTO documentado: validarDestino no distingue por código los dos
+    // últimos casos, solo por el texto del motivo ("privada o reservada" viene
+    // del chequeo de rangos de ssrf.ts). Si ese texto cambiara, el efecto sería
+    // reintentar un rechazo de seguridad hasta agotar intentos — sin que llegue
+    // a salir ninguna petición, así que la protección SSRF no se debilita.
+    const formaInvalida = !validarFormaDeUrl(fila.url).ok
+    const rechazoDeSeguridad =
+      formaInvalida || (destino.motivo ?? '').includes('privada o reservada')
+    if (rechazoDeSeguridad) {
+      return {
+        ok: false,
+        bloqueado: true,
+        errorKind: 'ssrf_blocked',
+        errorMessage: destino.motivo || 'Destino rechazado por la validación de seguridad.',
+        durationMs: Date.now() - inicio
+      }
+    }
     return {
       ok: false,
-      bloqueado: true,
-      errorKind: 'ssrf_blocked',
-      errorMessage: destino.motivo || 'Destino rechazado por la validación de seguridad.',
+      errorKind: 'dns',
+      errorMessage:
+        destino.motivo || 'No se pudo resolver el destino; se reintentará más tarde.',
       durationMs: Date.now() - inicio
     }
   }
@@ -515,14 +554,21 @@ async function registrarResultado(fila: FilaEntrega, resultado: Resultado): Prom
     ]
   )
 
+  // Todas las transiciones de estado exigen la HUELLA de la reclamación
+  // (status='delivering' + el attempt_count con el que se reclamó). Si otro
+  // worker volvió a reclamar la fila porque el arriendo venció con la entrega
+  // en vuelo, attempt_count ya subió: el UPDATE de este worker rezagado no toca
+  // nada y el resultado del dueño actual no se pisa.
   if (resultado.ok) {
-    await query(
+    const escrito = await query(
       `UPDATE events.delivery
           SET status='succeeded', completed_at=now(), last_status_code=$2,
               last_error_kind=NULL, last_error=NULL
-        WHERE id=$1`,
-      [fila.id, resultado.statusCode ?? null]
+        WHERE id=$1 AND status='delivering' AND attempt_count=$3`,
+      [fila.id, resultado.statusCode ?? null, fila.attempt_count]
     )
+    // Fila ya en manos de otro: tampoco se toca la racha del endpoint.
+    if (escrito.rowCount === 0) return
     if (fila.endpoint_id) {
       await query(
         `UPDATE events.webhook_endpoint SET failure_streak=0, updated_at=now() WHERE id=$1`,
@@ -545,20 +591,23 @@ async function registrarResultado(fila: FilaEntrega, resultado: Resultado): Prom
       `UPDATE events.delivery
           SET status='failed', next_attempt_at = now() + make_interval(secs => $2),
               last_status_code=$3, last_error_kind=$4, last_error=$5
-        WHERE id=$1`,
-      [fila.id, espera, resultado.statusCode ?? null, resultado.errorKind ?? null, recortar(resultado.errorMessage ?? '', 1000)]
+        WHERE id=$1 AND status='delivering' AND attempt_count=$6`,
+      [fila.id, espera, resultado.statusCode ?? null, resultado.errorKind ?? null, recortar(resultado.errorMessage ?? '', 1000), fila.attempt_count]
     )
     return
   }
 
   const estadoFinal = resultado.bloqueado ? 'blocked' : 'exhausted'
-  await query(
+  const cerrado = await query(
     `UPDATE events.delivery
         SET status=$2, completed_at=now(), last_status_code=$3,
             last_error_kind=$4, last_error=$5
-      WHERE id=$1`,
-    [fila.id, estadoFinal, resultado.statusCode ?? null, resultado.errorKind ?? null, recortar(resultado.errorMessage ?? '', 1000)]
+      WHERE id=$1 AND status='delivering' AND attempt_count=$6`,
+    [fila.id, estadoFinal, resultado.statusCode ?? null, resultado.errorKind ?? null, recortar(resultado.errorMessage ?? '', 1000), fila.attempt_count]
   )
+  // Si la fila ya es de otro worker, las consecuencias sobre el endpoint
+  // (racha, apagado) le tocan a él, no a este rezagado.
+  if (cerrado.rowCount === 0) return
 
   if (!fila.endpoint_id) return
 
@@ -656,8 +705,9 @@ async function apagarEndpoint(fila: FilaEntrega, motivo: string, seguidos: numbe
  * trae ya el evento y el destino.
  *
  * next_attempt_at pasa a ser el VENCIMIENTO DEL ARRIENDO, no la próxima espera:
- * si este proceso muere ahora mismo, la fila vuelve a ser elegible sola en 2
- * minutos y no hace falta ningún proceso reaper que limpie 'delivering'.
+ * si este proceso muere ahora mismo, la fila vuelve a ser elegible sola al
+ * vencer el arriendo y no hace falta ningún proceso reaper que limpie
+ * 'delivering'.
  */
 async function reclamarLote(): Promise<FilaEntrega[]> {
   const res = await query<FilaEntrega>(
@@ -705,8 +755,29 @@ async function conLimite<T>(items: T[], limite: number, fn: (item: T) => Promise
   await Promise.all(carriles)
 }
 
+/**
+ * Renueva el arriendo justo antes de empezar la entrega y confirma que la fila
+ * sigue siendo nuestra. El par (status='delivering', attempt_count) es la
+ * huella de la reclamación: si el arriendo venció mientras la fila esperaba su
+ * turno dentro del lote y otro worker la reclamó, attempt_count ya subió y este
+ * UPDATE no toca nada — entonces NO se envía, que es lo que impide la entrega
+ * duplicada. Con la renovación, el reloj del arriendo cuenta desde que la
+ * entrega ARRANCA, no desde que se reclamó el lote.
+ */
+async function renovarArriendo(fila: FilaEntrega): Promise<boolean> {
+  const res = await query(
+    `UPDATE events.delivery
+        SET next_attempt_at = now() + ${ARRIENDO}
+      WHERE id=$1 AND status='delivering' AND attempt_count=$2`,
+    [fila.id, fila.attempt_count]
+  )
+  return res.rowCount > 0
+}
+
 async function procesar(fila: FilaEntrega): Promise<void> {
   try {
+    // La fila ya no es nuestra: enviarla igual sería duplicarla.
+    if (!(await renovarArriendo(fila))) return
     const resultado =
       fila.channel === 'email' ? await enviarCorreo(fila) : await enviarWebhook(fila)
     await registrarResultado(fila, resultado)

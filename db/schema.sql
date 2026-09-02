@@ -176,6 +176,49 @@ ALTER TABLE app."SyncedContactOrGroup" ADD COLUMN IF NOT EXISTS custom_photo tex
 ALTER TABLE app."Unsyncedcontact"      ADD COLUMN IF NOT EXISTS custom_name  text;
 ALTER TABLE app."Unsyncedcontact"      ADD COLUMN IF NOT EXISTS custom_photo text;
 
+-- -----------------------------------------------------------------------------
+--  Acuse por reacción: cuando está encendido, el bot reacciona 👍 a cada mensaje
+--  entrante de un chat con agente activo (messages.controller.ts). Va en ALTER
+--  aparte (patrón email_verified_at) para que las bases existentes lo reciban.
+--  DEFAULT false: nace apagado y cada número lo enciende a propósito.
+-- -----------------------------------------------------------------------------
+ALTER TABLE app."WhatsAppNumber" ADD COLUMN IF NOT EXISTS ack_reaction boolean NOT NULL DEFAULT false;
+
+-- -----------------------------------------------------------------------------
+--  Vista previa de los ADJUNTOS de un chat (imagen, audio, documento).
+--
+--  Por qué existe: el historial se lee EN VIVO del WhatsApp del navegador
+--  (fetchMessages) y ahí un adjunto es solo `hasMedia=true` sin contenido; el
+--  panel no tenía nada que pintar. Aquí se guarda lo justo para la burbuja:
+--    · data_base64 SOLO si el archivo pesa ≤200KB — una vista previa, no un
+--      almacén de archivos; los grandes quedan como tarjeta con metadatos.
+--    · msg_timestamp en epoch ms (msg.timestamp*1000): es la llave con la que
+--      el front cruza el adjunto contra el mensaje del historial, porque los
+--      items del historial no viajan con su id de WhatsApp.
+--  chat_wa_id guarda el id CLÁSICO resuelto (idCanonico), no el @lid crudo,
+--  por la misma razón que el resto del sistema: la agenda vive en @c.us.
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS app."ChatMedia" (
+  id            bigserial PRIMARY KEY,
+  numberid      integer NOT NULL REFERENCES app."WhatsAppNumber"(id) ON DELETE CASCADE,
+  chat_wa_id    text NOT NULL,
+  wa_msg_id     text,
+  from_me       boolean NOT NULL DEFAULT false,
+  mimetype      text NOT NULL,
+  filename      text,
+  filesize      integer,
+  data_base64   text,
+  msg_timestamp bigint NOT NULL,
+  created_at    timestamptz NOT NULL DEFAULT now()
+);
+-- La consulta del panel: los adjuntos de UN chat, del más nuevo al más viejo.
+CREATE INDEX IF NOT EXISTS chatmedia_chat_idx
+  ON app."ChatMedia" (numberid, chat_wa_id, msg_timestamp DESC);
+-- Un adjunto por mensaje: el reintento de un downloadMedia no duplica filas.
+-- Parcial porque wa_msg_id puede faltar (ids @lid vacíos, ver messages.controller).
+CREATE UNIQUE INDEX IF NOT EXISTS chatmedia_msg_key
+  ON app."ChatMedia" (numberid, wa_msg_id) WHERE wa_msg_id IS NOT NULL;
+
 -- Medición de consumo por request (CPU/RAM/egress) para calcular el costo de infra.
 CREATE TABLE IF NOT EXISTS app."Telemetry" (
   id                bigserial PRIMARY KEY,
@@ -2299,3 +2342,42 @@ CREATE INDEX IF NOT EXISTS unsynced_numberid_ultimo_idx
 --  Los detalles de la firma y el porqué del DROP están junto a la propia
 --  función, más arriba en este archivo.
 -- =============================================================================
+
+
+-- =============================================================================
+--  VOTOS DE ENCUESTAS (app.poll_votes)
+--
+--  whatsapp-web.js emite 'vote_update' cada vez que alguien selecciona o
+--  deselecciona opciones en una encuesta enviada desde una línea. Ese evento es
+--  EFÍMERO: si nadie lo guarda, el resultado de la encuesta solo existe en el
+--  teléfono. Esta tabla es el registro; el listener vive en
+--  src/controllers/whatsapp/session.controller.ts.
+--
+--  IDEMPOTENTE POR DISEÑO: WhatsApp re-emite el estado COMPLETO del votante en
+--  cada interacción (no un delta), así que la fila es "el último estado de este
+--  votante en esta encuesta" y la clave única (numberid, poll_id, votante) hace
+--  que un re-voto o un evento duplicado sea un UPDATE y no una fila más.
+--
+--  · votante guarda el TELÉFONO ya resuelto (el @lid se traduce con
+--    getContactLidAndPhone antes de escribir, mismo mecanismo que
+--    messages.controller.ts usa para los remitentes).
+--  · opcion es jsonb (array de nombres) porque una encuesta con
+--    allowMultipleAnswers permite varias a la vez, y un array vacío significa
+--    "retiró su voto" — que también es información.
+--  · voted_at es epoch ms (bigint), el senderTimestampMs que reporta WhatsApp,
+--    mismo criterio que lastmessagetimestamp en Unsyncedcontact.
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS app.poll_votes (
+  id        serial PRIMARY KEY,
+  numberid  integer NOT NULL REFERENCES app."WhatsAppNumber"(id) ON DELETE CASCADE,
+  chat      text NOT NULL,
+  poll_id   text NOT NULL,
+  pregunta  text,
+  votante   text NOT NULL,
+  opcion    jsonb NOT NULL DEFAULT '[]'::jsonb,
+  voted_at  bigint NOT NULL,
+  CONSTRAINT poll_votes_unico UNIQUE (numberid, poll_id, votante)
+);
+
+-- La consulta del panel es siempre "los votos de las encuestas de ESTE chat".
+CREATE INDEX IF NOT EXISTS poll_votes_chat_idx ON app.poll_votes (numberid, chat);

@@ -2,7 +2,12 @@
 import { HttpStatusCode } from 'axios'
 import type { Response } from 'express'
 import type { Server } from 'socket.io'
+// Import de VALOR aparte del de tipos: whatsapp-web.js es CommonJS y en ESM las
+// clases solo llegan por el default (mismo patrón que session.controller.ts).
+import whatsappWeb from 'whatsapp-web.js'
 import type { Chat, Client, Message } from 'whatsapp-web.js'
+
+const { MessageMedia } = whatsappWeb
 
 import { supabase } from '../../config/db.js'
 import { traerMensajes } from '../../lib/chatDeRespaldo.js'
@@ -18,6 +23,10 @@ import {
 import { getCurrentUTCDate } from '../../lib/dateUtils.js'
 import { getAIResponse } from '../../services/ai.service.js'
 import { exigirNumeroPropio } from '../../lib/propiedad.js'
+// SQL directo para app."ChatMedia": el adaptador supabase lleva una lista blanca
+// de tablas (supabase-adapter.ts) que no es de este módulo; `query` es la vía
+// oficial para tablas nuevas (mismo patrón que propiedad.ts).
+import { query } from '../../lib/db.js'
 import { clasificarErrorIA, registrarUsoIA } from '../../services/aiUsage.js'
 import { transporter } from '../../services/email.service.js'
 import {
@@ -141,6 +150,474 @@ async function devolverMessageUsage(
     )
   }
 }
+// ---------------------------------------------------------------------------
+//  MEDIA (adjuntos): envío desde el panel, recepción y vista previa.
+// ---------------------------------------------------------------------------
+
+/**
+ * ¿Es un id de chat de WhatsApp? Vivía como función local de sendMessage; se iza
+ * a módulo para que send-media aplique EXACTAMENTE la misma regla y las dos vías
+ * no puedan separarse.
+ */
+function esWhatsAppIdValido(id: string | undefined): boolean {
+  return (
+    typeof id === 'string' &&
+    (/^[0-9]+@c\.us$/.test(id) || // usuario
+      /^[0-9]+(-[0-9]+)?@g\.us$/.test(id)) // grupo (con o sin guion)
+  )
+}
+
+/**
+ * Tipos que el panel puede ENVIAR. Lista cerrada a propósito: un mp4 de 10MB o
+ * un .exe disfrazado no tienen por qué pasar por la línea del cliente. audio/mp3
+ * no es un MIME estándar pero los navegadores lo producen: se normaliza a mpeg.
+ */
+const MIME_PERMITIDOS = new Map<string, string>([
+  ['image/jpeg', 'image/jpeg'],
+  ['image/png', 'image/png'],
+  ['image/webp', 'image/webp'],
+  ['application/pdf', 'application/pdf'],
+  ['audio/ogg', 'audio/ogg'],
+  ['audio/mpeg', 'audio/mpeg'],
+  ['audio/mp3', 'audio/mpeg']
+])
+
+/** 10MB de archivo real (no de base64): tope de envío. */
+const TOPE_ADJUNTO_BYTES = 10 * 1024 * 1024
+/** Hasta aquí se guarda el base64 como vista previa; más grande, solo metadatos. */
+const TOPE_PREVIA_BYTES = 200 * 1024
+/** Un downloadMedia colgado no puede frenar el flujo del mensaje. */
+const TIEMPO_MAX_DESCARGA_MS = 15000
+
+/** Bytes reales de un base64 (el string pesa 4/3 del archivo). */
+function bytesDeBase64(b64: string): number {
+  const sinRelleno = b64.replace(/=+$/, '')
+  return Math.floor((sinRelleno.length * 3) / 4)
+}
+
+/** La forma en que un adjunto viaja al front, pegado a su mensaje del historial. */
+export interface MediaDeMensaje {
+  mimetype: string
+  filename: string | null
+  filesize: number | null
+  /** Solo presente si el archivo pesa ≤200KB; si no, el front pinta la tarjeta. */
+  dataBase64: string | null
+}
+
+interface FilaChatMedia {
+  wa_msg_id: string | null
+  from_me: boolean
+  mimetype: string
+  filename: string | null
+  filesize: number | null
+  data_base64: string | null
+  msg_timestamp: string | number
+}
+
+/**
+ * Guarda la vista previa de un adjunto. Nunca lanza: perder la vista previa es
+ * un detalle; perder el mensaje (o la respuesta del agente), no.
+ * El ON CONFLICT usa el índice parcial chatmedia_msg_key: el reintento de un
+ * mismo mensaje no duplica filas.
+ */
+async function guardarMediaDeChat(fila: {
+  numberId: string | number
+  chatWaId: string
+  waMsgId: string | null
+  fromMe: boolean
+  media: MediaDeMensaje
+  msgTimestampMs: number
+}): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO app."ChatMedia"
+         (numberid, chat_wa_id, wa_msg_id, from_me, mimetype, filename, filesize, data_base64, msg_timestamp)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT (numberid, wa_msg_id) WHERE wa_msg_id IS NOT NULL DO NOTHING`,
+      [
+        Number(fila.numberId),
+        fila.chatWaId,
+        fila.waMsgId,
+        fila.fromMe,
+        fila.media.mimetype,
+        fila.media.filename,
+        fila.media.filesize,
+        fila.media.dataBase64,
+        fila.msgTimestampMs
+      ]
+    )
+    // Limpieza oportunista: las vistas previas no son un archivo histórico.
+    // Va sin await y sin propagar errores — es mantenimiento, no negocio.
+    void query(
+      `DELETE FROM app."ChatMedia" WHERE numberid = $1 AND created_at < now() - interval '60 days'`,
+      [Number(fila.numberId)]
+    ).catch(() => {})
+  } catch (e) {
+    console.warn(
+      `⚠️ No se pudo guardar la vista previa del adjunto (línea ${fila.numberId}, chat ${fila.chatWaId}): ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    )
+  }
+}
+
+/** Las vistas previas guardadas de un chat (por sus dos ids, crudo y clásico). */
+async function mediaGuardadaDelChat(
+  numberId: string | number,
+  idsDelChat: string[],
+  limite = 60
+): Promise<FilaChatMedia[]> {
+  try {
+    const { rows } = await query<FilaChatMedia>(
+      `SELECT wa_msg_id, from_me, mimetype, filename, filesize, data_base64, msg_timestamp
+         FROM app."ChatMedia"
+        WHERE numberid = $1 AND chat_wa_id = ANY($2::text[])
+        ORDER BY msg_timestamp DESC
+        LIMIT $3`,
+      [Number(numberId), idsDelChat, limite]
+    )
+    return rows
+  } catch (e) {
+    console.warn(
+      `⚠️ No se pudieron leer las vistas previas del chat ${idsDelChat[0]}: ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    )
+    return []
+  }
+}
+
+/**
+ * Pega cada adjunto guardado a su mensaje del historial. La llave es el
+ * timestamp en ms + la dirección (fromMe): los items del historial no viajan con
+ * su id de WhatsApp, y el timestamp del mensaje es idéntico en ambos lados
+ * porque los dos salen de msg.timestamp*1000. La tolerancia de 1,5s cubre el
+ * redondeo de relojes al guardar un envío propio con Date.now() de respaldo.
+ */
+function adjuntarMediaAlHistorial<
+  T extends { timestamp: number; fromMe: boolean }
+>(chatHistory: T[], filas: FilaChatMedia[]): Array<T & { media?: MediaDeMensaje }> {
+  if (!filas.length) return chatHistory
+  return chatHistory.map((item) => {
+    const fila = filas.find(
+      (f) =>
+        f.from_me === !!item.fromMe &&
+        Math.abs(Number(f.msg_timestamp) - item.timestamp) < 1500
+    )
+    if (!fila) return item
+    return {
+      ...item,
+      media: {
+        mimetype: fila.mimetype,
+        filename: fila.filename,
+        filesize: fila.filesize == null ? null : Number(fila.filesize),
+        dataBase64: fila.data_base64
+      }
+    }
+  })
+}
+
+/**
+ * Descarga el adjunto de un mensaje entrante SIN poder romper el flujo: timeout
+ * duro y todo error degradado a "sin vista previa". Devuelve null si no se pudo.
+ */
+async function descargarMediaEntrante(
+  msg: Message,
+  etiqueta: string
+): Promise<MediaDeMensaje | null> {
+  let reloj: ReturnType<typeof setTimeout> | undefined
+  try {
+    const media = await Promise.race([
+      msg.downloadMedia(),
+      new Promise<never>((_, reject) => {
+        reloj = setTimeout(
+          () => reject(new Error(`timeout de ${TIEMPO_MAX_DESCARGA_MS}ms descargando el adjunto`)),
+          TIEMPO_MAX_DESCARGA_MS
+        )
+      })
+    ])
+    if (!media || !media.mimetype) return null
+    const bytes =
+      media.filesize != null ? Number(media.filesize) : bytesDeBase64(media.data ?? '')
+    return {
+      mimetype: media.mimetype,
+      filename: media.filename ?? null,
+      filesize: bytes,
+      // Vista previa solo si es pequeño: la base guarda burbujas, no archivos.
+      dataBase64: media.data && bytes <= TOPE_PREVIA_BYTES ? media.data : null
+    }
+  } catch (e) {
+    console.warn(
+      `⚠️ No se pudo descargar el adjunto de ${etiqueta}: ${
+        e instanceof Error ? e.message : String(e)
+      }. El mensaje sigue su flujo sin vista previa.`
+    )
+    return null
+  } finally {
+    if (reloj) clearTimeout(reloj)
+  }
+}
+
+/**
+ * POST /api/whatsapp/send-media — enviar un adjunto desde el panel.
+ *
+ * Cuerpo: { numberId, to, mimetype, dataBase64, filename?, caption?, comoNotaDeVoz? }
+ * Misma disciplina que sendMessage y en el mismo orden: validar el destino, el
+ * archivo, la PROPIEDAD de la línea, la sesión viva, y RESERVAR el cupo antes de
+ * enviar (con devolución si el envío falla). Un adjunto cuesta un mensaje: se
+ * cobra con el mismo increment que el texto.
+ */
+export async function sendMedia(req: CustomRequest, res: Response) {
+  try {
+    const {
+      numberId,
+      to,
+      mimetype,
+      dataBase64,
+      filename,
+      caption,
+      comoNotaDeVoz
+    } = req.body as {
+      numberId: number
+      to: string
+      mimetype: string
+      dataBase64: string
+      filename?: string
+      caption?: string
+      comoNotaDeVoz?: boolean
+    }
+
+    if (!to) {
+      res
+        .status(HttpStatusCode.BadRequest)
+        .json({ message: 'Falta el número de destino' })
+      return
+    }
+    if (!esWhatsAppIdValido(to)) {
+      res.status(HttpStatusCode.BadRequest).json({
+        message: 'El destinatario no es un WhatsApp ID válido',
+        to
+      })
+      return
+    }
+
+    // El MIME llega del navegador y puede traer parámetros ("audio/ogg; codecs=opus").
+    const mimeBase = String(mimetype ?? '').split(';')[0]?.trim().toLowerCase() ?? ''
+    const mimeNormalizado = MIME_PERMITIDOS.get(mimeBase)
+    if (!mimeNormalizado) {
+      res.status(HttpStatusCode.BadRequest).json({
+        message:
+          'Tipo de archivo no permitido. Se aceptan: jpg, png, webp, pdf, ogg y mp3.',
+        mimetype: mimeBase
+      })
+      return
+    }
+
+    // El base64 puede venir como dataURL completa; se acepta y se recorta.
+    const b64 = String(dataBase64 ?? '')
+      .replace(/^data:[^;]+;base64,/, '')
+      .replace(/\s/g, '')
+    if (!b64 || !/^[A-Za-z0-9+/]+=*$/.test(b64)) {
+      res.status(HttpStatusCode.BadRequest).json({
+        message: 'El archivo no llegó como base64 válido'
+      })
+      return
+    }
+    const bytes = bytesDeBase64(b64)
+    if (bytes > TOPE_ADJUNTO_BYTES) {
+      res.status(HttpStatusCode.BadRequest).json({
+        message: 'El archivo supera el tope de 10MB',
+        filesize: bytes
+      })
+      return
+    }
+
+    // La línea tiene que ser del usuario del token: mismo control que sendMessage.
+    const numero = await exigirNumeroPropio(req, res, { id: numberId })
+    if (!numero) return
+
+    const client = clienteVivo(numberId)
+    if (!client) {
+      res.status(HttpStatusCode.NotFound).json({
+        message: 'No hay sesión activa para este número'
+      })
+      return
+    }
+
+    // Cupo RESERVADO antes de enviar, igual que el texto: un adjunto es un mensaje.
+    const reserva = await incrementMessageUsage(numero.userId)
+    if (!reserva.success) {
+      res
+        .status(
+          reserva.fallaDeInfraestructura
+            ? HttpStatusCode.InternalServerError
+            : HttpStatusCode.BadRequest
+        )
+        .json({
+          message: reserva.message ?? 'Límite mensual de mensajes alcanzado',
+          currentUsage: reserva.currentUsage,
+          limit: reserva.limit
+        })
+      return
+    }
+
+    const esAudio = mimeNormalizado.startsWith('audio/')
+    const notaDeVoz = esAudio && comoNotaDeVoz === true
+    const nombreArchivo =
+      typeof filename === 'string' && filename.trim() ? filename.trim().slice(0, 200) : null
+
+    let enviado: Message
+    try {
+      const chat = await client.getChatById(to)
+      const media = new MessageMedia(mimeNormalizado, b64, nombreArchivo, bytes)
+      if (notaDeVoz) {
+        // "Grabando audio…" es puro adorno: si falla no puede costar el envío.
+        void Promise.resolve(chat.sendStateRecording()).catch(() => {})
+      }
+      await client.sendSeen(to)
+      enviado = await chat.sendMessage(media, {
+        caption: caption?.trim() ? caption.trim() : undefined,
+        sendAudioAsVoice: notaDeVoz || undefined
+      })
+      if (notaDeVoz) {
+        void Promise.resolve(chat.clearState()).catch(() => {})
+      }
+    } catch (envioError) {
+      await devolverMessageUsage(numero.userId, envioError)
+      throw envioError
+    }
+
+    // Vista previa para el panel: sin ella, el propio envío desaparecería de la
+    // burbuja en la próxima recarga (el historial vivo no trae el contenido).
+    const mediaGuardada: MediaDeMensaje = {
+      mimetype: mimeNormalizado,
+      filename: nombreArchivo,
+      filesize: bytes,
+      dataBase64: bytes <= TOPE_PREVIA_BYTES ? b64 : null
+    }
+    const timestampMs = enviado?.timestamp ? enviado.timestamp * 1000 : Date.now()
+    await guardarMediaDeChat({
+      numberId,
+      chatWaId: to,
+      waMsgId: enviado?.id?._serialized ?? null,
+      fromMe: true,
+      media: mediaGuardada,
+      msgTimestampMs: timestampMs
+    })
+
+    // Aviso a las demás pestañas del número. El que envió ya lo pinta solo; las
+    // otras recargan historial pero el historial vivo no trae adjuntos.
+    const io = req.app.get('io') as Server | undefined
+    io?.to(String(numberId)).emit('chat-media-nueva', {
+      numberid: numberId,
+      to,
+      media: { ...mediaGuardada, fromMe: true, timestamp: timestampMs }
+    })
+
+    res.status(HttpStatusCode.Ok).json({
+      message: 'Adjunto enviado',
+      media: { ...mediaGuardada, fromMe: true, timestamp: timestampMs }
+    })
+  } catch (error) {
+    res.status(HttpStatusCode.InternalServerError).json({
+      message: `Error interno del servidor al enviar el adjunto: ${
+        (error as Error).message
+      }`
+    })
+  }
+}
+
+/**
+ * GET /api/whatsapp/chat-media?numberId=&chatId= — vistas previas de un chat.
+ *
+ * Existe porque get-chat-history (session.controller) lee el historial vivo de
+ * WhatsApp, donde un adjunto es solo hasMedia=true: al abrir un chat, el front
+ * pide aquí lo guardado y lo cruza por timestamp con los mensajes.
+ */
+export async function getChatMedia(req: CustomRequest, res: Response) {
+  try {
+    const numberId = req.query.numberId as string | undefined
+    const chatId = ((req.query.chatId as string | undefined) ?? '').trim()
+    if (!numberId || !chatId) {
+      res
+        .status(HttpStatusCode.BadRequest)
+        .json({ message: 'Faltan numberId o chatId' })
+      return
+    }
+    // Propiedad primero: sin esto, cualquier cuenta leería los adjuntos de otra.
+    const numero = await exigirNumeroPropio(req, res, { id: numberId })
+    if (!numero) return
+
+    const filas = await mediaGuardadaDelChat(numberId, [chatId], 100)
+    res.status(HttpStatusCode.Ok).json({
+      media: filas.map((f) => ({
+        fromMe: f.from_me,
+        mimetype: f.mimetype,
+        filename: f.filename,
+        filesize: f.filesize == null ? null : Number(f.filesize),
+        dataBase64: f.data_base64,
+        timestamp: Number(f.msg_timestamp)
+      }))
+    })
+  } catch (error) {
+    res.status(HttpStatusCode.InternalServerError).json({
+      message: `Error consultando los adjuntos del chat: ${(error as Error).message}`
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+//  ACUSE POR REACCIÓN (👍 del bot a los mensajes entrantes con agente activo)
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/whatsapp/toggle-ack-reaction — { numberId, enabled }.
+ * La columna nace en false (db/schema.sql): reaccionar en nombre del cliente es
+ * algo que se enciende a propósito, nunca por defecto.
+ */
+export async function toggleAckReaction(req: CustomRequest, res: Response) {
+  try {
+    const { numberId, enabled } = req.body as {
+      numberId: number
+      enabled: boolean
+    }
+    const numero = await exigirNumeroPropio(req, res, { id: numberId })
+    if (!numero) return
+    const valor = enabled === true
+    await query('UPDATE app."WhatsAppNumber" SET ack_reaction = $1 WHERE id = $2', [
+      valor,
+      numero.id
+    ])
+    res.status(HttpStatusCode.Ok).json({ numberId: numero.id, ackReaction: valor })
+  } catch (error) {
+    res.status(HttpStatusCode.InternalServerError).json({
+      message: `Error cambiando el acuse por reacción: ${(error as Error).message}`
+    })
+  }
+}
+
+/**
+ * El 👍 del bot. Va sin await desde los llamadores y con el error tragado aquí:
+ * la reacción es un acuse, y un acuse fallido jamás puede costar la respuesta.
+ * No hace falta resolver @lid para reaccionar —se reacciona sobre el PROPIO
+ * objeto msg, no sobre un id—; la parte que sí exige la resolución (decidir si
+ * el agente está activo para ese chat) ya la hizo quien nos llama con idCanonico.
+ */
+async function reaccionarAcuse(
+  msg: Message,
+  numberId: string | number
+): Promise<void> {
+  try {
+    await msg.react('👍')
+  } catch (e) {
+    console.warn(
+      `⚠️ No se pudo reaccionar 👍 al mensaje de ${msg?.from ?? '?'} (línea ${numberId}): ${
+        e instanceof Error ? e.message : String(e)
+      }`
+    )
+  }
+}
+
 // Helper function to send upgrade email when limit is reached
 async function sendLimitReachedMessage(
   msg: Message,
@@ -237,15 +714,9 @@ export async function sendMessage(req: CustomRequest, res: Response) {
         .json({ message: 'Falta el número de destino' })
       return
     }
-    // Validar que 'to' sea un WhatsApp ID válido
-    function isValidWhatsAppId(id: string | undefined) {
-      return (
-        typeof id === 'string' &&
-        (id.match(/^[0-9]+@c\.us$/) || // usuario
-          id.match(/^[0-9]+(-[0-9]+)?@g\.us$/)) // grupo (con o sin guion)
-      )
-    }
-    if (!isValidWhatsAppId(to)) {
+    // Validar que 'to' sea un WhatsApp ID válido (misma regla que send-media,
+    // definida una sola vez a nivel de módulo).
+    if (!esWhatsAppIdValido(to)) {
       res.status(HttpStatusCode.BadRequest).json({
         message: 'El destinatario no es un WhatsApp ID válido',
         to
@@ -626,6 +1097,37 @@ export async function handleIncomingMessage(
 
   traza('VALIDADO', `chat ${idToCheck}${isGroup ? ' (grupo)' : ''}`)
 
+  // Los DOS ids del chat, definidos ANTES del historial: los usa tanto la
+  // vista previa del adjunto como (más abajo) el pareo con la agenda.
+  const idsDelChat =
+    idCanonico === idToCheck ? [idToCheck] : [idToCheck, idCanonico]
+
+  // ADJUNTO ENTRANTE: se descarga y se guarda ANTES de emitir el historial,
+  // para que este mismo evento ya lleve la vista previa. La descarga tiene
+  // timeout duro y nunca lanza: sin vista previa el mensaje sigue igual.
+  if (msg.hasMedia) {
+    const mediaEntrante = await descargarMediaEntrante(
+      msg,
+      `${msg.from} (línea ${numberId})`
+    )
+    if (mediaEntrante) {
+      await guardarMediaDeChat({
+        numberId,
+        // El id CLÁSICO resuelto, no el @lid crudo: misma regla que la agenda.
+        chatWaId: idCanonico,
+        waMsgId: idBruto?._serialized || idBruto?.id || null,
+        fromMe: false,
+        media: mediaEntrante,
+        msgTimestampMs: (msg.timestamp ?? 0) * 1000 || Date.now()
+      })
+      traza(
+        'ADJUNTO GUARDADO',
+        `${mediaEntrante.mimetype} · ${mediaEntrante.filesize ?? '?'} bytes · ` +
+          `previa=${mediaEntrante.dataBase64 ? 'sí' : 'solo metadatos'}`
+      )
+    }
+  }
+
   // El historial se saca del try para que los eventos puedan mirarlo: es el
   // ÚNICO sitio del sistema donde se ve `m.fromMe`, o sea lo único que permite
   // distinguir "el lead escribió" de "el lead CONTESTÓ". Volver a pedirlo sería
@@ -657,9 +1159,14 @@ export async function handleIncomingMessage(
       fromMe: m.fromMe
     }))
 
+    // Las vistas previas guardadas del chat, pegadas a sus mensajes: el
+    // historial vivo de WhatsApp solo dice hasMedia, el contenido vive en
+    // app."ChatMedia". Así el MISMO evento del chat lleva el adjunto.
+    const mediaDelChat = await mediaGuardadaDelChat(numberId, idsDelChat)
+
     io.to(numberId.toString()).emit('chat-history', {
       numberid: numberId,
-      chatHistory,
+      chatHistory: adjuntarMediaAlHistorial(chatHistory, mediaDelChat),
       to: idCanonico,
       lastMessageTimestamp
     })
@@ -679,29 +1186,11 @@ export async function handleIncomingMessage(
   // menos a que responda el webhook de nadie.
   void emitirMensajeEntrante(msg, chat, numberId, historialDelChat)
 
-  // Increment message usage for incoming message
-  const { data: number, error: numberError } = await supabase
-    .from('WhatsAppNumber')
-    .select('userId')
-    .eq('id', numberId)
-    .single()
-  if (!numberError && number) {
-    const usageResult = await incrementMessageUsage(number.userId)
-    if (!usageResult.success) {
-      // Send upgrade email when limit is reached
-      if (
-        usageResult.message?.includes('Límite mensual de mensajes alcanzado')
-      ) {
-        await sendLimitReachedMessage(msg, chat, number)
-        // El correo de arriba tiene un control diario EN MEMORIA que se pierde
-        // en cada redespliegue; el evento lleva el periodo como clave de dedupe
-        // en la base, así que sale una sola vez al mes pase lo que pase.
-        void emitirTopeAlcanzado(number.userId)
-      }
-
-      // Continue processing the message even if usage increment fails
-    }
-  }
+  // El cupo mensual cuenta SOLO lo que la cuenta ENVÍA. Aquí se cobraba también
+  // cada mensaje ENTRANTE, así que un tercero cualquiera podía agotar el plan
+  // del cliente simplemente escribiéndole. El cobro vive ahora únicamente en
+  // los envíos: sendMessage y las respuestas de la IA (sincronizados y no
+  // sincronizados), que reservan con increment_message_usage antes de mandar.
   if (isGroup) {
     const { data: number, error: numberError } = await supabase
       .from('WhatsAppNumber')
@@ -737,11 +1226,9 @@ export async function handleIncomingMessage(
       return
     }
   }
-  // Busca en la base de datos si está sincronizado y habilitado
-  // Los DOS ids: el crudo del chat y el clásico resuelto. Con solo el crudo, un
-  // chat servido como @lid nunca coincidía con la agenda (guardada como @c.us).
-  const idsDelChat =
-    idCanonico === idToCheck ? [idToCheck] : [idToCheck, idCanonico]
+  // Busca en la base de datos si está sincronizado y habilitado, por los DOS ids
+  // (crudo y clásico, idsDelChat ya definido arriba): con solo el crudo, un chat
+  // servido como @lid nunca coincidía con la agenda (guardada como @c.us).
   const { data: syncRows, error: syncDbError } = await supabase
     .from('SyncedContactOrGroup')
     .select('agenteHabilitado')
@@ -937,12 +1424,15 @@ export async function handleIncomingMessage(
           numberid: numberId
         })
 
-        // Consultar el contacto actualizado
+        // Consultar el contacto actualizado — por el MISMO id con el que se
+        // acaba de guardar. Con un chat servido como @lid la ficha se guarda
+        // con el id clásico (teléfono@c.us); releer por el @lid crudo no la
+        // encontraba y la IA nunca respondía al contacto nuevo.
         const { data: updatedContact, error: queryError } = await supabase
           .from('Unsyncedcontact')
           .select('id, agentehabilitado')
           .eq('numberid', numberId)
-          .eq('wa_id', waIdToCheck)
+          .eq('wa_id', contactData.wa_id)
           .single()
 
         if (queryError) {
@@ -962,19 +1452,23 @@ export async function handleIncomingMessage(
          * mensaje entraba, se guardaba y ahí moría. Es lo que pasaba con el grupo de
          * prueba con "IA", "Grupos" y "No agregados" los tres encendidos.
          *
-         * Ahora cada tipo de chat mira SU interruptor:
-         *   · contacto suelto -> "No agregados" (aiUnknownEnabled), y que el agente esté
-         *     habilitado para ese contacto en concreto.
-         *   · grupo           -> "Grupos" (responseGroups) Y "No agregados", porque un
-         *     grupo sin sincronizar es las dos cosas a la vez: es grupo y no está en la
-         *     agenda. Exigir los dos respeta la intención de ambos controles y evita que
-         *     el agente se ponga a hablar en un grupo al que lo metieron sin avisar.
+         * Ahora cada tipo de chat mira SU interruptor, y TODOS pasan primero por el
+         * maestro "IA" del número (aiEnabled): sin él, apagar la IA dejaba al agente
+         * respondiendo igual a los no agendados.
+         *   · contacto suelto -> "IA" Y "No agregados" (aiUnknownEnabled), y que el
+         *     agente esté habilitado para ese contacto en concreto.
+         *   · grupo           -> "IA" Y "Grupos" (responseGroups) Y "No agregados",
+         *     porque un grupo sin sincronizar es las dos cosas a la vez: es grupo y no
+         *     está en la agenda. Exigir los dos respeta la intención de ambos controles
+         *     y evita que el agente se ponga a hablar en un grupo al que lo metieron
+         *     sin avisar.
          */
         const puedeResponderDesconocido = isGroup
           ? number.aiEnabled === true &&
             number.responseGroups === true &&
             number.aiUnknownEnabled === true
-          : number.aiUnknownEnabled === true &&
+          : number.aiEnabled === true &&
+            number.aiUnknownEnabled === true &&
             !!updatedContact &&
             updatedContact.agentehabilitado === true
         if (!puedeResponderDesconocido) {
@@ -1066,6 +1560,36 @@ export async function handleIncomingMessage(
           // Si vas a responder, guarda el mensaje recibido y la respuesta IA
           lastUnsyncedReplies.set(waIdToCheck, msg.body)
           lastUnsyncedAIResponse.set(waIdToCheck, aiResponse[0])
+
+          // La respuesta de la IA es un mensaje SALIENTE: se cobra y se respeta
+          // el tope igual que en la rama de contactos sincronizados. Sin esto,
+          // la IA respondía gratis e ilimitado a los no agendados incluso con
+          // el cupo del mes agotado.
+          const usageResult = await incrementMessageUsage(number.userId)
+          if (!usageResult.success) {
+            console.error(
+              'Límite de mensajes alcanzado, no se puede enviar respuesta de IA (no sincronizado):',
+              usageResult.message
+            )
+            if (
+              usageResult.message?.includes(
+                'Límite mensual de mensajes alcanzado'
+              )
+            ) {
+              await sendLimitReachedMessage(msg, chat, number)
+              // El correo tiene un control diario EN MEMORIA que se pierde en
+              // cada redespliegue; el evento lleva el periodo como clave de
+              // dedupe en la base, así que sale una sola vez al mes.
+              void emitirTopeAlcanzado(number.userId)
+            }
+            // Apagar el "escribiendo…": ya estaba encendido y no va a salir nada.
+            io.to(numberId.toString()).emit('agente-escribiendo', {
+              numberId,
+              to: idToCheck,
+              escribiendo: false
+            })
+            return
+          }
 
           // Validar que el chat sigue disponible antes de responder
           try {
@@ -1391,15 +1915,19 @@ export async function handleIncomingMessage(
                 ultimosMensajes
               )
             })
-            // DESACTIVAR IA para este contacto (sincronizado o no)
-            // Primero intenta en SyncedContactOrGroup
-            const { data: syncedContact } = await supabase
+            // DESACTIVAR IA para este contacto (sincronizado o no).
+            // Por los DOS ids del chat (crudo y clásico, idsDelChat): en un chat
+            // @lid la agenda guarda el clásico, y buscar solo por el crudo no
+            // encontraba la fila — la IA seguía contestando después de que el
+            // cliente pidiera un asesor humano.
+            const { data: syncedContactRows } = await supabase
               .from('SyncedContactOrGroup')
               .select('id')
               .eq('numberId', numberId)
-              .eq('wa_id', chat.id._serialized)
+              .in('wa_id', idsDelChat)
               .eq('type', isGroup ? 'group' : 'contact')
-              .single()
+              .limit(1)
+            const syncedContact = syncedContactRows?.[0] ?? null
             if (syncedContact && syncedContact.id) {
               await supabase
                 .from('SyncedContactOrGroup')
@@ -1412,13 +1940,15 @@ export async function handleIncomingMessage(
                 })
               }
             } else {
-              // Si no está sincronizado, busca en Unsyncedcontact
-              const { data: unsyncedContact } = await supabase
+              // Si no está sincronizado, busca en Unsyncedcontact — también por
+              // los dos ids: la ficha de un @lid se guarda con el clásico.
+              const { data: unsyncedContactRows } = await supabase
                 .from('Unsyncedcontact')
                 .select('id')
                 .eq('numberid', numberId)
-                .eq('wa_id', chat.id._serialized)
-                .single()
+                .in('wa_id', idsDelChat)
+                .limit(1)
+              const unsyncedContact = unsyncedContactRows?.[0] ?? null
               if (unsyncedContact && unsyncedContact.id) {
                 await supabase
                   .from('Unsyncedcontact')
@@ -1455,6 +1985,9 @@ export async function handleIncomingMessage(
               )
             ) {
               await sendLimitReachedMessage(msg, chat, number)
+              // El evento vivía en el cobro del ENTRANTE, que ya no existe;
+              // se emite aquí, donde de verdad se topa con el límite.
+              void emitirTopeAlcanzado(number.userId)
             }
 
             return // Don't send AI response if limit is reached

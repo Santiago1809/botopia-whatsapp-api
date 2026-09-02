@@ -24,7 +24,11 @@ import {
   cerrarCliente,
   clienteVivo,
   clients,
-  marcarArranque
+  errorDeCancelacion,
+  esCancelacionDeArranque,
+  marcarArranque,
+  registrarCancelacionDeArranque,
+  retirarCancelacionDeArranque
 } from '../../WhatsAppClients.js'
 import {
   lineasConSesionGuardada,
@@ -45,6 +49,7 @@ import {
 } from '../../services/events/lineEvents.js'
 import { handleIncomingMessage } from './messages.controller.js'
 import { parcheMsgKey } from '../../lib/parcheMsgKey.js'
+import { query } from '../../lib/db.js'
 
 /**
  * EL ÚLTIMO QR DE CADA LÍNEA, PARA QUIEN LLEGA TARDE A LA SALA.
@@ -96,6 +101,35 @@ const ESPERA_LINEA_MS = Number(process.env.ESPERA_LINEA_MS || 45_000)
 function nombreDeSala(numberId: unknown): string {
   const id = Number(numberId)
   return Number.isInteger(id) ? String(id) : String(numberId)
+}
+
+/**
+ * Lo que se le aguanta a `msg.getChat()` antes de darlo por colgado.
+ *
+ * Es una llamada al navegador: si Chromium está congelado, no rechaza ni
+ * resuelve NUNCA, y el manejador de mensajes entrantes se quedaba esperándola
+ * para siempre — un solo navegador colgado silenciaba todos los entrantes de la
+ * línea. Con el límite, se pasa al chat derivado del mensaje y se sigue.
+ */
+const ESPERA_GETCHAT_MS = 10_000
+
+/**
+ * Una promesa con reloj. Si `promesa` no resuelve en `ms`, rechaza con la
+ * etiqueta; la promesa original queda corriendo por detrás sin efecto (sus
+ * rechazos tardíos los absorbe el propio `Promise.race`).
+ */
+function conLimite<T>(promesa: Promise<T>, ms: number, etiqueta: string): Promise<T> {
+  return Promise.race([
+    promesa,
+    new Promise<never>((_, rechazar) => {
+      const reloj = setTimeout(
+        () => rechazar(new Error(`${etiqueta}: sin respuesta en ${ms} ms`)),
+        ms
+      )
+      // Un reloj de cortesía no debe mantener vivo el proceso él solo.
+      reloj.unref?.()
+    })
+  ])
 }
 
 /**
@@ -151,13 +185,19 @@ function escucharMensajesEntrantes(
     try {
       let chat: Chat | null = null
       try {
-        chat = await msg.getChat()
+        // Con reloj: un navegador colgado deja la llamada pendiente para
+        // siempre y congelaba TODOS los mensajes entrantes de la línea.
+        chat = await conLimite(msg.getChat(), ESPERA_GETCHAT_MS, 'getChat')
       } catch {
         // El respiro de 1,5 s sigue teniendo sentido: si el store solo estaba
         // calentando tras el 'ready', el segundo intento sí trae el chat real.
         await new Promise((r) => setTimeout(r, 1500))
         try {
-          chat = await msg.getChat()
+          chat = await conLimite(
+            msg.getChat(),
+            ESPERA_GETCHAT_MS,
+            'getChat (reintento)'
+          )
         } catch (error) {
           const detalle = error instanceof Error ? error.message : String(error)
           const idChat = idDeChatDelMensaje(msg)
@@ -184,6 +224,185 @@ function escucharMensajesEntrantes(
       )
     }
   })
+
+  // ---------------------------------------------------------------------------
+  //  PALOMITAS EN VIVO ('message_ack').
+  //
+  //  WhatsApp emite este evento cada vez que un mensaje NUESTRO cambia de estado
+  //  (-1 error · 0 pendiente · 1 enviado ✓ · 2 entregado ✓✓ · 3 leído ✓✓ azul ·
+  //  4 nota de voz reproducida). Hasta ahora el front solo veía el `ack` al
+  //  recargar el historial; con esto le llega el cambio en el momento.
+  //
+  //  Evento hacia el front (a la sala del numberId): 'message-ack' con
+  //    { numberId, msgId, chat, ack, fromMe, timestamp }
+  //  donde `chat` ya viene resuelto de @lid a @c.us cuando aplica, para que
+  //  cruce directo con el wa_id de la agenda.
+  //
+  //  try/catch TOTAL y trabajo asíncrono aislado: un fallo aquí es un adorno
+  //  perdido, jamás puede tumbar la sesión ni frenar los mensajes.
+  // ---------------------------------------------------------------------------
+  client.on('message_ack', (msg, ack) => {
+    void (async () => {
+      try {
+        const idBruto = idDeChatDelMensaje(msg)
+        if (!idBruto) return
+        const chat = await resolverIdClasico(client, idBruto)
+        io.to(nombreDeSala(numberId)).emit('message-ack', {
+          numberId: Number(nombreDeSala(numberId)),
+          msgId: msg?.id?._serialized ?? null,
+          chat,
+          ack: Number(ack),
+          fromMe: msg?.fromMe === true,
+          timestamp: Date.now()
+        })
+      } catch (error) {
+        console.warn(
+          `⚠️ message_ack no se pudo emitir en la línea ${numberId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      }
+    })()
+  })
+
+  // ---------------------------------------------------------------------------
+  //  VOTOS DE ENCUESTA ('vote_update').
+  //
+  //  WhatsApp re-emite el estado COMPLETO del votante en cada interacción (sus
+  //  opciones seleccionadas AHORA, no un delta), por eso el guardado es un
+  //  upsert por (numberid, poll_id, votante): un re-voto o un evento repetido
+  //  actualiza la fila en vez de duplicarla. Un array vacío = retiró su voto.
+  //
+  //  El votante llega como @lid la mayoría de las veces: se resuelve a teléfono
+  //  con getContactLidAndPhone, el MISMO mecanismo que usa
+  //  messages.controller.ts para los remitentes, antes de escribir o emitir.
+  //
+  //  Evento hacia el front (a la sala del numberId): 'poll-vote' con
+  //    { numberId, chat, pollId, pregunta, votante, opciones, votedAt }
+  // ---------------------------------------------------------------------------
+  client.on('vote_update', (voto) => {
+    void (async () => {
+      try {
+        const padre = voto?.parentMessage
+        const pollId =
+          padre?.id?._serialized ??
+          (voto as unknown as { parentMsgKey?: { _serialized?: string } })
+            ?.parentMsgKey?._serialized ??
+          null
+        if (!pollId) return
+
+        // El chat de la encuesta con la regla de la librería (fromMe ? to :
+        // from); las encuestas las mandamos nosotros, así que cae en `to`.
+        const idChatBruto = idDeChatDelMensaje(padre) ?? ''
+        if (!idChatBruto) return
+        const chat = await resolverIdClasico(client, idChatBruto)
+
+        const votanteBruto = String(voto?.voter ?? '').trim()
+        if (!votanteBruto) return
+        const votanteClasico = await resolverIdClasico(client, votanteBruto)
+        // En la tabla va el TELÉFONO pelado cuando el id lo trae; si no, el id
+        // entero — nunca un número inventado (regla de "cero datos inventados").
+        const votante = /@(c\.us|lid)$/.test(votanteClasico)
+          ? (votanteClasico.split('@')[0] ?? votanteClasico)
+          : votanteClasico
+
+        // El nombre puede venir undefined si el navegador no adjuntó el mensaje
+        // padre (failsafe de PollVote.js): se conserva al menos el número de
+        // opción para no perder el voto.
+        const opciones = (voto?.selectedOptions ?? []).map((o) => {
+          const cruda = o as unknown as { name?: string; localId?: number }
+          return cruda?.name ?? `Opción ${Number(cruda?.localId ?? 0) + 1}`
+        })
+
+        const pregunta =
+          (padre as unknown as { pollName?: string })?.pollName ?? null
+        const votedAt = Number(voto?.interractedAtTs ?? Date.now())
+
+        try {
+          await query(
+            `INSERT INTO app.poll_votes
+               (numberid, chat, poll_id, pregunta, votante, opcion, voted_at)
+             VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
+             ON CONFLICT (numberid, poll_id, votante)
+             DO UPDATE SET opcion = EXCLUDED.opcion,
+                           voted_at = EXCLUDED.voted_at,
+                           pregunta = COALESCE(EXCLUDED.pregunta, app.poll_votes.pregunta)`,
+            [
+              Number(nombreDeSala(numberId)),
+              chat,
+              pollId,
+              pregunta,
+              votante,
+              JSON.stringify(opciones),
+              votedAt
+            ]
+          )
+        } catch (dbError) {
+          // El guardado falló pero el conteo en vivo del front todavía puede
+          // pintarse: se avisa y se emite igual.
+          console.error(
+            `❌ No se pudo guardar el voto de ${votante} en la línea ${numberId}:`,
+            dbError instanceof Error ? dbError.message : dbError
+          )
+        }
+
+        io.to(nombreDeSala(numberId)).emit('poll-vote', {
+          numberId: Number(nombreDeSala(numberId)),
+          chat,
+          pollId,
+          pregunta,
+          votante,
+          opciones,
+          votedAt
+        })
+      } catch (error) {
+        console.warn(
+          `⚠️ vote_update no se pudo procesar en la línea ${numberId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      }
+    })()
+  })
+}
+
+/**
+ * Traduce un identificador @lid al clásico (teléfono@c.us) con el MISMO
+ * mecanismo que ya usa messages.controller.ts para los remitentes
+ * (getContactLidAndPhone). Con memoria: los acks disparan varias veces por
+ * mensaje y cada resolución es una llamada al navegador — sin la cache, cada
+ * palomita de un chat @lid costaría un viaje a puppeteer.
+ *
+ * Si no se puede traducir se devuelve el id tal cual: preferible al silencio, y
+ * jamás se inventa un número.
+ */
+const lidResueltos = new Map<string, string>()
+
+async function resolverIdClasico(
+  client: WhatsAppClient,
+  id: string
+): Promise<string> {
+  if (!id.endsWith('@lid')) return id
+  const enCache = lidResueltos.get(id)
+  if (enCache) return enCache
+  try {
+    const [par] = ((await client.getContactLidAndPhone([id])) ?? []) as Array<{
+      pn?: string
+    }>
+    const telefono = par?.pn?.split('@')[0]
+    if (telefono && /^\d{6,15}$/.test(telefono)) {
+      const clasico = `${telefono}@c.us`
+      lidResueltos.set(id, clasico)
+      return clasico
+    }
+  } catch (e) {
+    console.warn(
+      `⚠️ No se pudo resolver ${id} a teléfono: ${
+        e instanceof Error ? e.message : String(e)
+      }. Se sigue con el identificador crudo.`
+    )
+  }
+  return id
 }
 
 /** El QR vigente de esa línea, o null si no hay o ya caducó. */
@@ -391,34 +610,73 @@ function arrancarLinea(
     // por el que hoy entran los mensajes y responde el agente, y no se toca.
     escucharMensajesEntrantes(client, idLinea, io)
 
-    await new Promise<void>((resolver, rechazar) => {
-      let terminado = false
-      const fallar = (motivo: unknown) => {
-        if (terminado) return
-        terminado = true
-        rechazar(motivo instanceof Error ? motivo : new Error(String(motivo)))
-      }
-      client.once('ready', () => {
-        if (terminado) return
-        terminado = true
-        resolver()
+    // La espera de 'ready' tiene TRES salidas y no dos. Los `once()` de abajo
+    // mueren con el `removeAllListeners()` de `cerrarCliente`: si alguien
+    // detenía, cerraba sesión o borraba la línea a mitad del arranque, la
+    // promesa no se resolvía NUNCA y la entrada de `arranques` quedaba trabada
+    // — la línea ya no se podía rearrancar sin reiniciar el proceso. Por eso:
+    //
+    //   · la señal de cancelación (registrada en WhatsAppClients) NO es un
+    //     listener del cliente y sobrevive al removeAllListeners: cerrarCliente
+    //     la invoca y la promesa rechaza al instante;
+    //   · el vigilante cubre la vía que no pasa por cerrarCliente (borrar el
+    //     número hace removeAllListeners + destroy + delete por su cuenta):
+    //     si la entrada del mapa ya no es este cliente, alguien lo retiró y no
+    //     va a llegar ningún 'ready'.
+    let vigilante: NodeJS.Timeout | undefined
+    try {
+      await new Promise<void>((resolver, rechazar) => {
+        let terminado = false
+        const fallar = (motivo: unknown) => {
+          if (terminado) return
+          terminado = true
+          rechazar(motivo instanceof Error ? motivo : new Error(String(motivo)))
+        }
+        client.once('ready', () => {
+          if (terminado) return
+          terminado = true
+          resolver()
+        })
+        client.once('auth_failure', (mensaje: string) =>
+          fallar(new Error(`auth_failure: ${mensaje}`))
+        )
+        registrarCancelacionDeArranque(clave, client, fallar)
+        vigilante = setInterval(() => {
+          if (clients[clave] !== client) {
+            fallar(
+              errorDeCancelacion(
+                'la línea se retiró del mapa durante el arranque (detenida o borrada)'
+              )
+            )
+          }
+        }, 5000)
+        vigilante.unref?.()
+        // EL `.catch` QUE FALTABA. En la vía del historial, `initialize()` se
+        // llamaba a pelo dentro del ejecutor de la promesa: cuando Chromium no
+        // arrancaba, el rechazo salía por el `unhandledRejection` global de
+        // index.ts —que lo imprime y sigue—, la promesa se quedaba pendiente para
+        // siempre y la entrada del mapa se quedaba ocupada por un cliente sin
+        // navegador. Ese era el "Cannot read properties of null (reading
+        // 'evaluate')" que el usuario veía como un chat vacío.
+        client.initialize().catch(fallar)
       })
-      client.once('auth_failure', (mensaje: string) =>
-        fallar(new Error(`auth_failure: ${mensaje}`))
-      )
-      // EL `.catch` QUE FALTABA. En la vía del historial, `initialize()` se
-      // llamaba a pelo dentro del ejecutor de la promesa: cuando Chromium no
-      // arrancaba, el rechazo salía por el `unhandledRejection` global de
-      // index.ts —que lo imprime y sigue—, la promesa se quedaba pendiente para
-      // siempre y la entrada del mapa se quedaba ocupada por un cliente sin
-      // navegador. Ese era el "Cannot read properties of null (reading
-      // 'evaluate')" que el usuario veía como un chat vacío.
-      client.initialize().catch(fallar)
-    })
+    } finally {
+      if (vigilante) clearInterval(vigilante)
+      retirarCancelacionDeArranque(clave, client)
+    }
 
     return client
   })().catch(async (error: unknown) => {
     const detalle = error instanceof Error ? error.message : String(error)
+    if (esCancelacionDeArranque(error)) {
+      // Baja DELIBERADA a mitad de arranque (detener, cerrar sesión o borrar la
+      // línea): quien canceló ya cerró el navegador y ya avisó por su vía. Ni
+      // es 'startup_failed' ni hay que asustar a la sala con 'whatsapp-error';
+      // solo se suelta el QR pendiente, que ya no espera nadie.
+      console.info(`ℹ️ Arranque de la línea ${clave} cancelado: ${detalle}`)
+      olvidarQR(sala)
+      throw error
+    }
     console.error(
       `❌ No se pudo abrir el navegador de WhatsApp de la línea ${clave}: ${detalle}`
     )
@@ -552,11 +810,32 @@ export async function stopWhatsApp(req: CustomRequest, res: Response) {
         //
         // Tampoco se llama a `logout()`: `LocalAuth.logout()` borra la carpeta
         // de sesión (LocalAuth.js:56-68) y pararía costando un QR nuevo.
-        await Promise.race([
-          cerrarCliente(client, clave, 'el usuario detuvo la línea'),
-          new Promise((resolver) => setTimeout(resolver, 5000))
+        const cerrado = await Promise.race([
+          cerrarCliente(client, clave, 'el usuario detuvo la línea').then(
+            () => true
+          ),
+          new Promise<boolean>((resolver) =>
+            setTimeout(() => resolver(false), 5000)
+          )
         ])
         delete clients[clave]
+        if (!cerrado) {
+          // El destroy no terminó en 5 s: ese Chromium puede seguir vivo con su
+          // `SingletonLock` puesto, y abandonarlo sin más dejaba el cerrojo
+          // para el siguiente arranque ("profile appears to be in use"). Se
+          // mata el proceso a la fuerza y se retira el cerrojo — el mismo
+          // trato que perfilChromium da a los huérfanos de contenedores
+          // muertos. El perfil (la sesión de WhatsApp) NO se toca.
+          console.warn(
+            `⚠️ El cierre de la línea ${clave} se colgó: se fuerza la limpieza del navegador y su cerrojo.`
+          )
+          try {
+            client.pupBrowser?.process()?.kill('SIGKILL')
+          } catch {
+            /* si el proceso ya no existe, mejor */
+          }
+          soltarCerrojoDeSesion(clave)
+        }
       }
     }
     res.status(HttpStatusCode.Ok).json({ message: 'WhatsApp detenido' })
@@ -1119,6 +1398,22 @@ export function setupSocketEvents(io: Server) {
  * sesión caducó pedirá su QR cuando alguien abra su pantalla, que es exactamente lo que
  * pasaba antes para todas.
  */
+/**
+ * Lo que la restauración le aguanta a CADA línea antes de pasar a la siguiente.
+ *
+ * Sin este reloj, la primera línea cuya sesión guardada hubiera caducado
+ * bloqueaba el `for` ENTERO: `arrancarLinea` no resuelve hasta 'ready', y con
+ * QR pendiente 'ready' no llega hasta que un humano lo escanea — o sea nunca,
+ * a las 4 de la mañana de un redespliegue. Las demás líneas, con sesiones
+ * perfectamente sanas, se quedaban sin restaurar.
+ */
+const ESPERA_RESTAURACION_MS = Number(
+  process.env.ESPERA_RESTAURACION_MS || 60_000
+)
+
+/** Cuánto se espera para reintentar la restauración si la base no contestó. */
+const REINTENTO_RESTAURACION_MS = 60_000
+
 export async function restaurarSesionesGuardadas(io: Server): Promise<void> {
   const enDisco = lineasConSesionGuardada()
   if (enDisco.length === 0) {
@@ -1134,10 +1429,38 @@ export async function restaurarSesionesGuardadas(io: Server): Promise<void> {
    * por carpeta— y eso agota la memoria del contenedor: el remedio sería peor que la
    * enfermedad que viene a curar.
    */
-  const { data: filas } = await supabase
-    .from('WhatsAppNumber')
-    .select('id')
-    .in('id', enDisco)
+  let filas: Array<{ id: number }> | null = null
+  let fallaDB: string | null = null
+  try {
+    const respuesta = await supabase
+      .from('WhatsAppNumber')
+      .select('id')
+      .in('id', enDisco)
+    filas = respuesta.data
+    fallaDB = respuesta.error ? respuesta.error.message : null
+  } catch (e) {
+    fallaDB = e instanceof Error ? e.message : String(e)
+  }
+
+  // UN FALLO DE LA BASE NO ES "NO HAY LÍNEAS". Sin esta distinción, `filas`
+  // llegaba null, TODAS las carpetas contaban como huérfanas, se restauraban
+  // CERO sesiones y —lo peor— el log de abajo sugería BORRAR perfiles que
+  // eran perfectamente válidos. Ante fallo de la consulta: avisar de que es
+  // transitorio, no sugerir borrar nada, y reintentar.
+  if (fallaDB) {
+    console.error(
+      `❌ No se pudo consultar la base durante la restauración de sesiones (${fallaDB}). ` +
+        `Es un fallo transitorio: las ${enDisco.length} sesión(es) guardadas en el volumen siguen intactas y NO hay que borrar ningún perfil. ` +
+        `Se reintenta en ${REINTENTO_RESTAURACION_MS / 1000} s.`
+    )
+    const reintento = setTimeout(() => {
+      void restaurarSesionesGuardadas(io).catch(() => {
+        /* cada reintento avisa por sí mismo */
+      })
+    }, REINTENTO_RESTAURACION_MS)
+    reintento.unref?.()
+    return
+  }
 
   const vivas = new Set((filas ?? []).map((f: { id: number }) => Number(f.id)))
   const lineas = enDisco.filter((id) => vivas.has(id))
@@ -1159,16 +1482,32 @@ export async function restaurarSesionesGuardadas(io: Server): Promise<void> {
     `🔄 Restaurando ${lineas.length} sesión(es) de WhatsApp guardada(s): ${lineas.join(', ')}`
   )
 
-  for (const numberId of lineas) {
-    try {
-      await arrancarLinea(numberId, io)
+  // EN PARALELO y con TIMEOUT POR LÍNEA. En serie con `await` a secas, la primera
+  // sesión guardada que ya no valía (pide QR y nunca llega a 'ready') colgaba el
+  // bucle para siempre y las demás líneas quedaban mudas tras el reinicio — el
+  // arranque de una línea solo resuelve al llegar 'ready', no al pintar el QR.
+  // `conLimite` corta a los ESPERA_RESTAURACION_MS (esa línea pedirá QR cuando
+  // alguien abra su pantalla) y `allSettled` deja que cada una falle sola sin
+  // arrastrar a las otras.
+  const resultados = await Promise.allSettled(
+    lineas.map((numberId) =>
+      conLimite(
+        arrancarLinea(numberId, io),
+        ESPERA_RESTAURACION_MS,
+        `restaurar línea ${numberId}`
+      )
+    )
+  )
+  resultados.forEach((r, i) => {
+    const numberId = lineas[i]
+    if (r.status === 'fulfilled') {
       console.log(`✅ Línea ${numberId} restaurada y escuchando mensajes.`)
-    } catch (e) {
+    } else {
       console.warn(
         `⚠️ No se pudo restaurar la línea ${numberId}: ${
-          e instanceof Error ? e.message : String(e)
+          r.reason instanceof Error ? r.reason.message : String(r.reason)
         }. Pedirá QR cuando alguien abra su pantalla.`
       )
     }
-  }
+  })
 }

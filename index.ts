@@ -30,6 +30,9 @@ import statsRoutes from './src/routes/stats.route.js'
 import usageRoutes from './src/routes/usage.route.js'
 import userRoutes from './src/routes/user.route.js'
 import whatsAppRoutes from './src/routes/whatsapp.route.js'
+import bandejaRoutes from './src/routes/bandeja.route.js'
+import encuestasRoutes from './src/routes/encuestas.route.js'
+import profileRoutes from './src/routes/profile.route.js'
 import unsyncedContactRoutes from './src/routes/unsyncedcontact.route.js'
 import integrationsRoutes from './src/routes/integrations.route.js'
 import { authenticateToken } from './src/middleware/jwt.middleware.js'
@@ -132,6 +135,12 @@ app.use('/api/usage', usageRoutes)
 app.use('/api/auth', authRoutes)
 app.use('/api/user', userRoutes)
 app.use('/api/whatsapp', whatsAppRoutes)
+// Bandeja (fijar/archivar/no leído) y encuestas van en routers propios: el de
+// whatsapp.route.ts no tiene rutas con estos prefijos, así que no hay choque.
+app.use('/api/whatsapp/bandeja', bandejaRoutes)
+app.use('/api/whatsapp/encuestas', encuestasRoutes)
+// Identidad de la línea (perfil del propio número) y vinculación por código.
+app.use('/api/profile', profileRoutes)
 app.use('/api/payments', paymentsRouter)
 app.use('/api/subscriptions', subscriptionsRouter)
 

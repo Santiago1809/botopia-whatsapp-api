@@ -34,6 +34,56 @@ export function estaArrancando(numberId: string | number): boolean {
 }
 
 /**
+ * LA SEÑAL QUE FALTABA PARA NO DEJAR UN ARRANQUE PENDIENTE PARA SIEMPRE.
+ *
+ * El arranque espera 'ready'/'auth_failure' con `once()`. Si alguien detiene o
+ * borra la línea a mitad, `cerrarCliente` hace `removeAllListeners()` y esos
+ * `once()` desaparecen: la promesa de arranque no se resolvía NUNCA y la
+ * entrada de `arranques` quedaba trabada — la línea ya no se podía rearrancar
+ * sin reiniciar el proceso.
+ *
+ * La cancelación NO es un listener del cliente, así que sobrevive al
+ * `removeAllListeners`: el arranque registra aquí cómo rechazarse, y
+ * `cerrarCliente` lo invoca antes de destruir. Se guarda el cliente junto al
+ * callback para no cancelar por error el arranque NUEVO de la misma línea si
+ * llegara a cerrarse un cliente viejo.
+ */
+type CancelarArranque = (motivo: Error) => void
+const cancelacionesDeArranque = new Map<
+  string,
+  { client: Client; cancelar: CancelarArranque }
+>()
+
+/** El error con el que se cancela un arranque; se reconoce por su `name`. */
+export function errorDeCancelacion(motivo: string): Error {
+  const error = new Error(`arranque cancelado: ${motivo}`)
+  error.name = 'ArranqueCancelado'
+  return error
+}
+
+/** ¿Este rechazo es una cancelación deliberada y no un fallo de arranque? */
+export function esCancelacionDeArranque(error: unknown): boolean {
+  return error instanceof Error && error.name === 'ArranqueCancelado'
+}
+
+export function registrarCancelacionDeArranque(
+  numberId: string | number,
+  client: Client,
+  cancelar: CancelarArranque
+): void {
+  cancelacionesDeArranque.set(String(numberId), { client, cancelar })
+}
+
+export function retirarCancelacionDeArranque(
+  numberId: string | number,
+  client: Client
+): void {
+  const clave = String(numberId)
+  const entrada = cancelacionesDeArranque.get(clave)
+  if (entrada && entrada.client === client) cancelacionesDeArranque.delete(clave)
+}
+
+/**
  * ¿Este cliente tiene navegador? Hay dos formas de no tenerlo, con errores
  * distintos y la misma consecuencia:
  *
@@ -110,6 +160,19 @@ export async function cerrarCliente(
   motivo: string
 ): Promise<void> {
   const clave = String(numberId)
+  // ANTES de quitar los listeners: si esta línea tiene un arranque esperando
+  // 'ready', se le avisa por la señal de cancelación — que no es un listener y
+  // por eso sobrevive al removeAllListeners de abajo. Sin esto, la promesa de
+  // arranque quedaba pendiente para siempre (ver cancelacionesDeArranque).
+  const pendiente = cancelacionesDeArranque.get(clave)
+  if (pendiente && pendiente.client === client) {
+    cancelacionesDeArranque.delete(clave)
+    try {
+      pendiente.cancelar(errorDeCancelacion(motivo))
+    } catch {
+      /* el rechazo ya viaja por la promesa del arranque */
+    }
+  }
   try {
     client.removeAllListeners()
   } catch {

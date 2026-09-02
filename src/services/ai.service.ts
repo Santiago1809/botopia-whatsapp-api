@@ -9,6 +9,18 @@ const ai = new GoogleGenAI({ apiKey: process.env.GOOGLE_GENAI_API_KEY })
 export const AI_KEY_MISSING_MESSAGE =
   'El agente de IA no está configurado: falta la variable GOOGLE_GENAI_API_KEY en el servidor.'
 
+/**
+ * Tope duro para la llamada a Gemini. Sin él, una conexión que se queda colgada
+ * (el socket ni cierra ni responde) deja la promesa pendiente para siempre: el
+ * agente queda mudo y el "escribiendo…" del chat encendido hasta reiniciar el
+ * proceso. 30 s sobra para un chat con historial; ajustable por env igual que
+ * el modelo.
+ */
+const AI_TIMEOUT_MS = (() => {
+  const n = Number(process.env.GEMINI_TIMEOUT_MS)
+  return Number.isFinite(n) && n > 0 ? n : 30_000
+})()
+
 export async function getAIResponse(
   prompt: string,
   userMsg: string,
@@ -77,14 +89,33 @@ export async function getAIResponse(
       history: messages,
       config: {
         temperature: 0,
-        systemInstruction: instruccion
+        systemInstruction: instruccion,
+        // El SDK corta la petición HTTP por su lado al vencer este plazo.
+        httpOptions: { timeout: AI_TIMEOUT_MS }
       }
     })
 
-    // Envía el mensaje del usuario
-    const response = await chat.sendMessage({
-      message: userMsg
+    // Envía el mensaje del usuario, con tope duro ADEMÁS del del SDK: si el
+    // socket se cuelga sin cerrar, esta carrera es la única garantía de que la
+    // promesa termina. El error sale por el catch de abajo como cualquier otro
+    // fallo de la IA — no se traga — y así el llamador limpia el estado de
+    // "escribiendo…" por su camino normal de error.
+    let temporizador: NodeJS.Timeout | undefined
+    const tope = new Promise<never>((_, reject) => {
+      temporizador = setTimeout(
+        () =>
+          reject(
+            new Error(
+              `La IA no respondió en ${Math.round(AI_TIMEOUT_MS / 1000)} segundos y se canceló la espera.`
+            )
+          ),
+        AI_TIMEOUT_MS
+      )
     })
+    const response = await Promise.race([
+      chat.sendMessage({ message: userMsg }),
+      tope
+    ]).finally(() => clearTimeout(temporizador))
 
     // Se devuelve el usageMetadata ENTERO y no solo candidatesTokenCount.
     //
