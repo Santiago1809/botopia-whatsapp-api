@@ -60,6 +60,14 @@ client.on('notice', (n) => {
 
 try {
   await client.connect()
+  // TOPES DE ESPERA antes de tocar el esquema. Sin esto, un `ALTER TABLE ADD COLUMN` que
+  // choca con un lock del contenedor VIEJO (que sigue vivo durante el despliegue) se queda
+  // esperando PARA SIEMPRE: apply-schema no termina, `index.js` nunca arranca, el healthcheck
+  // se agota y Railway marca el deploy como fallido sin un solo log. Con lock_timeout el
+  // ALTER bloqueado falla rápido; el `|| echo …` del startCommand cataloga el fallo y el
+  // servidor arranca igual (el esquema se aplica en un arranque posterior, con la tabla libre).
+  await client.query("SET lock_timeout = '10s'")
+  await client.query("SET statement_timeout = '120s'")
   await client.query(sql)
   if (avisos.length === 0) {
     console.log('✅ schema.sql aplicado (sin pendientes)')
